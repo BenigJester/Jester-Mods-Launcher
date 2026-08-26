@@ -1,6 +1,7 @@
 package com.moodtools.hub.networking
 
 import android.util.Base64
+import android.util.Log
 import com.moodtools.hub.BuildConfig
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import org.json.JSONObject
@@ -352,7 +353,12 @@ class UpdateClient(private val moduleRoot: File) {
                             progressTotalBytes
                         )
                     }
-                }
+                },
+                onDiagnostic = { message -> Log.w("JesterMoodsDownload", message) },
+                // Every protected module range needs its own server challenge and signed proof.
+                // One continuous request is substantially faster on this route; range requests
+                // remain available when the stream must resume after an interruption.
+                allowParallelRanges = false
             )
             require(sha256(temporary) == expectedSha256.lowercase()) { "Payload hash verification failed" }
             if (output.exists()) require(output.delete())

@@ -7,6 +7,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import com.moodtools.hub.modules.CatalogModule
 import com.moodtools.hub.modules.GameInstallSource
 import com.moodtools.hub.modules.GamePackageFormat
@@ -53,7 +54,8 @@ class GameInstallClient(private val context: Context) {
                         range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
                     }
                 },
-                onProgress = onProgress
+                onProgress = onProgress,
+                onDiagnostic = { message -> Log.w("JesterMoodsGameInstall", message) }
             )
             require(sha256(temporary) == source.sha256) { "Game download verification failed" }
             validatePackage(temporary, game, source)

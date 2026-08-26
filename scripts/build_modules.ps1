@@ -58,6 +58,28 @@ function Convert-ToRspArg([string] $Arg) {
     return '"' + ($Arg -replace '\\', '/') + '"'
 }
 
+function Compress-GzipFile([string] $Source, [string] $Destination) {
+    $sourceStream = [System.IO.File]::OpenRead($Source)
+    try {
+        $destinationStream = [System.IO.File]::Create($Destination)
+        try {
+            $gzipStream = New-Object System.IO.Compression.GZipStream(
+                $destinationStream,
+                [System.IO.Compression.CompressionLevel]::Optimal,
+                $true)
+            try {
+                $sourceStream.CopyTo($gzipStream, 1024 * 1024)
+            } finally {
+                $gzipStream.Dispose()
+            }
+        } finally {
+            $destinationStream.Dispose()
+        }
+    } finally {
+        $sourceStream.Dispose()
+    }
+}
+
 function Convert-ToModuleLookupKey([string] $Value) {
     if (-not $Value) {
         return ""
@@ -367,13 +389,29 @@ foreach ($moduleDir in $moduleDirectories) {
     if (Test-Path -LiteralPath $cmakeLists) {
         $cmakeBuild = Join-Path $work "cmake"
         $toolchainFile = Join-Path $androidNdk "build\cmake\android.toolchain.cmake"
-        & $cmake -S $cpp -B $cmakeBuild -G "Ninja" `
-            "-DANDROID_ABI=arm64-v8a" `
-            "-DANDROID_PLATFORM=android-21" `
-            "-DANDROID_NDK=$androidNdk" `
-            "-DCMAKE_TOOLCHAIN_FILE=$toolchainFile" `
-            "-DCMAKE_MAKE_PROGRAM=$ninja" `
+        $cmakeArgs = @(
+            "-S", $cpp,
+            "-B", $cmakeBuild,
+            "-G", "Ninja",
+            "-DANDROID_ABI=arm64-v8a",
+            "-DANDROID_PLATFORM=android-21",
+            "-DANDROID_NDK=$androidNdk",
+            "-DCMAKE_TOOLCHAIN_FILE=$toolchainFile",
+            "-DCMAKE_MAKE_PROGRAM=$ninja",
             "-DCMAKE_BUILD_TYPE=Release"
+        )
+        if ($name -eq 'com.chillyroom.zhmr.gp') {
+            $gameLogicSource = Join-Path $cpp 'Embedded\GameLogic.mod.live_toggle.dll'
+            $gameLogicGzip = Join-Path $work 'native\GameLogic.mod.live_toggle.dll.gz'
+            if (-not (Test-Path -LiteralPath $gameLogicSource -PathType Leaf)) {
+                throw "Embedded GameLogic DLL missing: ${gameLogicSource}"
+            }
+            Compress-GzipFile $gameLogicSource $gameLogicGzip
+            $gameLogicSize = (Get-Item -LiteralPath $gameLogicSource).Length
+            $cmakeArgs += "-DEMBEDDED_GAMELOGIC_GZIP=$gameLogicGzip"
+            $cmakeArgs += "-DEMBEDDED_GAMELOGIC_UNCOMPRESSED_SIZE=$gameLogicSize"
+        }
+        & $cmake @cmakeArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         & $cmake --build $cmakeBuild --config Release
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

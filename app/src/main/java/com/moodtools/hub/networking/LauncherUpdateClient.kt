@@ -128,7 +128,8 @@ class LauncherUpdateClient(private val context: Context) {
                         range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
                     }
                 },
-                onProgress = onProgress
+                onProgress = onProgress,
+                onDiagnostic = { message -> Log.w(TAG, message) }
             )
             require(sha256(temporary) == release.sha256) { "Launcher download verification failed" }
             validateApk(temporary, release)
