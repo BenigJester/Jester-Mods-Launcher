@@ -1,0 +1,222 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+def localSigningProperties = new Properties()
+def localSigningPropertiesFile = rootProject.file('keystore.properties')
+if (localSigningPropertiesFile.exists()) {
+    localSigningPropertiesFile.withInputStream { localSigningProperties.load(it) }
+}
+
+def signingValue = { String name ->
+    providers.gradleProperty(name).orNull ?: localSigningProperties.getProperty(name)
+}
+
+def debugSignerSha256 = 'ed994d5bc189fa7370f9d995fa427959254787c6055181cd68e79ce02b930cbb'
+def trustedReleaseSignerSha256 = providers.gradleProperty('trustedReleaseSignerSha256').getOrElse('')
+def releaseStorePath = signingValue('releaseStoreFile') ?: signingValue('storeFile')
+def releaseStorePassword = signingValue('releaseStorePassword') ?: signingValue('storePassword')
+def releaseKeyAlias = signingValue('releaseKeyAlias') ?: signingValue('keyAlias')
+def releaseKeyPassword = signingValue('releaseKeyPassword') ?: signingValue('keyPassword')
+def releaseSigningReady = releaseStorePath != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
+
+def releaseSignerSha256 = {
+    def keyStore = java.security.KeyStore.getInstance('JKS')
+    rootProject.file(releaseStorePath).withInputStream { input ->
+        keyStore.load(input, releaseStorePassword.toCharArray())
+    }
+    def certificate = keyStore.getCertificate(releaseKeyAlias)
+    if (certificate == null) {
+        throw new GradleException("Release key alias '${releaseKeyAlias}' was not found in the configured keystore.")
+    }
+    java.security.MessageDigest.getInstance('SHA-256')
+        .digest(certificate.encoded)
+        .collect { String.format('%02X', it & 0xFF) }
+        .join()
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def productionPackageRequested = graph.allTasks.any { task ->
+        task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*Release.*')
+    }
+    if (productionPackageRequested &&
+            (!releaseSigningReady || !trustedReleaseSignerSha256.matches('[0-9A-Fa-f]{64}'))) {
+        throw new GradleException(
+            'Production release packaging requires releaseStoreFile, releaseStorePassword, ' +
+                'releaseKeyAlias, releaseKeyPassword, and the matching trustedReleaseSignerSha256.'
+        )
+    }
+    if (productionPackageRequested &&
+            !releaseSignerSha256().equalsIgnoreCase(trustedReleaseSignerSha256)) {
+        throw new GradleException(
+            'The configured release keystore does not match trustedReleaseSignerSha256. ' +
+                'Refusing to create an unusable launcher release.'
+        )
+    }
+}
+
+android {
+    namespace 'com.moodtools.hub'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.moodtools'
+        minSdk 26
+        targetSdk 35
+        versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(112)
+        versionName providers.gradleProperty('launcherVersionName').getOrElse('1.1.2')
+        buildConfigField 'String', 'UPDATE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9ueWd1XDC7a63XAmkmNPfB52dXe/Q6VF/mUQ9639cDm4uLYrQ7+34p+6Vi1m3eU/KV/lY/BlQPWVHM2gwU/xDT32c+zkfojTn8Fb9kCxNLOOIvpMBLDMxHoZvv63z1MS7lK2Zd1dNrLbM26UK0K01nDL15yWJjQ4fxHvxR1t9sRSXgk9aBft/7R0NMgC2TJDIG1n2Fsk7f82r8gIxIKrI4CnTSKA30zwoH46/GhMmoiqaCOEOdqXNoV7ll+bfeN/PNEACxgOGwY750nkkZEgMLvCNXqto4nFflH0bYUTazaJ5z3fOuCJ8pR5hh5L1hk44Zh8F8wO0qyjCBMoByypObgpF0JURcZb6G/kmvAEB1lZet+yFIeycjCxsksVDVo1SbfXZ10Oum1WZz07X3Bn/i2FjGy6YNzKViRd86khRVa79H9ZIDPx1mb1UYREjpx8tMo/G9pmVY0mooEOBMvzWVm4JxYPQJA8G7kfu/zGS1vWZSUcfG1VwDCUULUicu43AgMBAAE="'
+        buildConfigField 'String', 'ACCESS_LEASE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAm2Mcwr7+L/dXID3KVJbspglExlWgdd/ofCESWgqUdfpXCTh3RhJm7q6qXJiKODtJw2Rs+HsZAXvw+6A0f6Fjo7+A1pgnIGzWCjihcmEl32t2vOr/vXS3XQbjo+yk9QjEZ2T4EiYHc9YK3iKEAowGZtHF1vZPTJkrbjXXWB3eJ7bf3Py37ZKa2sb07SedifEMyE9LgWMVWEbohTT+EkXlTAY6k2+um3wgt1FEUClo0PaBEDv3jSJCVJuqTzrz3xrhx07+tRHdlDxfwyHimfXdsel7wMEZaxb7ssj2Sfkbp59KsCijHiwz4gI22LGOutW+eP2+t7e8dkB+18eaCF/EGzko3U65Xk6ZivgH2Z07WxpUmvQyPEgNE74y1KZhIWEl274M5PaxtYMZAEUlDI2XtSCZVsm4siiKmMbwEd9fYl3uFoOiOkGlc28Yomwlb8PgsnVI7riF6M05RQd4Iy8ZqfVGGQdERKqKrbBIEn9rVM9n/X2nypBj9zpCjtYLcjApAgMBAAE="'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        vectorDrawables {
+            useSupportLibrary true
+        }
+
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    flavorDimensions += 'executionMode'
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile rootProject.file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing false
+                enableV2Signing true
+                enableV3Signing true
+                enableV4Signing true
+            }
+        }
+    }
+
+    productFlavors {
+        root {
+            dimension 'executionMode'
+            applicationIdSuffix '.hub.root'
+            buildConfigField 'boolean', 'IS_ROOT_MODE', 'true'
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
+            externalNativeBuild {
+                cmake {
+                    cppFlags '-DEXECUTION_MODE_ROOT=1'
+                }
+            }
+        }
+
+        nonroot {
+            dimension 'executionMode'
+            applicationId 'com.moodtools.hub.nonroot'
+            buildConfigField 'boolean', 'IS_ROOT_MODE', 'false'
+            ndk {
+                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            }
+            externalNativeBuild {
+                cmake {
+                    cppFlags '-DEXECUTION_MODE_NONROOT=1'
+                }
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            minifyEnabled false
+            shrinkResources false
+            buildConfigField 'boolean', 'RUNTIME_SECURITY_ENFORCED', 'false'
+            buildConfigField 'String', 'TRUSTED_SIGNER_SHA256', '"' + debugSignerSha256 + '"'
+            buildConfigField 'String', 'SECURITY_BUILD_CHANNEL', '"debug"'
+        }
+
+        release {
+            debuggable false
+            jniDebuggable false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            buildConfigField 'boolean', 'RUNTIME_SECURITY_ENFORCED', 'true'
+            buildConfigField 'String', 'TRUSTED_SIGNER_SHA256', '"' + trustedReleaseSignerSha256 + '"'
+            buildConfigField 'String', 'SECURITY_BUILD_CHANNEL', '"release"'
+            if (releaseSigningReady) signingConfig signingConfigs.release
+        }
+
+        hardenedTest {
+            initWith release
+            debuggable false
+            jniDebuggable false
+            minifyEnabled true
+            shrinkResources true
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+            buildConfigField 'boolean', 'RUNTIME_SECURITY_ENFORCED', 'true'
+            buildConfigField 'String', 'TRUSTED_SIGNER_SHA256', '"' + debugSignerSha256 + '"'
+            buildConfigField 'String', 'SECURITY_BUILD_CHANNEL', '"release"'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false
+        }
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+        }
+    }
+}
+
+dependencies {
+    nonrootImplementation project(':Bcore')
+    // Direct-patch modules preserve existing split contents/alignment while replacing the
+    // Play signature as one launcher-signed APK cluster.
+    nonrootImplementation 'com.android.tools.build:apksig:9.0.1'
+
+    implementation platform('androidx.compose:compose-bom:2024.09.03')
+    implementation 'androidx.activity:activity-compose:1.9.2'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.animation:animation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.6'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.6'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20260814'
+    androidTestImplementation platform('androidx.compose:compose-bom:2024.09.03')
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
+}

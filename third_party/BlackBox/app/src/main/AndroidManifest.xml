@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="com.samsung.android.samsungaccount.permission.ACCOUNT_MANAGER" />
+
+
+    <application
+        android:name=".app.App"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BlackBox"
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="n">
+        <activity
+            android:name=".view.fake.FollowMyLocationOverlay"
+            android:exported="false" />
+        <activity
+            android:name=".view.shealth.SaSdkRedirectActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="samsunghealthhybridweb"
+                    android:scheme="sasdk" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".view.setting.SettingActivity" />
+        <activity android:name=".view.gms.GmsManagerActivity" />
+        <activity android:name=".view.spoof.DeviceSpoofingActivity" />
+        <activity
+            android:name=".view.gallery.BlackBoxGalleryPreviewActivity"
+            android:exported="false" />
+        <activity
+            android:name=".view.gallery.BlackBoxGalleryActivity"
+            android:exported="false" />
+        <activity
+            android:name=".view.gallery.BlackBoxGalleryImportActivity"
+            android:exported="true"
+            android:label="@string/blackbox_gallery_share_label">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".view.install.ApkInstallImportActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/apk_install_share_label">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                    android:mimeType="application/vnd.android.package-archive"
+                    android:scheme="content" />
+                <data
+                    android:mimeType="application/vnd.android.package-archive"
+                    android:scheme="file" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.android.package-archive" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.android.package-archive" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".view.main.WelcomeActivity"
+            android:exported="true"
+            android:hardwareAccelerated="false"
+            android:launchMode="singleTop"
+            android:theme="@style/WelcomeTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".view.list.ListActivity" />
+        <activity android:name=".view.fake.FakeManagerActivity" />
+
+        <activity
+            android:name=".view.main.ShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true" />
+        <activity
+            android:name=".view.main.MainActivity"
+            android:exported="true"
+            android:hardwareAccelerated="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

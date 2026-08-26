@@ -1,0 +1,4 @@
+[submodule "KittyMemoryEx"]
+	path = KittyMemoryEx
+	url = https://github.com/MJx0/KittyMemoryEx.git
+	branch = main

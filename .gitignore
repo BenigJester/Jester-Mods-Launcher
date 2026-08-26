@@ -1,0 +1,91 @@
+# Android / Gradle generated state
+.gradle/
+.gradle-agent-network-fix/
+.kotlin/
+**/build/
+module-output/
+captures/
+
+# Module sources
+modules/*
+!modules/com.example.module/
+!modules/com.example.module/**
+
+# Native build output
+**/.cxx/
+**/.externalNativeBuild/
+cmake-build-*/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/compile_commands.json
+**/*.ninja
+**/.ninja_*
+**/obj/
+**/out/
+
+# Packaged and compiled artifacts (vendored .a/.aar/.jar dependencies are kept)
+*.apk
+*.aab
+*.ap_
+*.dex
+*.so
+*.o
+*.obj
+*.class
+__pycache__/
+*.py[cod]
+
+# Machine-local Android and signing configuration
+**/local.properties
+keystore.properties
+key.properties
+signing.properties
+secrets.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Service credentials and environment overrides
+google-services.json
+service-account*.json
+credentials.json
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# IDE and editor state
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# Logs, crash reports, and local diagnostics
+*.log
+*.logcat
+hs_err_pid*
+replay_pid*
+.debug_artifacts/
+
+# OS metadata
+.DS_Store
+.AppleDouble
+Thumbs.db
+Desktop.ini
+
+# Local operational notes and scratch files
+LOCAL_HANDOFF.md
+Linkvertise-links.txt
+.tmp_*/
+tmp/
+temp/
+
+# Nested dependency repository metadata is intentionally not part of this
+# monorepo. The dependency working trees themselves are vendored below.
+third_party/**/.git/

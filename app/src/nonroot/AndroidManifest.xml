@@ -1,0 +1,28 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Menus are hosted inside the game process. The removed compatibility-overlay
+         experiment must not leak special overlay access in through BlackBox. -->
+    <uses-permission
+        android:name="android.permission.SYSTEM_ALERT_WINDOW"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.SYSTEM_OVERLAY_WINDOW"
+        tools:node="remove" />
+
+    <!-- BlackBox is hosted directly by the single non-root launcher package. -->
+    <application android:name=".HubApplication">
+        <!-- Keep the visible launcher in a stable task of its own. BlackBox guest
+             activities use separate proxy tasks and must never become the task
+             Android restores for the launcher from Recents. -->
+        <activity
+            android:name=".LauncherActivity"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.launcher"
+            tools:replace="android:launchMode" />
+        <service
+            android:name=".LauncherTaskLifecycleService"
+            android:exported="false"
+            android:stopWithTask="false" />
+    </application>
+</manifest>

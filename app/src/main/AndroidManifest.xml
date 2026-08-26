@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Required for the launcher’s remote release and module download channel. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Android still shows its own confirmation before replacing the launcher. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Soul Knight's non-root patch replaces the Play-signed package after explicit confirmation. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- Module manifests can target arbitrary games, so a static package query list cannot
+         describe the launcher's sideloaded package-discovery use case. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Lets the access gate identify a real external browser instead of accidentally
+             pinning an HTTPS request to Android's resolver activity. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/jester_moods_icon"
+        android:label="Jester Moods"
+        android:roundIcon="@mipmap/jester_moods_icon"
+        android:resizeableActivity="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.JesterMoods">
+
+        <receiver
+            android:name=".networking.LauncherUpdateInstallReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".networking.GameInstallReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".PackageReplacementInstallReceiver"
+            android:exported="false" />
+
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Generic module/deep-link handoff. Expected query fields are validated in code. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mymenu" android:host="download" />
+            </intent-filter>
+
+            <!-- Website release-update callback emitted by the supplied Worker. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="moodtools-update" android:host="resume" />
+            </intent-filter>
+
+            <!-- Device-bound launcher digital-key callback. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="moodtools-launcher" android:host="unlock" />
+            </intent-filter>
+
+            <!-- HTTPS fallback for links opened from the Cloudflare website. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="jester.moodtools.workers.dev"
+                    android:pathPrefix="/mod-update-release" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

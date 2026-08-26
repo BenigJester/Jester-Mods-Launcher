@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "groups": [
+    {
+      "title": "Template controls",
+      "features": [
+        "Toggles, buttons, check boxes, and action buttons",
+        "Radio buttons, seek bars, single-select spinners, and radio-styled multi-select spinners",
+        "Text, integer, float, and long integer inputs",
+        "Collapsible and nested feature groups",
+        "Patch, hook, and direct function call examples"
+      ]
+    },
+    {
+      "title": "Non-root method templates",
+      "features": [
+        "BlackBox injection configuration",
+        "Direct patch configuration and launcher-only menu guard"
+      ]
+    }
+  ]
+}
