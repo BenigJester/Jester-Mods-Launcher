@@ -34,6 +34,7 @@ import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.fake.hook.IInjectHook;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.proxy.record.ProxyActivityRecord;
+import top.niunaijun.blackbox.utils.IntentSanitizer;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
 
@@ -170,6 +171,9 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
                         activityInfo.processName);
                 return true;
             }
+
+            IntentSanitizer.restoreSanitizedClassExtras(
+                    stubRecord.mTarget, BActivityThread.getApplication().getClassLoader());
 
             int taskId = BRIActivityManager.get(BRActivityManagerNative.get().getDefault()).getTaskForActivity(token, false);
             BlackBoxCore.getBActivityManager().onActivityCreated(taskId, token, stubRecord.mActivityRecord);

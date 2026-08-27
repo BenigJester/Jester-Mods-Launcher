@@ -142,7 +142,7 @@ function Invoke-LauncherBuild([string]$Kind, [string]$Flavor, [long]$VersionCode
     Get-LauncherTasks $Kind $Flavor | ForEach-Object { $arguments.Add($_) }
     $arguments.Add('--no-daemon')
     if ($Kind -in @('release', 'hardened')) {
-        if (-not $VersionName) { $VersionName = Read-Required 'Version name' '1.1.4' }
+        if (-not $VersionName) { $VersionName = Read-Required 'Version name' '1.1.5' }
         $derivedVersionCode = Convert-VersionToBuild $VersionName
         if ($VersionCode -gt 0 -and $VersionCode -ne $derivedVersionCode) {
             throw "Version $VersionName requires build $derivedVersionCode, not $VersionCode."
@@ -183,7 +183,7 @@ function Show-LauncherMenu {
 
 function Build-CompleteRelease {
     Write-Header 'Build complete production package'
-    $versionName = Read-Required 'Version name' '1.1.4'
+    $versionName = Read-Required 'Version name' '1.1.5'
     $versionCode = Convert-VersionToBuild $versionName
     Write-Host "Build derived from version: $versionCode" -ForegroundColor Gray
     Write-Host ''

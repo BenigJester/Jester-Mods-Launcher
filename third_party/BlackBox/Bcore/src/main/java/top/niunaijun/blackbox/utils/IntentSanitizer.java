@@ -3,11 +3,14 @@ package top.niunaijun.blackbox.utils;
 import android.content.Intent;
 import android.os.Bundle;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 
 public final class IntentSanitizer {
     private static final String TAG = "IntentSanitizer";
     private static final String CLASS_MARKER_PREFIX = "_B_|_class_extra_|";
+    private static final String ENUM_CLASS_MARKER_PREFIX = "_B_|_enum_class_extra_|";
+    private static final String ENUM_NAME_MARKER_PREFIX = "_B_|_enum_name_extra_|";
 
     private IntentSanitizer() {
     }
@@ -53,6 +56,17 @@ public final class IntentSanitizer {
                 bundle.putString(CLASS_MARKER_PREFIX + key, clazz.getName());
                 bundle.remove(key);
                 Slog.d(TAG, "Sanitized Class extra for IPC: " + key + " -> " + clazz.getName());
+                continue;
+            }
+
+            if (value instanceof Enum<?>) {
+                Enum<?> enumValue = (Enum<?>) value;
+                bundle.putString(ENUM_CLASS_MARKER_PREFIX + key,
+                        enumValue.getDeclaringClass().getName());
+                bundle.putString(ENUM_NAME_MARKER_PREFIX + key, enumValue.name());
+                bundle.remove(key);
+                Slog.d(TAG, "Sanitized Enum extra for IPC: " + key + " -> "
+                        + enumValue.getDeclaringClass().getName() + "." + enumValue.name());
                 continue;
             }
 
@@ -104,6 +118,38 @@ public final class IntentSanitizer {
                 } catch (Throwable e) {
                     Slog.w(TAG, "Failed to restore Class extra after IPC: " + originalKey + ", class=" + className + ", error=" + e.getClass().getSimpleName());
                 }
+                continue;
+            }
+
+            if (key.startsWith(ENUM_CLASS_MARKER_PREFIX)) {
+                String originalKey = key.substring(ENUM_CLASS_MARKER_PREFIX.length());
+                String className = bundle.getString(key);
+                String enumNameKey = ENUM_NAME_MARKER_PREFIX + originalKey;
+                String enumName = bundle.getString(enumNameKey);
+                bundle.remove(key);
+                bundle.remove(enumNameKey);
+                if (className == null || enumName == null || bundle.containsKey(originalKey)) {
+                    continue;
+                }
+                try {
+                    Class<?> enumClass = Class.forName(className, false, classLoader);
+                    if (!enumClass.isEnum()) {
+                        throw new IllegalArgumentException("Marker class is not an enum");
+                    }
+                    @SuppressWarnings({"rawtypes", "unchecked"})
+                    Enum<?> enumValue = Enum.valueOf((Class<? extends Enum>) enumClass, enumName);
+                    bundle.putSerializable(originalKey, (Serializable) enumValue);
+                    Slog.d(TAG, "Restored Enum extra after IPC: " + originalKey + " <- "
+                            + className + "." + enumName);
+                } catch (Throwable e) {
+                    Slog.w(TAG, "Failed to restore Enum extra after IPC: " + originalKey
+                            + ", class=" + className + ", value=" + enumName
+                            + ", error=" + e.getClass().getSimpleName());
+                }
+                continue;
+            }
+
+            if (key.startsWith(ENUM_NAME_MARKER_PREFIX)) {
                 continue;
             }
 

@@ -24,6 +24,7 @@ import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.fake.provider.FileProviderHandler;
 import top.niunaijun.blackbox.utils.ComponentUtils;
+import top.niunaijun.blackbox.utils.IntentSanitizer;
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -43,6 +44,21 @@ public class ActivityManagerCommonProxy {
     private static final String ACTION_SAMSUNG_ACCOUNT_REQUEST_CONFIRM_PASSWORD_FROM_WEB_SDK = "com.samsung.android.samsungaccount.action.REQUEST_CONFIRM_PASSWORD_FROM_WEB_SDK";
     private static final String ACTIVITY_SAMSUNG_HEALTH_AUTHENTICATOR = "com.samsung.android.app.shealth.accounts.AuthenticatorActivity";
     private static final String ACTIVITY_SAMSUNG_HEALTH_ACCOUNT_HANDLER = "com.samsung.android.app.shealth.jwt.AccountHandlerActivity";
+
+    private static void prepareIntentExtrasForVirtualIpc(Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        ClassLoader classLoader = ActivityManagerCommonProxy.class.getClassLoader();
+        try {
+            if (BActivityThread.getApplication() != null) {
+                classLoader = BActivityThread.getApplication().getClassLoader();
+            }
+        } catch (Throwable ignored) {
+        }
+        intent.setExtrasClassLoader(classLoader);
+        IntentSanitizer.sanitizeClassExtrasForIpc(intent);
+    }
 
     private static int getStartIntentNotResolvedCode() {
         int cached = sStartIntentNotResolved;
@@ -191,7 +207,7 @@ public class ActivityManagerCommonProxy {
             }
 
 
-            intent.setExtrasClassLoader(who.getClass().getClassLoader());
+            prepareIntentExtrasForVirtualIpc(intent);
             intent.setComponent(new ComponentName(resolveInfo.activityInfo.packageName, resolveInfo.activityInfo.name));
             BlackBoxCore.getBActivityManager().startActivityAms(BActivityThread.getUserId(),
                     StartActivityCompat.getIntent(args),
@@ -836,7 +852,7 @@ public class ActivityManagerCommonProxy {
             }
 
             for (Intent intent : intents) {
-                intent.setExtrasClassLoader(who.getClass().getClassLoader());
+                prepareIntentExtrasForVirtualIpc(intent);
             }
             return BlackBoxCore.getBActivityManager().startActivities(BActivityThread.getUserId(),
                     intents, resolvedTypes, resultTo, options);
