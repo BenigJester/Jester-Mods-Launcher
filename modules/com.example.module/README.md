@@ -1,6 +1,6 @@
 # Standalone module template
 
-This directory is the buildable reference module for Jester Moods. Copy the
+This directory is the buildable reference module for Jester Mods. Copy the
 whole directory when starting a module, rename the directory to the target game
 package, and retarget its package-specific loader, native hooks, metadata, and
 feature list.

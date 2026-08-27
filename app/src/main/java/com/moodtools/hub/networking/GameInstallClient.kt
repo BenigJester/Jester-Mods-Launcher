@@ -76,7 +76,7 @@ class GameInstallClient(private val context: Context) {
         val installApks = validatePackage(packageFile, game, source)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(context.packageManager.canRequestPackageInstalls()) {
-                "Allow Jester Moods to install games in Android settings"
+                "Allow Jester Mods to install games in Android settings"
             }
         }
 

@@ -65,7 +65,7 @@ object ExecutionModeLaunchBridge {
             onProgress?.invoke(headline, detail)
         }
 
-        report("Checking your setup", "Making sure Jester Moods can open the game.")
+        report("Checking your setup", "Making sure Jester Mods can open the game.")
         val runtimeSecurity = RuntimeSecurityGuard.inspect(context)
         if (!runtimeSecurity.allowed) {
             return fail(
@@ -88,7 +88,7 @@ object ExecutionModeLaunchBridge {
         }
         val rootCheck = RootShell.run("id")
         if (!rootCheck.success || !rootCheck.output.contains("uid=0")) {
-            return fail(context, "Root access is required to use Root mode.", "Root access was not granted to Jester Moods", onProgress)
+            return fail(context, "Root access is required to use Root mode.", "Root access was not granted to Jester Mods", onProgress)
         }
         val kernelMachine = RootShell.run("uname -m")
         val injectorAsset = kernelMachine
@@ -107,7 +107,7 @@ object ExecutionModeLaunchBridge {
         runCatching {
             context.packageManager.getApplicationInfo(game.packageName, 0)
         }.getOrElse {
-            return fail(context, "Jester Moods couldn't find the installed game.", "The installed game could not be inspected", onProgress)
+            return fail(context, "Jester Mods couldn't find the installed game.", "The installed game could not be inspected", onProgress)
         }
 
         report("Preparing your game", "Getting your saved features ready.")
@@ -132,12 +132,12 @@ object ExecutionModeLaunchBridge {
             return fail(context, "Game files aren't ready. Check for updates and try again.", "Module native payload is missing", onProgress)
         }
 
-        report("Almost ready", "Preparing Jester Moods for the game.")
+        report("Almost ready", "Preparing Jester Mods for the game.")
         val injector = runCatching { extractInjector(context, injectorAsset) }.getOrElse {
-            return fail(context, "Jester Moods couldn't prepare the game. Please try again.", "Root injector extraction failed: ${it.message}", onProgress)
+            return fail(context, "Jester Mods couldn't prepare the game. Please try again.", "Root injector extraction failed: ${it.message}", onProgress)
         }
         val bootstrap = runCatching { extractRootBootstrap(context) }.getOrElse {
-            return fail(context, "Jester Moods couldn't prepare the game. Please try again.", "Root bootstrap extraction failed: ${it.message}", onProgress)
+            return fail(context, "Jester Mods couldn't prepare the game. Please try again.", "Root bootstrap extraction failed: ${it.message}", onProgress)
         }
 
         val remoteInjector = "$ROOT_RUNTIME_DIRECTORY/moodtools-injector"
@@ -160,7 +160,7 @@ object ExecutionModeLaunchBridge {
         report("Almost ready", "Finishing setup before the game opens.")
         val stage = RootShell.run(stageCommands.joinToString(" && "))
         if (!stage.success) {
-            return fail(context, "Jester Moods couldn't prepare the game. Please try again.", "Root payload staging failed: ${stage.output.takeLast(240)}", onProgress)
+            return fail(context, "Jester Mods couldn't prepare the game. Please try again.", "Root payload staging failed: ${stage.output.takeLast(240)}", onProgress)
         }
 
         // The injector opens the module files as root, transfers them into
@@ -255,7 +255,7 @@ object ExecutionModeStartupGate {
         } else {
             StartupGateResult(
                 allowed = false,
-                message = "Root permission was not granted. Jester Moods Root cannot safely continue without it, so the launcher will close."
+                message = "Root permission was not granted. Jester Mods Root cannot safely continue without it, so the launcher will close."
             )
         }
     }

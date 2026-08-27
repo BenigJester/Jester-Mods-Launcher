@@ -180,7 +180,7 @@ public final class UpdateActivity extends Activity {
         root.setBackgroundColor(Color.rgb(7, 11, 16));
 
         TextView brand = new TextView(this);
-        brand.setText("MOOD TOOLS");
+        brand.setText("MOD TOOLS");
         brand.setTextColor(Color.rgb(73, 220, 181));
         brand.setTextSize(13);
         brand.setTypeface(Typeface.DEFAULT_BOLD);
@@ -732,7 +732,7 @@ public final class UpdateActivity extends Activity {
 
     private void openFullRelease(FullReleaseInfo fullRelease) {
         try {
-            setStatus("Opening Mood Tools files",
+            setStatus("Opening Mod Tools files",
                     "Download and install the latest full APK/APKS once.");
             Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(fullRelease.url));
             browser.addCategory(Intent.CATEGORY_BROWSABLE);
@@ -762,7 +762,7 @@ public final class UpdateActivity extends Activity {
                 throw new SecurityException("The release gate left the trusted update host.");
             }
 
-            setStatus("Continue on the Mood Tools website",
+            setStatus("Continue on the Mod Tools website",
                     "Complete the official Linkvertise route. Continue there to return and start the update.");
             Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(gateUrl.toString()));
             browser.addCategory(Intent.CATEGORY_BROWSABLE);
@@ -1079,7 +1079,7 @@ public final class UpdateActivity extends Activity {
         try {
             JSONObject json = envelope.optJSONObject("fullRelease");
             if (json == null) return null;
-            String title = json.optString("title", "Mood Tools").trim();
+            String title = json.optString("title", "Mod Tools").trim();
             String version = json.optString("version", "").trim();
             String path = json.optString("path", "").trim();
             long requiredBelowUpdateBuild = json.optLong("requiredBelowUpdateBuild", 0L);

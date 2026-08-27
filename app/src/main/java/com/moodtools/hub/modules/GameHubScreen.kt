@@ -647,7 +647,7 @@ private fun DirectPatchInstallDialog(
                     DirectPatchDialogStep(
                         number = "2",
                         headline = "Install the verified patched game",
-                        detail = "Jester Moods will open Android's installer automatically after the uninstall finishes."
+                        detail = "Jester Mods will open Android's installer automatically after the uninstall finishes."
                     )
                 } else {
                     DirectPatchDialogStep(
@@ -1314,7 +1314,7 @@ private fun ChangelogScreen(
             }
         }
 
-        item { ChangelogSectionTitle("JESTER MOODS") }
+        item { ChangelogSectionTitle("JESTER MODS") }
         if (state.launcherEntries.isEmpty() && !state.loading) {
             item {
                 ChangelogMessageCard(state.error ?: "Launcher release history will appear after the next successful sync.")
@@ -1330,7 +1330,7 @@ private fun ChangelogScreen(
                 )
                 Spacer(Modifier.height(6.dp))
                 ChangelogEntryCard(
-                    title = "Jester Moods ${entry.version}",
+                    title = "Jester Mods ${entry.version}",
                     meta = launcherChangelogMeta(entry, installedBuild),
                     notes = entry.notes.ifBlank { "Maintenance and reliability improvements." },
                     highlighted = true
@@ -1471,7 +1471,7 @@ private fun LauncherChangelogDetailScreen(
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
             )
-            Text("Every verified Jester Moods release.", color = Muted)
+            Text("Every verified Jester Mods release.", color = Muted)
         }
         item {
             ChangelogSearchField(
@@ -1649,7 +1649,7 @@ private fun LauncherChangelogCompactCard(entry: LauncherChangelogEntry, installe
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Jester Moods ${entry.version}", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Jester Mods ${entry.version}", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(3.dp))
                 Text(
                     launcherChangelogMeta(entry, installedBuild),
@@ -1753,7 +1753,7 @@ private fun LauncherUpdateScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text("Launcher update", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Version ${update.version ?: "new"} is available for Jester Moods.", color = Muted)
+            Text("Version ${update.version ?: "new"} is available for Jester Mods.", color = Muted)
         }
         item {
             Column(
@@ -1917,7 +1917,7 @@ private fun ModuleBrowserScreen(
             )
             Spacer(Modifier.height(10.dp))
             Text("Browse add-ons", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Choose an add-on for a supported game, then add it to your Jester Moods library.", color = Muted)
+            Text("Choose an add-on for a supported game, then add it to your Jester Mods library.", color = Muted)
         }
         if (listings.isNotEmpty()) {
             item(key = "catalog-search") {
@@ -2436,7 +2436,7 @@ private fun ModuleDownloadScreen(
                     }
                     listing.status == ModuleInstallStatus.UNSUPPORTED_ABI -> {
                         Text("This device version isn't supported", color = Danger, fontWeight = FontWeight.SemiBold)
-                        Text("The installed game architecture does not match the available Jester Moods add-on.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("The installed game architecture does not match the available Jester Mods add-on.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                     update.inProgress -> {
                         Text(update.headline ?: "Downloading add-on", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -2458,7 +2458,7 @@ private fun ModuleDownloadScreen(
                     }
                     else -> {
                         Text("Ready to $action", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("Jester Moods will download the add-on for this installed game.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        Text("Jester Mods will download the add-on for this installed game.", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 if (update.changelog.isNotEmpty()) {
@@ -3044,7 +3044,7 @@ private fun LibraryScreen(
         ) {
             Spacer(Modifier.height(18.dp))
             Text(
-                "Jester Moods",
+                "Jester Mods",
                 color = Color.White,
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
@@ -3704,7 +3704,7 @@ private fun ModuleScreen(
                         game.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL ->
                             "The embedded add-on changed. Update the patched game in place before playing."
                         else ->
-                            "Jester Moods will open the game with your features ready."
+                            "Jester Mods will open the game with your features ready."
                     },
                     color = if (game.status in setOf(
                             LibraryGameStatus.RUNNING,

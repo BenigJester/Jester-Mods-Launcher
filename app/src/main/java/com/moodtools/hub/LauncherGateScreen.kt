@@ -456,7 +456,7 @@ private fun DefaultGateContent(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        "1. Continue to the Jester Moods website\n2. Complete Linkvertise and the browser check\n3. Tap Open launcher on the website",
+                        "1. Continue to the Jester Mods website\n2. Complete Linkvertise and the browser check\n3. Tap Open launcher on the website",
                         color = GateMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -518,13 +518,13 @@ private fun GateBrandHeader() {
         ) {
             Image(
                 painter = painterResource(R.drawable.jester_moods_icon),
-                contentDescription = "Jester Moods",
+                contentDescription = "Jester Mods",
                 modifier = Modifier.size(36.dp)
             )
         }
         Column(modifier = Modifier.padding(start = 11.dp)) {
             Text(
-                "JESTER MOODS",
+                "JESTER MODS",
                 color = Color.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,

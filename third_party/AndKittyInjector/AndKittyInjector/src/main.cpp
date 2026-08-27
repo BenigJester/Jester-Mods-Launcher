@@ -79,12 +79,12 @@ int main(int argc, char *args[])
         .metavar("<paths>");
 
     program.add_argument("--payload-dex")
-        .help("Mood Tools DEX payload to pass as a target-process memfd.")
+        .help("Mod Tools DEX payload to pass as a target-process memfd.")
         .store_into(inj_cfg.payload_dex)
         .metavar("<path>");
 
     program.add_argument("--payload-native")
-        .help("Mood Tools native payload to pass as a target-process memfd.")
+        .help("Mod Tools native payload to pass as a target-process memfd.")
         .store_into(inj_cfg.payload_native)
         .metavar("<path>");
 

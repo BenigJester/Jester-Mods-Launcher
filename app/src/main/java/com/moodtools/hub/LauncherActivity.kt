@@ -240,7 +240,7 @@ class LauncherActivity : ComponentActivity() {
                 showPackageReplacementWarning(request)
             } else if (request != null) {
                 finishPackageReplacementWithFailure(
-                    "Allow Jester Moods to install unknown apps before patching ${request.title}."
+                    "Allow Jester Mods to install unknown apps before patching ${request.title}."
                 )
             }
         }
@@ -582,7 +582,7 @@ class LauncherActivity : ComponentActivity() {
 
         // The launcher also owns the release callback deep link. Prefer the user's
         // normal web browser for the verification page so the HTTPS route cannot
-        // accidentally loop straight back into Jester Moods. Some Android builds return
+        // accidentally loop straight back into Jester Mods. Some Android builds return
         // the system resolver (package "android") from resolveActivity; only pin the
         // request when that package is also a genuine generic HTTPS handler.
         val genericWeb = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
@@ -833,7 +833,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             .onFailure { error ->
                 android.util.Log.e("JesterMoodsAccess", "Digital key recovery check failed", error)
                 _startupState.value = LauncherStartupState.ConnectionRequired(
-                    "Jester Moods needs internet once after its app data is cleared or it is reinstalled. " +
+                    "Jester Mods needs internet once after its app data is cleared or it is reinstalled. " +
                         "Connect, then tap Try again. Active access on this device will be restored automatically."
                 )
             }
@@ -1014,7 +1014,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             installing = false,
             failed = false,
             headline = if (current.downloaded) "Opening Android installer" else "Downloading launcher update",
-            detail = if (current.downloaded) "Confirm the update when Android asks." else "Keep Jester Moods open while the update downloads."
+            detail = if (current.downloaded) "Confirm the update when Android asks." else "Keep Jester Mods open while the update downloads."
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -1048,7 +1048,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     failed = true,
                     headline = if (launcherUpdateClient.isDownloaded(release)) "Couldn't open the installer" else "Couldn't download the update",
                     detail = if (launcherUpdateClient.isDownloaded(release)) {
-                        "Allow Jester Moods to install apps in Android settings, then tap Install update again."
+                        "Allow Jester Mods to install apps in Android settings, then tap Install update again."
                     } else {
                         "Check your connection and available storage, then try again."
                     }
@@ -1065,7 +1065,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             installing = false,
             failed = true,
             headline = "Installation permission is needed",
-            detail = "Allow Jester Moods to install app updates, then tap Install update again."
+            detail = "Allow Jester Mods to install app updates, then tap Install update again."
         )
     }
 
@@ -1100,7 +1100,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                             "Installation was cancelled. The verified download is still saved."
                         installerMessage.contains("block", ignoreCase = true) ||
                             installerMessage.contains("restrict", ignoreCase = true) ->
-                            "Allow Jester Moods to install app updates in Android settings, then try again."
+                            "Allow Jester Mods to install app updates in Android settings, then try again."
                         else -> "You can try the installation again. The verified download is still saved."
                     }
                 )
@@ -1158,7 +1158,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             changelog = newEntries,
             downloaded = downloaded,
             headline = if (downloaded) "Update ready to install" else "A launcher update is available",
-            detail = if (downloaded) "The verified download is saved on this device." else "Download it here without leaving Jester Moods.",
+            detail = if (downloaded) "The verified download is saved on this device." else "Download it here without leaving Jester Mods.",
             downloadedBytes = if (downloaded) release.size else 0L,
             totalBytes = release.size
         )
@@ -1215,7 +1215,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun onGameStoreOpened() {
         _gameInstallState.value = GameInstallUiState(
             headline = "Continue in Google Play",
-            detail = "Install or update the original game there, then return to Jester Moods."
+            detail = "Install or update the original game there, then return to Jester Mods."
         )
     }
 
@@ -1230,7 +1230,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun onGameInstallPermissionDenied() {
         _gameInstallState.value = GameInstallUiState(
             headline = "Installation permission is needed",
-            detail = "Allow Jester Moods to install apps, then tap Download game again.",
+            detail = "Allow Jester Mods to install apps, then tap Download game again.",
             failed = true
         )
     }
@@ -1254,7 +1254,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             detail = if (alreadyDownloaded) {
                 "Confirm the installation when Android asks."
             } else {
-                "Keep Jester Moods open while the verified game downloads."
+                "Keep Jester Mods open while the verified game downloads."
             },
             downloadedBytes = if (alreadyDownloaded) source.size else 0L,
             totalBytes = source.size
@@ -1290,7 +1290,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     failed = true,
                     headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the game",
                     detail = if (downloaded) {
-                        "Allow Jester Moods to install apps in Android settings, then try again."
+                        "Allow Jester Mods to install apps in Android settings, then try again."
                     } else {
                         "Check your connection and available storage, then try again."
                     },
@@ -1308,7 +1308,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 _gameInstallState.value = GameInstallUiState(
                     completed = true,
                     headline = "Original game installed",
-                    detail = "You can now add it to your Jester Moods library."
+                    detail = "You can now add it to your Jester Mods library."
                 )
             } else {
                 _gameInstallState.value = GameInstallUiState(
@@ -1456,9 +1456,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 _updateState.value = ModuleUpdateUiState(
                     headline = if (failures == 1) "Couldn't remove one add-on" else "Couldn't remove $failures add-ons",
                     detail = if (removedPackages.isEmpty()) {
-                        "Restart Jester Moods and try the selection again."
+                        "Restart Jester Mods and try the selection again."
                     } else {
-                        "The other selected add-ons were removed. Restart Jester Moods and try the remaining selection again."
+                        "The other selected add-ons were removed. Restart Jester Mods and try the remaining selection again."
                     },
                     failed = true
                 )
@@ -1509,7 +1509,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             } else if (!_launchState.value.failed) {
                 _launchState.value = LaunchUiState(
                     headline = "Couldn't open the game",
-                    detail = "Try again. If it keeps happening, restart Jester Moods.",
+                    detail = "Try again. If it keeps happening, restart Jester Mods.",
                     failed = true
                 )
             }
@@ -1658,7 +1658,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     },
                     detail = buildString {
                         append("${game.module.title} is ready in your library")
-                        result.version?.let { append(" with Jester Moods $it") }
+                        result.version?.let { append(" with Jester Mods $it") }
                         append(".")
                     },
                     completed = true,
@@ -1941,7 +1941,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             _updateState.value = current.copy(
                 inProgress = true,
                 headline = progressHeadline,
-                detail = progressDetail ?: "Getting ${game.module.title} ready for Jester Moods.",
+                detail = progressDetail ?: "Getting ${game.module.title} ready for Jester Mods.",
                 downloadedBytes = downloaded,
                 totalBytes = total
             )
@@ -2016,7 +2016,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             URLEncoder.encode(nonce, Charsets.UTF_8.name())
         _updateState.value = ModuleUpdateUiState(
             headline = "One more step",
-            detail = "Complete the quick verification, then Jester Moods will finish the update.",
+            detail = "Complete the quick verification, then Jester Mods will finish the update.",
             verificationUrl = verificationUrl,
             totalBytes = moduleDownloadSize(packageName, null)
         )
@@ -2055,7 +2055,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val progress = _updateState.value
         _updateState.value = ModuleUpdateUiState(
             headline = "Couldn't finish the update",
-            detail = "Please try again. If it keeps happening, restart Jester Moods.",
+            detail = "Please try again. If it keeps happening, restart Jester Mods.",
             failed = true,
             downloadedBytes = progress.downloadedBytes,
             totalBytes = progress.totalBytes

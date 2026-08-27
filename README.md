@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="app/src/main/res/drawable/menu_icon.png" alt="Jester Moods" width="112" />
-  <h1>Jester Moods Launcher</h1>
+  <img src="app/src/main/res/drawable/menu_icon.png" alt="Jester Mods" width="112" />
+  <h1>Jester Mods Launcher</h1>
   <p>Transparency source for the official signed Android launcher.</p>
 </div>
 
@@ -26,8 +26,8 @@ AA65ABF5EB089BFD92E3138A9BFA0D6BA8E0F875FF0B26E295AF656D67CCDA29
 Verify an APK with Android SDK Build Tools:
 
 ```powershell
-apksigner verify --verbose --print-certs .\Jester-Moods.apk
-Get-FileHash .\Jester-Moods.apk -Algorithm SHA256
+apksigner verify --verbose --print-certs .\Jester-Mods.apk
+Get-FileHash .\Jester-Mods.apk -Algorithm SHA256
 ```
 
 Do not install an APK when its signer differs from the fingerprint above.
@@ -94,4 +94,3 @@ Use a private GitHub Security Advisory for vulnerabilities. For authenticity
 concerns, include the APK SHA-256, signer fingerprint, download URL, launcher
 flavor, and version/build. Do not post active digital keys or device identifiers
 in a public issue.
-

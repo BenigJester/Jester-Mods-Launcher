@@ -55,7 +55,7 @@ internal fun launcherMethodPresentation(
         fieldLabel = "Root method",
         badgeDescription = "Root method: Injection",
         explanationTitle = "How root injection works",
-        explanation = "Jester Moods starts the installed game and injects the verified add-on through the root runtime. " +
+        explanation = "Jester Mods starts the installed game and injects the verified add-on through the root runtime. " +
             "The original game package and signing certificate stay unchanged."
     )
 } else when (configuredNonRootMethod) {
@@ -66,7 +66,7 @@ internal fun launcherMethodPresentation(
         fieldLabel = "Non-root method",
         badgeDescription = "Non-root method: Injection",
         explanationTitle = "How non-root injection works",
-        explanation = "Jester Moods opens the original game inside its managed runtime and loads the verified add-on " +
+        explanation = "Jester Mods opens the original game inside its managed runtime and loads the verified add-on " +
             "without rebuilding or replacing the installed game package."
     )
     NonRootMethod.DIRECT_PATCH -> LauncherMethodPresentation(
@@ -76,7 +76,7 @@ internal fun launcherMethodPresentation(
         fieldLabel = "Non-root method",
         badgeDescription = "Non-root method: Patch",
         explanationTitle = "How patched install works",
-        explanation = "Jester Moods builds a verified game package with the add-on embedded, then Android installs it " +
+        explanation = "Jester Mods builds a verified game package with the add-on embedded, then Android installs it " +
             "in place of the Play-signed app. The first replacement erases local game data; later patch updates preserve it."
     )
 }

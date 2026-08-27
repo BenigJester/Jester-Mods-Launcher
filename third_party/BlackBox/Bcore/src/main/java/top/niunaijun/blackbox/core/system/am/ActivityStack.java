@@ -317,7 +317,7 @@ public class ActivityStack {
         shadow.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         // A virtual game is hosted by this launcher's package, so exposing its proxy task in
         // Recents can make Android present that game as the launcher and resume it when the
-        // user selects Jester Moods. Keep guest tasks running but out of the host's Recents;
+        // user selects Jester Mods. Keep guest tasks running but out of the host's Recents;
         // the launcher remains independently reachable and can explicitly resume the game.
         shadow.addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         shadow.addFlags(launchMode);

@@ -208,7 +208,7 @@ internal class DirectPackagePatchManager(
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(packageManager.canRequestPackageInstalls()) {
-                "Allow Jester Moods to install unknown apps first"
+                "Allow Jester Mods to install unknown apps first"
             }
         }
         val signingMaterial = signingMaterial()
@@ -386,7 +386,7 @@ internal class DirectPackagePatchManager(
         val temporary = File(output.parentFile, "${output.name}.part")
         temporary.delete()
         val signer = ApkSigner.SignerConfig.Builder(
-            "Jester Moods Soul Knight patch",
+            "Jester Mods Soul Knight patch",
             material.privateKey,
             listOf(material.certificate)
         ).build()
@@ -514,7 +514,7 @@ internal class DirectPackagePatchManager(
                     .setKeySize(2048)
                     .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
                     .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-                    .setCertificateSubject(X500Principal("CN=Jester Moods Soul Knight Patch"))
+                    .setCertificateSubject(X500Principal("CN=Jester Mods Soul Knight Patch"))
                     .setCertificateSerialNumber(BigInteger.ONE)
                     .setCertificateNotBefore(Date(now - 86_400_000L))
                     .setCertificateNotAfter(Date(now + KEY_VALIDITY_MILLIS))

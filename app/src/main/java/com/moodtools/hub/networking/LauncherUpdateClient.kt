@@ -146,7 +146,7 @@ class LauncherUpdateClient(private val context: Context) {
         require(isDownloaded(release)) { "Download the verified launcher update first" }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(context.packageManager.canRequestPackageInstalls()) {
-                "Allow Jester Moods to install app updates in Android settings"
+                "Allow Jester Mods to install app updates in Android settings"
             }
         }
         val installer = context.packageManager.packageInstaller

@@ -140,7 +140,7 @@ object ExecutionModeLaunchBridge {
             }
         }
 
-        onProgress?.invoke("Preparing your game", "Getting Jester Moods ready.")
+        onProgress?.invoke("Preparing your game", "Getting Jester Mods ready.")
         onProgress?.invoke("Opening game", "Starting ${game.module.title} now.")
         val launched = NonRootBlackBoxRuntime.launch(context, game)
         if (launched) {
@@ -150,7 +150,7 @@ object ExecutionModeLaunchBridge {
             onProgress?.invoke(
                 "Launch failed",
                 diagnostic?.let { "BlackBox: $it" }
-                    ?: "Jester Moods could not open the game. Please try again."
+                    ?: "Jester Mods could not open the game. Please try again."
             )
         }
         return launched

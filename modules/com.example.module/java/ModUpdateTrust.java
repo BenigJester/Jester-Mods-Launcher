@@ -10,7 +10,7 @@ import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
 
 final class ModUpdateTrust {
-    // Generated once for Mood Tools. The matching private key stays outside every project/APK.
+    // Generated once for Mod Tools. The matching private key stays outside every project/APK.
     private static final String PUBLIC_KEY_BASE64 =
             "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9ueWd1XDC7a63XAmkmNPfB52" +
             "dXe/Q6VF/mUQ9639cDm4uLYrQ7+34p+6Vi1m3eU/KV/lY/BlQPWVHM2gwU/xDT32c+zk" +

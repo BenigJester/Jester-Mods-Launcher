@@ -324,7 +324,7 @@ public final class ModuleRuntime {
     @"
 # $($game.Title) launcher module
 
-Migrated from the old standalone menu into the Jester Moods launcher module format.
+Migrated from the old standalone menu into the Jester Mods launcher module format.
 
 This local module keeps the old `com.android.support` JNI/menu namespace for compatibility, adds a package-specific `ModuleRuntime` for launcher loading, and excludes the old app updater/installer shell.
 "@ | Set-Content -LiteralPath (Join-Path $destination 'README.md') -Encoding UTF8

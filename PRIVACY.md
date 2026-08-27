@@ -1,6 +1,6 @@
 # Privacy and data inventory
 
-Jester Moods does not need a conventional username/password account. The
+Jester Mods does not need a conventional username/password account. The
 launcher service processes the minimum identifiers needed to grant access,
 bind that access to an installation/device proof, prevent replay, and deliver
 the correct signed module files.
@@ -33,4 +33,3 @@ on the first signer-changing replacement; the UI must disclose that risk.
 
 Remove digital keys, identifiers, certificate chains, complete request bodies,
 and private module files before posting logs or screenshots publicly.
-

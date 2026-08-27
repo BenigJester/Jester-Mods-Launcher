@@ -6,7 +6,7 @@ set "REMOTE_TMP=/data/local/tmp/jester-moods-test"
 
  echo.
  echo ============================================================
- echo   Jester Moods - module build/install/test helper
+ echo   Jester Mods - module build/install/test helper
  echo ============================================================
  echo.
 
@@ -43,7 +43,7 @@ if defined LOCAL_TEST_ROOT if defined ADB_EXE if defined DEVICE_SERIAL (
 )
 echo.
 echo ============================================================
-echo   Jester Moods test helper failed
+echo   Jester Mods test helper failed
 echo ============================================================
 echo [FAILED] Exit code !EXIT_CODE!
 if defined FAIL_CONTEXT echo [WHERE] !FAIL_CONTEXT!
@@ -702,9 +702,9 @@ rem ---- Build selected launcher flavor ----------------------------------------
 if defined MODULE_ONLY_TEST goto validate_existing_launcher
 echo.
 if defined LAUNCHER_ONLY (
-    echo [1/2] Building Jester Moods !BUILD_LABEL!...
+    echo [1/2] Building Jester Mods !BUILD_LABEL!...
 ) else (
-    echo [2/4] Building Jester Moods !BUILD_LABEL!...
+    echo [2/4] Building Jester Mods !BUILD_LABEL!...
 )
 if not exist "%CD%\settings.gradle" if not exist "%CD%\settings.gradle.kts" (
     echo [ERROR] Root settings.gradle/settings.gradle.kts is missing.
@@ -774,11 +774,11 @@ if not exist "%APK_PATH%" (
 rem ---- Install launcher ------------------------------------------------------
 echo.
 if defined LAUNCHER_ONLY (
-    echo [2/2] Installing Jester Moods !BUILD_LABEL!...
+    echo [2/2] Installing Jester Mods !BUILD_LABEL!...
 ) else (
-    echo [3/4] Installing Jester Moods !BUILD_LABEL!...
+    echo [3/4] Installing Jester Mods !BUILD_LABEL!...
 )
-echo [INSTALL] Jester Moods launcher...
+echo [INSTALL] Jester Mods launcher...
 "%ADB_EXE%" -s "!DEVICE_SERIAL!" install -r -d "%APK_PATH%"
 if errorlevel 1 (
     set "EXIT_CODE=%ERRORLEVEL%"
@@ -1032,7 +1032,7 @@ if "!GOOGLE_SIGNIN_DIAG!"=="1" (
     mkdir "!GOOGLE_DIAG_DIR!" >nul 2>nul
 
     echo [DIAG] Preparing Google sign-in capture...
-    >"!GOOGLE_DIAG_DIR!\capture_info.txt" echo Jester Moods Google sign-in diagnostic
+    >"!GOOGLE_DIAG_DIR!\capture_info.txt" echo Jester Mods Google sign-in diagnostic
     >>"!GOOGLE_DIAG_DIR!\capture_info.txt" echo Target: !TARGET_LABEL! ^(!TARGET_MODULE!^)
     >>"!GOOGLE_DIAG_DIR!\capture_info.txt" echo Mode: !MODE_LABEL!
     >>"!GOOGLE_DIAG_DIR!\capture_info.txt" echo Device: !DEVICE_SERIAL!
@@ -1059,21 +1059,21 @@ if "!GOOGLE_SIGNIN_DIAG!"=="1" (
 )
 
 if defined LAUNCHER_ONLY (
-    echo [DONE] Jester Moods !MODE_LABEL! is installed.
+    echo [DONE] Jester Mods !MODE_LABEL! is installed.
     echo        Opening the Launcher now. Use + to browse available modules.
 ) else if defined MODULE_ONLY_TEST (
-    echo [DONE] !TARGET_LABEL! module is built and staged in the installed Jester Moods !MODE_LABEL! launcher.
+    echo [DONE] !TARGET_LABEL! module is built and staged in the installed Jester Mods !MODE_LABEL! launcher.
     echo        The launcher APK was not rebuilt or reinstalled.
 ) else (
-    echo [DONE] Jester Moods !MODE_LABEL! and !TARGET_LABEL! module are installed and staged.
+    echo [DONE] Jester Mods !MODE_LABEL! and !TARGET_LABEL! module are installed and staged.
     if /I "!LAUNCHER_BUILD!"=="release" (
         if defined LOCAL_TEST_DIRECT (
-            echo        Opening Jester Moods now. Local TEST modules are already in launcher storage.
+            echo        Opening Jester Mods now. Local TEST modules are already in launcher storage.
         ) else (
-            echo        Opening Jester Moods now. Local staged modules will be imported before live catalog use.
+            echo        Opening Jester Mods now. Local staged modules will be imported before live catalog use.
         )
     ) else (
-        echo        Opening Jester Moods now. Tap a staged module, then use Play.
+        echo        Opening Jester Mods now. Tap a staged module, then use Play.
     )
 )
 "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am force-stop %APP_ID% >nul 2>nul
@@ -1098,7 +1098,7 @@ if "!GOOGLE_SIGNIN_DIAG!"=="1" (
     echo ============================================================
     echo.
     echo On the phone:
-    echo   1. Open !TARGET_LABEL! through Jester Moods.
+    echo   1. Open !TARGET_LABEL! through Jester Mods.
     echo   2. Trigger the Google/Play Games linking or sign-in action.
     echo   3. Wait until the game shows Linking failed / Verification error.
     echo   4. Return to this window and press any key.

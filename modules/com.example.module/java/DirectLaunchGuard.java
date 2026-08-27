@@ -15,7 +15,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-/** Verifies that a direct-patched game was opened by Jester Moods. */
+/** Verifies that a direct-patched game was opened by Jester Mods. */
 final class DirectLaunchGuard {
     static final int SCHEMA = 1;
     static final String EXTRA_SCHEMA = "com.moodtools.directpatch.guard.SCHEMA";

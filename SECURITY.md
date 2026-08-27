@@ -2,7 +2,7 @@
 
 ## Supported release
 
-Security fixes target the latest official Jester Moods Root and Non-root
+Security fixes target the latest official Jester Mods Root and Non-root
 launcher release. Older builds may be denied protected module downloads when
 their access protocol no longer meets the current server policy.
 
@@ -56,4 +56,3 @@ Open a private GitHub Security Advisory and include:
 
 Never place digital keys, recovery identifiers, device identifiers, signing
 keys, private module payloads, or unreleased module details in a public issue.
-
