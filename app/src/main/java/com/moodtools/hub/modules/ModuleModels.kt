@@ -105,7 +105,9 @@ data class CatalogModule(
     val updateStatus: ModuleUpdateStatus = ModuleUpdateStatus.READY,
     val statusChangedAtEpochSeconds: Long? = null,
     val features: CatalogModuleFeatures? = null,
-    val downloadSizeByAbi: Map<String, Long> = emptyMap()
+    val downloadSizeByAbi: Map<String, Long> = emptyMap(),
+    val privateScope: String? = null,
+    val privateCatalogCapability: String? = null
 ) {
     /** Google Play remains an alternative even when this catalog entry supplies a game package. */
     val playStoreUrl: String

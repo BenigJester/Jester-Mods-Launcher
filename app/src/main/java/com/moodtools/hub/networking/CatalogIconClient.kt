@@ -33,7 +33,7 @@ class CatalogIconClient(context: Context) {
             }
             target.delete()
 
-            val connection = open(BASE_URL + (icon.cachePath ?: icon.path))
+            val connection = open(BASE_URL + (icon.cachePath ?: icon.path), module.privateCatalogCapability)
             val temporary = File(cacheDirectory, "${target.name}.part")
             try {
                 require(connection.responseCode in 200..299) {
@@ -79,7 +79,7 @@ class CatalogIconClient(context: Context) {
         }
     }
 
-    private fun open(address: String): HttpURLConnection {
+    private fun open(address: String, capability: String?): HttpURLConnection {
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
         return (url.openConnection() as HttpURLConnection).apply {
@@ -88,6 +88,7 @@ class CatalogIconClient(context: Context) {
             readTimeout = 30_000
             instanceFollowRedirects = false
             setRequestProperty("Accept", "image/png,image/jpeg,image/webp")
+            capability?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
     }
 

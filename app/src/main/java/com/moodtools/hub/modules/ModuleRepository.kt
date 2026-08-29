@@ -114,6 +114,23 @@ class ModuleRepository(private val context: Context) {
         }.getOrNull()
     }
 
+    fun downloadedPrivateScope(packageName: String): String? {
+        if (!PACKAGE_NAME.matches(packageName)) return null
+        return runCatching {
+            val directory = File(menuDirectory, packageName).canonicalFile
+            require(directory.parentFile == menuDirectory.canonicalFile)
+            val markerFile = File(directory, PRIVATE_INSTALL_MARKER)
+            require(markerFile.isFile && markerFile.canonicalFile.parentFile == directory)
+            val marker = JSONObject(markerFile.readText(Charsets.UTF_8))
+            require(marker.optInt("schema") == 1)
+            require(marker.optString("packageName") == packageName)
+            marker.getString("scope").also { require(it.matches(PRIVATE_SCOPE)) }
+        }.getOrNull()
+    }
+
+    fun privateScope(packageName: String): String? =
+        embeddedPrivateScope(packageName) ?: downloadedPrivateScope(packageName)
+
     fun embeddedPrivateModules(): Map<String, String> {
         if (!menuDirectory.isDirectory) return emptyMap()
         return menuDirectory.listFiles()
@@ -121,6 +138,18 @@ class ModuleRepository(private val context: Context) {
             ?.filter(File::isDirectory)
             ?.mapNotNull { directory ->
                 embeddedPrivateScope(directory.name)?.let { scope -> directory.name to scope }
+            }
+            ?.toMap()
+            .orEmpty()
+    }
+
+    fun privateModules(): Map<String, String> {
+        if (!menuDirectory.isDirectory) return emptyMap()
+        return menuDirectory.listFiles()
+            ?.asSequence()
+            ?.filter(File::isDirectory)
+            ?.mapNotNull { directory ->
+                privateScope(directory.name)?.let { scope -> directory.name to scope }
             }
             ?.toMap()
             .orEmpty()
@@ -161,6 +190,7 @@ class ModuleRepository(private val context: Context) {
     companion object {
         const val LOCAL_TEST_INSTALL_MARKER = "local-test.json"
         const val EMBEDDED_PRIVATE_INSTALL_MARKER = "embedded-private.json"
+        const val PRIVATE_INSTALL_MARKER = "private-scope.json"
         private val PACKAGE_NAME = Regex("^[A-Za-z0-9_.]+$")
         private val PRIVATE_SCOPE = Regex("[a-z0-9][a-z0-9._-]{2,63}")
         private val SUPPORTED_ABI_NAMES = setOf(

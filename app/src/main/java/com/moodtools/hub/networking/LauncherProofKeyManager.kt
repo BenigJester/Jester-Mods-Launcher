@@ -145,6 +145,23 @@ internal class LauncherProofKeyManager(context: Context) {
             "keyId=$keyId"
         ).joinToString("\n")
 
+        fun privateCatalogAuthorizationCanonical(
+            nonce: String,
+            installationId: String,
+            deviceId: String,
+            flavor: String,
+            accessVersion: Int,
+            keyId: String
+        ): String = listOf(
+            "moodtools-private-catalog-authorize-v1",
+            "nonce=$nonce",
+            "installationId=$installationId",
+            "deviceId=$deviceId",
+            "flavor=$flavor",
+            "accessVersion=$accessVersion",
+            "keyId=$keyId"
+        ).joinToString("\n")
+
         fun recoveryBindingCanonical(
             nonce: String,
             installationId: String,

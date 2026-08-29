@@ -14,7 +14,10 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-class ModuleCatalogClient(private val context: Context) {
+class ModuleCatalogClient(
+    private val context: Context,
+    private val accessManager: LauncherAccessManager
+) {
     private val cacheFile = File(context.filesDir, "launcher-module-catalog.json")
     @Volatile
     private var memoryCache: List<CatalogModule>? = null
@@ -28,7 +31,7 @@ class ModuleCatalogClient(private val context: Context) {
     fun loadCached(): List<CatalogModule>? {
         memoryCache?.let { return it }
         if (!cacheFile.isFile) return null
-        return runCatching { parse(JSONObject(cacheFile.readText())) }
+        return runCatching { parse(JSONObject(cacheFile.readText()), null) }
             .getOrNull()
             ?.also { memoryCache = it }
     }
@@ -36,11 +39,24 @@ class ModuleCatalogClient(private val context: Context) {
     /** Refreshes the cache from the signed launcher endpoint. */
     fun refresh(): List<CatalogModule> {
         val remote = requestCatalog()
-        val parsed = parse(remote)
-        memoryCache = parsed
+        val publicModules = parse(remote, null)
+        memoryCache = publicModules
         runCatching { cacheFile.writeText(remote.toString()) }
             .onFailure { Log.w(TAG, "Could not persist module catalog cache", it) }
-        return parsed
+        val privateModules = runCatching {
+            val privateCatalog = accessManager.privateCatalog()
+            privateCatalog.envelopes.flatMap { envelope ->
+                val payload = SignedEnvelopeVerifier.payload(envelope)
+                val scope = payload.getString("scope").also { require(it.matches(PRIVATE_SCOPE_PATTERN)) }
+                parse(envelope, scope, privateCatalog.capability)
+            }
+        }.onFailure {
+            Log.i(TAG, "Private catalog is unavailable for this launcher identity", it)
+        }.getOrDefault(emptyList())
+        return (publicModules + privateModules).also { modules ->
+            require(modules.map { it.config.packageName }.distinct().size == modules.size)
+            require(modules.map { it.slug }.distinct().size == modules.size)
+        }
     }
 
     private fun requestCatalog(): JSONObject {
@@ -57,10 +73,21 @@ class ModuleCatalogClient(private val context: Context) {
         }
     }
 
-    private fun parse(envelope: JSONObject): List<CatalogModule> {
+    private fun parse(
+        envelope: JSONObject,
+        privateScope: String?,
+        privateCatalogCapability: String? = null
+    ): List<CatalogModule> {
         val payload = SignedEnvelopeVerifier.payload(envelope)
         require(payload.getInt("schema") == 1)
-        require(payload.getString("audience") == "moodtools-standalone")
+        if (privateScope == null) {
+            require(payload.getString("audience") == "moodtools-standalone")
+            require(!payload.has("scope"))
+        } else {
+            require(privateScope.matches(PRIVATE_SCOPE_PATTERN))
+            require(payload.getString("audience") == "moodtools-standalone-private")
+            require(payload.getString("scope") == privateScope)
+        }
         val modules = payload.getJSONArray("modules")
         require(modules.length() in 0..MAX_CATALOG_MODULES)
         return buildList {
@@ -124,7 +151,9 @@ class ModuleCatalogClient(private val context: Context) {
                         updateStatus = updateStatus,
                         statusChangedAtEpochSeconds = statusChangedAt,
                         features = parseFeatures(item, slug, build),
-                        downloadSizeByAbi = parseDownloadSizes(item, supportedAbis)
+                        downloadSizeByAbi = parseDownloadSizes(item, supportedAbis),
+                        privateScope = privateScope,
+                        privateCatalogCapability = privateCatalogCapability
                     )
                 )
             }
@@ -278,6 +307,7 @@ class ModuleCatalogClient(private val context: Context) {
         private val PACKAGE_PATTERN = Regex("[A-Za-z0-9_.]{3,200}")
         private val SLUG_PATTERN = Regex("[a-z0-9][a-z0-9-]{0,63}")
         private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
+        private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
         private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a")
 
         private fun playStoreUrl(packageName: String) =

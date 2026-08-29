@@ -33,7 +33,10 @@ class ModuleChangelogClient(private val context: android.content.Context) {
     }
 
     private fun refresh(module: CatalogModule): ModuleChangelog {
-        val connection = open("$BASE_URL/api/launcher-module-changelog/${module.slug}/${module.build}")
+        val connection = open(
+            "$BASE_URL/api/launcher-module-changelog/${module.slug}/${module.build}",
+            module.privateCatalogCapability
+        )
         return try {
             require(connection.responseCode in 200..299)
             val envelope = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
@@ -130,7 +133,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
         "${module.slug}-${module.build}.json"
     )
 
-    private fun open(address: String): HttpURLConnection {
+    private fun open(address: String, capability: String?): HttpURLConnection {
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
         return (url.openConnection() as HttpURLConnection).apply {
@@ -139,6 +142,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
             readTimeout = 30_000
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
+            capability?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
     }
 

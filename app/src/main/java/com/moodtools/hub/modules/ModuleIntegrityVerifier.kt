@@ -47,6 +47,19 @@ class ModuleIntegrityVerifier(
         require(payload.getString("packageName") == module.packageName) {
             "Signed manifest belongs to another package"
         }
+        val signedPrivateScope = payload.optString("privateScope").takeIf(String::isNotBlank)
+        signedPrivateScope?.let { require(it.matches(PRIVATE_SCOPE_PATTERN)) }
+        val privateMarkerFile = File(moduleDirectory, ModuleRepository.PRIVATE_INSTALL_MARKER)
+        if (signedPrivateScope == null) {
+            require(!privateMarkerFile.exists()) { "A public module contains a private scope marker" }
+        } else {
+            val marker = JSONObject(regularFile(moduleDirectory, ModuleRepository.PRIVATE_INSTALL_MARKER)
+                .readText(Charsets.UTF_8))
+            require(marker.optInt("schema") == 1 && marker.optString("packageName") == module.packageName &&
+                marker.optString("scope") == signedPrivateScope) {
+                "The private module scope does not match its signed manifest"
+            }
+        }
         require(payload.optInt("minimumBootstrap", 1) <= bootstrap) {
             "Module requires a newer launcher bootstrap"
         }

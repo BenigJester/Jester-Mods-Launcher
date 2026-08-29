@@ -111,4 +111,27 @@ class LauncherProofKeyManagerTest {
             )
         )
     }
+
+    @Test
+    fun bindsPrivateCatalogToProofIdentity() {
+        assertEquals(
+            listOf(
+                "moodtools-private-catalog-authorize-v1",
+                "nonce=${"n".repeat(43)}",
+                "installationId=${"i".repeat(43)}",
+                "deviceId=${"d".repeat(43)}",
+                "flavor=nonroot",
+                "accessVersion=4",
+                "keyId=${"k".repeat(43)}"
+            ).joinToString("\n"),
+            LauncherProofKeyManager.privateCatalogAuthorizationCanonical(
+                nonce = "n".repeat(43),
+                installationId = "i".repeat(43),
+                deviceId = "d".repeat(43),
+                flavor = "nonroot",
+                accessVersion = 4,
+                keyId = "k".repeat(43)
+            )
+        )
+    }
 }

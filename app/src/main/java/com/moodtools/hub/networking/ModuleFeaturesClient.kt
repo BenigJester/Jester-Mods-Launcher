@@ -17,7 +17,7 @@ class ModuleFeaturesClient(private val context: android.content.Context) {
 
     private fun refresh(module: CatalogModule): List<ModuleFeatureGroup> {
         val summary = requireNotNull(module.features)
-        val connection = open(BASE_URL + summary.path)
+        val connection = open(BASE_URL + summary.path, module.privateCatalogCapability)
         return try {
             require(connection.responseCode in 200..299) {
                 "Feature request failed: ${connection.responseCode}"
@@ -89,7 +89,7 @@ class ModuleFeaturesClient(private val context: android.content.Context) {
         "${module.slug}-${module.build}.json"
     )
 
-    private fun open(address: String): HttpURLConnection {
+    private fun open(address: String, capability: String?): HttpURLConnection {
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
         return (url.openConnection() as HttpURLConnection).apply {
@@ -98,6 +98,7 @@ class ModuleFeaturesClient(private val context: android.content.Context) {
             readTimeout = 30_000
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
+            capability?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
     }
 

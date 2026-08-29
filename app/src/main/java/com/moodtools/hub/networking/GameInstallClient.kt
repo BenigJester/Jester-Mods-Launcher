@@ -50,7 +50,7 @@ class GameInstallClient(private val context: Context) {
                 destination = temporary,
                 expectedBytes = source.size,
                 openConnection = { range ->
-                    open(ModuleCatalogClient.BASE_URL + source.path).apply {
+                    open(ModuleCatalogClient.BASE_URL + source.path, game.privateCatalogCapability).apply {
                         range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
                     }
                 },
@@ -277,7 +277,7 @@ class GameInstallClient(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun open(address: String): HttpURLConnection {
+    private fun open(address: String, capability: String?): HttpURLConnection {
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
         return (url.openConnection() as HttpURLConnection).apply {
@@ -288,6 +288,7 @@ class GameInstallClient(private val context: Context) {
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/vnd.android.package-archive")
             setRequestProperty("Accept-Encoding", "identity")
+            capability?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
     }
 

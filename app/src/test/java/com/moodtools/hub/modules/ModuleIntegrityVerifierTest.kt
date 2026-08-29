@@ -99,7 +99,27 @@ class ModuleIntegrityVerifierTest {
         assertEquals(ABI, verified.abi)
     }
 
-    private fun fixture(nonRootMethod: NonRootMethod? = null): Fixture {
+    @Test
+    fun verifiesDownloadedPrivateScopeAgainstSignedManifest() {
+        val fixture = fixture(privateScope = "friends-zombie")
+
+        val verified = fixture.verifier.verify(fixture.directory, fixture.module, ABI)
+
+        assertEquals(41L, verified.build)
+    }
+
+    @Test
+    fun rejectsPrivateManifestWithoutScopeMarker() {
+        val fixture = fixture(privateScope = "friends-zombie")
+        File(fixture.directory, ModuleRepository.PRIVATE_INSTALL_MARKER).delete()
+
+        assertFailure(fixture, "missing")
+    }
+
+    private fun fixture(
+        nonRootMethod: NonRootMethod? = null,
+        privateScope: String? = null
+    ): Fixture {
         val directory = temporary.newFolder(PACKAGE_NAME)
         val dexBytes = "signed-dex-1".toByteArray()
         val nativeBytes = "signed-native-payload".toByteArray()
@@ -133,7 +153,7 @@ class ModuleIntegrityVerifierTest {
                 nonRootMethod?.let { json.put("nonrootMethod", it.jsonValue) }
             }
 
-        val payloadBytes = JSONObject()
+        val payload = JSONObject()
             .put("schema", 1)
             .put("audience", "moodtools-standalone")
             .put("slug", "cooking-madness")
@@ -152,8 +172,8 @@ class ModuleIntegrityVerifierTest {
                     .put("path", "/api/launcher-module-payload/cooking-madness/41/dex/classes.dex")
                     .put("sha256", sha256(dexBytes))
                     .put("size", dexBytes.size)))
-            .toString()
-            .toByteArray()
+            .also { json -> privateScope?.let { json.put("privateScope", it) } }
+        val payloadBytes = payload.toString().toByteArray()
         val signature = Signature.getInstance("SHA256withRSA").run {
             initSign(keys.private)
             update(payloadBytes)
@@ -164,6 +184,15 @@ class ModuleIntegrityVerifierTest {
             .put("payload", Base64.getEncoder().encodeToString(payloadBytes))
             .put("signature", Base64.getEncoder().encodeToString(signature))
         File(directory, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE).writeText(envelope.toString())
+        privateScope?.let {
+            File(directory, ModuleRepository.PRIVATE_INSTALL_MARKER).writeText(
+                JSONObject()
+                    .put("schema", 1)
+                    .put("packageName", PACKAGE_NAME)
+                    .put("scope", it)
+                    .toString()
+            )
+        }
 
         return Fixture(
             directory = directory,

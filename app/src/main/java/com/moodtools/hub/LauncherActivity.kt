@@ -290,6 +290,13 @@ class LauncherActivity : ComponentActivity() {
             return
         }
         if (pendingPackageReplacement != null) return
+        viewModel.authorizePackageReplacement(game) {
+            preparePackageReplacement(entry, game)
+        }
+    }
+
+    private fun preparePackageReplacement(entry: LibraryGame, game: InstalledGame) {
+        if (pendingPackageReplacement != null) return
         packageReplacementPhase = PackageReplacementPhase.PREPARING
         val updatingPatchedInstall = entry.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL
         viewModel.onPackageReplacementProgress(
@@ -713,8 +720,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private val repository = ModuleRepository(application)
     private val scanner = GameScanner(application)
-    private val catalogClient = ModuleCatalogClient(application)
     private val accessManager = LauncherAccessManager(application)
+    private val catalogClient = ModuleCatalogClient(application, accessManager)
     private val launcherUpdateClient = LauncherUpdateClient(application)
     private val moduleChangelogClient = ModuleChangelogClient(application)
     private val gameInstallClient = GameInstallClient(application)
@@ -899,7 +906,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         initialLink: Uri? = null,
         bypassPrivateApproval: Boolean = false
     ) {
-        val installedPrivateModules = repository.embeddedPrivateModules()
+        val installedPrivateModules = repository.privateModules()
         val configuredScope = BuildConfig.PRIVATE_MODULE_SCOPE.takeIf {
             BuildConfig.PRIVATE_MODULE_ENABLED
         }
@@ -1446,6 +1453,22 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun launchLibraryGame(entry: LibraryGame) {
         entry.game?.let(::launchGame)
+    }
+
+    fun authorizePackageReplacement(game: InstalledGame, onAuthorized: () -> Unit) {
+        if (!game.moduleSupported || _launchState.value.inProgress || _updateState.value.inProgress) return
+        _launchState.value = LaunchUiState(
+            inProgress = true,
+            headline = "Checking access",
+            detail = "Verifying this add-on before preparing the patched game."
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!checkAccessForNewProtectedAction(
+                    ProtectedActionBoundary.GAME_LAUNCH,
+                    game.packageName
+                )) return@launch
+            withContext(Dispatchers.Main) { onAuthorized() }
+        }
     }
 
     fun onPackageReplacementProgress(headline: String, detail: String) {
@@ -2005,8 +2028,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         progressHeadline: String = "Downloading add-on",
         progressDetail: String? = null
     ): com.moodtools.hub.networking.UpdateResult {
-        require(privateScopeForPackage(request.packageName) == null) {
-            "The embedded private add-on can only be updated by installing a new signed build that contains it."
+        require(repository.embeddedPrivateScope(request.packageName) == null) {
+            "The embedded private add-on can only be updated by installing a new signed launcher build that contains it."
         }
         val game = gameHint?.takeIf { it.packageName == request.packageName }
             ?: _games.value.firstOrNull { it.packageName == request.packageName }
@@ -2156,11 +2179,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun privateScopeForPackage(packageName: String): String? =
-        if (BuildConfig.PRIVATE_MODULE_ENABLED &&
+        _availableModules.value.firstOrNull { it.catalog.config.packageName == packageName }
+            ?.catalog?.privateScope
+            ?: if (BuildConfig.PRIVATE_MODULE_ENABLED &&
             packageName == BuildConfig.PRIVATE_MODULE_PACKAGE) {
             BuildConfig.PRIVATE_MODULE_SCOPE
         } else {
-            repository.embeddedPrivateScope(packageName)
+            repository.privateScope(packageName)
         }
 
     private fun beginReleaseVerification(packageName: String, gate: ReleaseVerificationRequired) {

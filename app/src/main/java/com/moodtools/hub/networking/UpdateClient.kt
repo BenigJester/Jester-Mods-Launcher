@@ -4,6 +4,7 @@ import android.util.Base64
 import android.util.Log
 import com.moodtools.hub.BuildConfig
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
+import com.moodtools.hub.modules.ModuleRepository
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -144,6 +145,11 @@ class UpdateClient(private val moduleRoot: File) {
         require(payload.getInt("schema") == 1)
         require(payload.getString("audience") == "moodtools-standalone")
         require(payload.getString("packageName") == packageName)
+        val privateScope = payload.optString("privateScope").takeIf(String::isNotBlank)
+        privateScope?.let { require(it.matches(PRIVATE_SCOPE_PATTERN)) }
+        require(privateScope == authorization.privateScope) {
+            "The module authorization does not match its signed private scope"
+        }
         require(payload.optInt("minimumBootstrap", 1) <= bootstrap)
         val build = payload.getLong("build").also { require(it > 0) }
         val version = payload.getString("version").trim().also { require(it.isNotEmpty() && it.length <= 64) }
@@ -176,10 +182,12 @@ class UpdateClient(private val moduleRoot: File) {
         val nextDex = File(moduleRoot, "classes.dex.next")
         val nextConfig = File(moduleRoot, "config.json.next")
         val nextSignedManifest = File(moduleRoot, "${ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE}.next")
+        val nextPrivateMarker = privateScope?.let { File(moduleRoot, "${ModuleRepository.PRIVATE_INSTALL_MARKER}.next") }
         nextNative.delete()
         nextDex.delete()
         nextConfig.delete()
         nextSignedManifest.delete()
+        nextPrivateMarker?.delete()
         try {
             download(
                 path = native.getString("path"),
@@ -220,13 +228,21 @@ class UpdateClient(private val moduleRoot: File) {
                 }
             nextConfig.writeText(config.toString())
             nextSignedManifest.writeText(envelope.toString())
-            commitStandalonePayload(nextNative, nextDex, nextConfig, nextSignedManifest)
+            nextPrivateMarker?.writeText(
+                JSONObject()
+                    .put("schema", 1)
+                    .put("packageName", packageName)
+                    .put("scope", privateScope)
+                    .toString()
+            )
+            commitStandalonePayload(nextNative, nextDex, nextConfig, nextSignedManifest, nextPrivateMarker)
             File(moduleRoot, "update.json").writeText(payload.toString())
         } finally {
             nextNative.delete()
             nextDex.delete()
             nextConfig.delete()
             nextSignedManifest.delete()
+            nextPrivateMarker?.delete()
         }
         return UpdateResult(build, version, notes.takeIf(String::isNotBlank))
     }
@@ -235,26 +251,32 @@ class UpdateClient(private val moduleRoot: File) {
         nextNative: File,
         nextDex: File,
         nextConfig: File,
-        nextSignedManifest: File
+        nextSignedManifest: File,
+        nextPrivateMarker: File?
     ) {
-        val targets = listOf(
+        val requiredTargets = listOf(
             nextNative to File(moduleRoot, "libmenu_native.so"),
             nextDex to File(moduleRoot, "classes.dex"),
             nextConfig to File(moduleRoot, "config.json"),
             nextSignedManifest to File(moduleRoot, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE)
         )
-        val backups = targets.map { (_, target) -> target to File(moduleRoot, "${target.name}.bak") }
+        val privateTarget = File(moduleRoot, ModuleRepository.PRIVATE_INSTALL_MARKER)
+        val allTargets = requiredTargets.map { it.second } + privateTarget
+        val backups = allTargets.map { target -> target to File(moduleRoot, "${target.name}.bak") }
         backups.forEach { (_, backup) -> backup.delete() }
         try {
             backups.forEach { (target, backup) ->
                 if (target.isFile) require(target.renameTo(backup)) { "Could not back up ${target.name}" }
             }
-            targets.forEach { (next, target) ->
+            requiredTargets.forEach { (next, target) ->
                 require(next.renameTo(target)) { "Could not commit ${target.name}" }
+            }
+            nextPrivateMarker?.let {
+                require(it.renameTo(privateTarget)) { "Could not commit ${privateTarget.name}" }
             }
             backups.forEach { (_, backup) -> backup.delete() }
         } catch (error: Throwable) {
-            targets.forEach { (_, target) -> target.delete() }
+            allTargets.forEach(File::delete)
             backups.forEach { (target, backup) -> if (backup.isFile) backup.renameTo(target) }
             throw error
         } finally {
@@ -392,5 +414,9 @@ class UpdateClient(private val moduleRoot: File) {
             setRequestProperty("Accept", "application/json, application/octet-stream")
             setRequestProperty("Accept-Encoding", "identity")
         }
+    }
+
+    companion object {
+        private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
     }
 }

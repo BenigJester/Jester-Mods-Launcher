@@ -24,10 +24,16 @@ data class LauncherAccountIdentity(
     val accessVersion: Int
 )
 
+data class LauncherPrivateCatalog(
+    val envelopes: List<JSONObject>,
+    val capability: String
+)
+
 class LauncherModuleAuthorization internal constructor(
     val manifest: JSONObject,
     val capability: String,
     val expiresAt: Long,
+    val privateScope: String?,
     internal val proofKeyId: String,
     private val payloadProofProvider: (method: String, path: String) -> LauncherRequestProof
 ) {
@@ -439,11 +445,64 @@ class LauncherAccessManager(context: Context) {
             manifest = response.getJSONObject("manifest"),
             capability = capability,
             expiresAt = expiresAt,
+            privateScope = response.optString("privateScope").takeIf(String::isNotBlank)?.also {
+                require(it.matches(PRIVATE_SCOPE_PATTERN)) { "The private module scope is invalid" }
+            },
             proofKeyId = identity.keyId,
             payloadProofProvider = { method, path ->
                 createPayloadProof(capability, identity.keyId, method, path)
             }
         )
+    }
+
+    fun privateCatalog(): LauncherPrivateCatalog {
+        require(currentLease() != null) { "Active launcher access is required" }
+        val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
+        require(digitalKey.length in 80..4096) { "Active launcher access is required" }
+        val accessVersion = activeAccessVersion()
+        val identity = ensureProofKeyRegistered(digitalKey)
+        ensureProofAttestationRequired(digitalKey, identity)
+        val challengeResponse = postJson(
+            "$BASE_URL/api/launcher/proof/challenge",
+            accessRequest(digitalKey)
+                .put("purpose", "private-catalog")
+                .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
+                .put("keyId", identity.keyId)
+        )
+        require(challengeResponse.optBoolean("ok")) {
+            challengeResponse.optString("message", "The private catalog proof challenge failed")
+        }
+        val nonce = challengeResponse.getString("nonce")
+        validateProofChallenge(challengeResponse, identity.keyId, nonce)
+        val proof = proofKeys.sign(
+            nonce,
+            LauncherProofKeyManager.privateCatalogAuthorizationCanonical(
+                nonce = nonce,
+                installationId = installationId,
+                deviceId = deviceId,
+                flavor = BuildConfig.FLAVOR,
+                accessVersion = accessVersion,
+                keyId = identity.keyId
+            )
+        )
+        val response = postJson(
+            "$BASE_URL/api/launcher/private-catalog",
+            accessRequest(digitalKey).put("proof", proof.toJson())
+        )
+        require(response.optBoolean("ok")) {
+            response.optString("message", "The private module catalog is unavailable")
+        }
+        val catalogs = response.getJSONArray("catalogs")
+        require(catalogs.length() in 0..MAX_PRIVATE_CATALOGS)
+        val capability = response.getString("capability")
+        val expiresAt = response.getLong("expiresAt")
+        val now = System.currentTimeMillis() / 1_000L
+        require(capability.length in 80..4096 && capability.matches(Regex("[A-Za-z0-9_.-]+")) &&
+            expiresAt > now && expiresAt <= now + MODULE_CAPABILITY_TTL_SECONDS + CLOCK_SKEW_SECONDS)
+        val envelopes = buildList {
+            for (index in 0 until catalogs.length()) add(catalogs.getJSONObject(index))
+        }
+        return LauncherPrivateCatalog(envelopes, capability)
     }
 
     private fun ensureProofKeyRegistered(digitalKey: String): LauncherProofIdentity {
@@ -827,6 +886,7 @@ class LauncherAccessManager(context: Context) {
         private const val CLOCK_SKEW_SECONDS = 5L * 60L
         private const val MODULE_CAPABILITY_TTL_SECONDS = 10L * 60L
         private const val PROOF_NONCE_TTL_SECONDS = 2L * 60L
+        private const val MAX_PRIVATE_CATALOGS = 256
         private const val DEVICE_ID_NAMESPACE = "jester-moods-launcher-device-v1"
         private const val RECOVERY_ID_NAMESPACE = "jester-moods-launcher-recovery-v1"
         private const val LEGACY_BROKEN_ANDROID_ID = "9774d56d682e549c"
