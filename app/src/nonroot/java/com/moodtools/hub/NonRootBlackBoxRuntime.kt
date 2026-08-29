@@ -39,6 +39,51 @@ object NonRootBlackBoxRuntime {
         }.getOrDefault(false)
     }
 
+    /** Uninstalls one managed guest, including its BlackBox identity and per-game data. */
+    fun removePackage(context: Context, packageName: String) {
+        require(packagePattern.matches(packageName)) { "Invalid game package name" }
+        val appContext = context.applicationContext
+        val core = BlackBoxCore.get()
+        core.ensureBlackProcessInitialized()
+
+        val wasActive = activePackage(appContext) == packageName
+        val wasRunning = BlackBoxCore.isRunningApplication(packageName, DEFAULT_USER_ID)
+        runCatching { core.stopPackage(packageName, DEFAULT_USER_ID) }
+            .onFailure { error ->
+                Log.w(TAG, "Could not stop virtual package $packageName before removal", error)
+            }
+
+        if (core.isInstalled(packageName, DEFAULT_USER_ID)) {
+            core.uninstallPackageAsUser(packageName, DEFAULT_USER_ID)
+        }
+        check(!core.isInstalled(packageName, DEFAULT_USER_ID)) {
+            "BlackBox could not remove $packageName"
+        }
+        removeRemainingPackageStorage(packageName, DEFAULT_USER_ID)
+
+        launchedPackages.remove(packageName)
+        if (wasActive) clearActivePackage(appContext)
+        if (wasActive || wasRunning) finishVirtualGuestTasks(appContext)
+        Log.i(TAG, "Removed virtual package identity and data for $packageName")
+    }
+
+    private fun removeRemainingPackageStorage(packageName: String, userId: Int) {
+        val targets = listOf(
+            BEnvironment.getDataDir(packageName, userId),
+            BEnvironment.getDeDataDir(packageName, userId),
+            BEnvironment.getExternalDataDir(packageName, userId),
+            BEnvironment.getExternalObbDir(packageName, userId),
+            BEnvironment.getAppDir(packageName)
+        )
+        targets.forEach { target ->
+            if (target.exists()) {
+                check(target.deleteRecursively() && !target.exists()) {
+                    "Could not delete BlackBox storage for $packageName"
+                }
+            }
+        }
+    }
+
     /** Stops every virtual guest and all auxiliary BlackBox processes owned by this launcher. */
     fun shutdown(context: Context) {
         val appContext = context.applicationContext

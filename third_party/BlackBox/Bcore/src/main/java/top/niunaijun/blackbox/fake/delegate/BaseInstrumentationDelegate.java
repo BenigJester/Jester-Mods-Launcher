@@ -7,6 +7,7 @@ import android.app.Application;
 import android.app.Fragment;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
+import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -25,6 +26,7 @@ import android.view.MotionEvent;
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback;
+import top.niunaijun.blackbox.core.env.FacebookLoginCompat;
 import top.niunaijun.blackbox.utils.Reflector;
 
 public class BaseInstrumentationDelegate extends Instrumentation {
@@ -439,7 +441,19 @@ public class BaseInstrumentationDelegate extends Instrumentation {
     }
 
     private void resolveVirtualActivityIntent(Context context, Intent intent) {
-        if (intent == null || intent.getComponent() != null) {
+        if (intent == null) {
+            return;
+        }
+
+        if (FacebookLoginCompat.shouldHideNativeLogin(
+                BActivityThread.getAppPackageName(), intent)) {
+            android.util.Log.w("FacebookLoginCompat",
+                    "Rejected native Facebook SSO at instrumentation boundary");
+            throw new ActivityNotFoundException(
+                    "Native Facebook SSO is unavailable in non-root mode");
+        }
+
+        if (intent.getComponent() != null) {
             return;
         }
 

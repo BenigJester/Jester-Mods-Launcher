@@ -22,6 +22,7 @@ public final class HubApplication extends Application {
     private static final long MODULE_ATTACH_SETTLE_MS = 250L;
     private static final long MODULE_ATTACH_RETRY_MS = 100L;
     private static final int MODULE_ATTACH_MAX_RETRIES = 20;
+    private static final String FACEBOOK_ACTIVITY_PREFIX = "com.facebook.";
 
     private final Map<String, ClassLoader> moduleLoaders = new HashMap<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -263,8 +264,14 @@ public final class HubApplication extends Application {
             }
 
             private boolean isUsable(android.app.Activity activity) {
-                return activity != null && !activity.isFinishing() &&
-                        (android.os.Build.VERSION.SDK_INT < 17 || !activity.isDestroyed());
+                if (activity == null || activity.isFinishing()
+                        || (android.os.Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
+                    return false;
+                }
+                if (activity instanceof FacebookCallbackActivity) {
+                    return false;
+                }
+                return !activity.getClass().getName().startsWith(FACEBOOK_ACTIVITY_PREFIX);
             }
 
             private void startModule(android.app.Activity activity) {

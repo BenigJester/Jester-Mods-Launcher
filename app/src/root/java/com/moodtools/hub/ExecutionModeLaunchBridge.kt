@@ -6,6 +6,7 @@ import android.os.Looper
 import android.widget.Toast
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.LibraryLaunchAction
+import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
@@ -22,6 +23,44 @@ object ExecutionModeLaunchBridge {
     fun prepare(context: Context): String? = null
 
     fun onLauncherTaskRemoved(context: Context) = Unit
+
+    fun removeLibraryGameData(context: Context, game: LibraryGame) = Unit
+
+    fun clearLibraryGameData(context: Context, game: LibraryGame) {
+        val packageName = game.packageName
+        require(packagePattern.matches(packageName)) { "Invalid game package name" }
+        check(game.game != null) { "The installed game could not be found" }
+
+        val userResult = RootShell.run("am get-current-user")
+        check(userResult.success) { "Could not determine the current Android user" }
+        val userId = userResult.output
+            .lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.matches(Regex("^[0-9]+$")) }
+            ?.toIntOrNull()
+            ?: error("Could not determine the current Android user")
+
+        val installed = RootShell.run("pm path --user $userId ${quote(packageName)}")
+        check(installed.success && installed.output.lineSequence().any { it.trim().startsWith("package:") }) {
+            "The installed game could not be found"
+        }
+
+        val cleared = RootShell.run("pm clear --user $userId ${quote(packageName)}")
+        check(cleared.success && cleared.output.lineSequence().any { it.trim() == "Success" }) {
+            "Android could not clear the installed game's data"
+        }
+
+        val externalTargets = listOf(
+            "/storage/emulated/$userId/Android/data/$packageName",
+            "/storage/emulated/$userId/Android/obb/$packageName",
+            "/sdcard/Android/data/$packageName",
+            "/sdcard/Android/obb/$packageName"
+        )
+        val externalCleanup = RootShell.run(
+            "rm -rf -- ${externalTargets.joinToString(" ") { quote(it) }}"
+        )
+        check(externalCleanup.success) { "Could not remove the game's remaining external data" }
+    }
 
     fun requiresPackageReplacement(context: Context, game: InstalledGame): Boolean = false
 

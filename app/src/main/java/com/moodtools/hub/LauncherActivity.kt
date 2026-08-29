@@ -31,6 +31,7 @@ import com.moodtools.hub.modules.ChangelogUiState
 import com.moodtools.hub.modules.DeviceArchitectureGuard
 import com.moodtools.hub.modules.GameInstallSource
 import com.moodtools.hub.modules.GameInstallUiState
+import com.moodtools.hub.modules.GameDataResetUiState
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.LibraryGameStatus
@@ -136,6 +137,7 @@ class LauncherActivity : ComponentActivity() {
                     downloadListing = viewModel.downloadListing,
                     selectedGame = viewModel.selectedLibraryGame,
                     updateState = viewModel.updateState,
+                    gameDataResetState = viewModel.gameDataResetState,
                     gameInstallState = viewModel.gameInstallState,
                     launcherUpdateState = viewModel.launcherUpdateState,
                     changelogState = viewModel.changelogState,
@@ -150,6 +152,7 @@ class LauncherActivity : ComponentActivity() {
                     onConfirmDirectPatch = ::confirmPackageReplacementPrompt,
                     onDismissDirectPatch = ::cancelPackageReplacement,
                     onRemoveFromLibrary = viewModel::removeFromLibrary,
+                    onClearGameData = viewModel::clearGameData,
                     onRemoveMultipleFromLibrary = viewModel::removeMultipleFromLibrary,
                     onRefreshCatalog = viewModel::refreshCatalogAndLibrary,
                     onBrowse = viewModel::openModuleBrowser,
@@ -691,6 +694,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private val _updateState = MutableStateFlow(ModuleUpdateUiState())
     val updateState: StateFlow<ModuleUpdateUiState> = _updateState
+
+    private val _gameDataResetState = MutableStateFlow(GameDataResetUiState())
+    val gameDataResetState: StateFlow<GameDataResetUiState> = _gameDataResetState
 
     private val _gameInstallState = MutableStateFlow(GameInstallUiState())
     val gameInstallState: StateFlow<GameInstallUiState> = _gameInstallState
@@ -1426,6 +1432,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _selectedLibraryGame.value = game
         _selectedGame.value = game.game
         _updateState.value = ModuleUpdateUiState()
+        _gameDataResetState.value = GameDataResetUiState()
         _launchState.value = LaunchUiState()
     }
 
@@ -1433,6 +1440,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _selectedLibraryGame.value = null
         _selectedGame.value = null
         _updateState.value = ModuleUpdateUiState()
+        _gameDataResetState.value = GameDataResetUiState()
         _launchState.value = LaunchUiState()
     }
 
@@ -1525,6 +1533,50 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         removeLibraryEntries(listOf(entry))
     }
 
+    fun clearGameData(entry: LibraryGame) {
+        if (_gameDataResetState.value.inProgress || _launchState.value.inProgress ||
+            _updateState.value.inProgress) return
+        val rootMode = BuildConfig.IS_ROOT_MODE
+        _gameDataResetState.value = GameDataResetUiState(
+            inProgress = true,
+            headline = if (rootMode) "Clearing game data" else "Clearing managed game data",
+            detail = if (rootMode) {
+                "Resetting the installed game to a fresh state."
+            } else {
+                "Removing the BlackBox installation and its virtual identity."
+            }
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                ExecutionModeLaunchBridge.clearLibraryGameData(getApplication(), entry)
+            }.onSuccess {
+                libraryPreferences.edit().remove(lastLaunchKey(entry.packageName)).apply()
+                _launchState.value = LaunchUiState()
+                refreshGames(forceGameScan = true)
+                _gameDataResetState.value = GameDataResetUiState(
+                    completed = true,
+                    headline = "Game data cleared",
+                    detail = if (rootMode) {
+                        "The next Play starts with fresh game data."
+                    } else {
+                        "The next Play will create a fresh managed installation."
+                    }
+                )
+            }.onFailure { error ->
+                android.util.Log.e(
+                    "JesterMoodsLibrary",
+                    "Could not clear managed data for ${entry.packageName}",
+                    error
+                )
+                _gameDataResetState.value = GameDataResetUiState(
+                    failed = true,
+                    headline = "Couldn't clear game data",
+                    detail = "Restart Jester Mods and try again."
+                )
+            }
+        }
+    }
+
     fun removeMultipleFromLibrary(entries: List<LibraryGame>) {
         removeLibraryEntries(entries)
     }
@@ -1536,7 +1588,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             val removedPackages = linkedSetOf<String>()
             var failures = 0
             targets.forEach { entry ->
-                runCatching { repository.removeFromLibrary(entry.packageName) }.onSuccess {
+                runCatching {
+                    ExecutionModeLaunchBridge.removeLibraryGameData(getApplication(), entry)
+                    repository.removeFromLibrary(entry.packageName)
+                }.onSuccess {
                     removedPackages += entry.packageName
                     runCatching { storageManager.onAddOnRemoved(entry.packageName) }
                         .onFailure { error ->

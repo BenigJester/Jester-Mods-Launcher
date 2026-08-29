@@ -24,5 +24,27 @@
             android:name=".LauncherTaskLifecycleService"
             android:exported="false"
             android:stopWithTask="false" />
+
+        <!-- Facebook's browser callback cannot resolve directly to an activity that exists only
+             inside BlackBox. Receive the standard fbconnect Custom Tab callback in the physical
+             host, validate its cct.<guest-package> authority, then hand it to the matching live
+             virtual Facebook transaction. -->
+        <activity
+            android:name=".FacebookCallbackActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="fbconnect" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

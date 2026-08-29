@@ -3,6 +3,7 @@ package com.moodtools.hub
 import android.content.Context
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.LibraryLaunchAction
+import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.NonRootMethod
 import com.moodtools.hub.modules.architectureLabel
@@ -20,6 +21,19 @@ object ExecutionModeLaunchBridge {
 
     fun onLauncherTaskRemoved(context: Context) {
         NonRootBlackBoxRuntime.shutdown(context)
+    }
+
+    fun removeLibraryGameData(context: Context, game: LibraryGame) {
+        if (game.module.nonRootMethod == NonRootMethod.INJECTION) {
+            NonRootBlackBoxRuntime.removePackage(context, game.packageName)
+        }
+    }
+
+    fun clearLibraryGameData(context: Context, game: LibraryGame) {
+        require(game.module.nonRootMethod == NonRootMethod.INJECTION) {
+            "Only managed BlackBox games have clearable sandbox data"
+        }
+        NonRootBlackBoxRuntime.removePackage(context, game.packageName)
     }
 
     fun requiresPackageReplacement(context: Context, game: InstalledGame): Boolean {

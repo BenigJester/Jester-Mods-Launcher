@@ -22,6 +22,7 @@ interface IBActivityThread {
 
     void finishActivity(IBinder token);
     void handleNewIntent(IBinder token, in Intent intent);
+    int handleNewIntentForActivity(in ComponentName componentName, in Intent intent);
 
     void scheduleReceiver(in ReceiverData data);
 }

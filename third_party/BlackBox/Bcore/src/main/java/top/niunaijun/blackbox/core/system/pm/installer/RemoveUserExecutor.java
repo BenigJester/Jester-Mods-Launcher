@@ -15,6 +15,7 @@ public class RemoveUserExecutor implements Executor {
         BzFileUtils.deleteDir(BEnvironment.getDataDir(packageName, userId));
         BzFileUtils.deleteDir(BEnvironment.getDeDataDir(packageName, userId));
         BzFileUtils.deleteDir(BEnvironment.getExternalDataDir(packageName, userId));
+        BzFileUtils.deleteDir(BEnvironment.getExternalObbDir(packageName, userId));
         return 0;
     }
 }

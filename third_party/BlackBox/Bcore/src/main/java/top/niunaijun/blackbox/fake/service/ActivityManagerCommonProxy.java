@@ -20,6 +20,7 @@ import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.core.env.AppSystemEnv;
 import top.niunaijun.blackbox.core.env.ExternalActivityGuard;
 import top.niunaijun.blackbox.core.env.SamsungHealthCompat;
+import top.niunaijun.blackbox.core.env.FacebookLoginCompat;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.fake.provider.FileProviderHandler;
@@ -141,6 +142,15 @@ public class ActivityManagerCommonProxy {
             if (webSdkRewritten != null) {
                 replaceIntentArg(args, intent, webSdkRewritten);
                 intent = webSdkRewritten;
+            }
+
+            // Package-manager filtering should make a guest's Facebook SDK choose web login.
+            // Keep this final guard so a cached or explicit Katana platform intent cannot escape
+            // BlackBox and be validated against the non-root host's signing certificate.
+            if (FacebookLoginCompat.shouldHideNativeLogin(
+                    BActivityThread.getAppPackageName(), intent)) {
+                Slog.w(TAG, "Blocked native Facebook SSO; web fallback required");
+                return getStartIntentNotResolvedCode();
             }
 
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveActivity(

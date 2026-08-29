@@ -137,6 +137,14 @@ data class ModuleUpdateUiState(
     val changelog: List<ModuleChangelogEntry> = emptyList()
 )
 
+data class GameDataResetUiState(
+    val inProgress: Boolean = false,
+    val completed: Boolean = false,
+    val failed: Boolean = false,
+    val headline: String? = null,
+    val detail: String? = null
+)
+
 data class GameInstallUiState(
     val inProgress: Boolean = false,
     val installing: Boolean = false,
@@ -301,6 +309,7 @@ fun GameHubScreen(
     downloadListing: StateFlow<ModuleListing?>,
     selectedGame: StateFlow<LibraryGame?>,
     updateState: StateFlow<ModuleUpdateUiState>,
+    gameDataResetState: StateFlow<GameDataResetUiState>,
     gameInstallState: StateFlow<GameInstallUiState>,
     launcherUpdateState: StateFlow<LauncherUpdateUiState>,
     changelogState: StateFlow<ChangelogUiState>,
@@ -315,6 +324,7 @@ fun GameHubScreen(
     onConfirmDirectPatch: () -> Unit,
     onDismissDirectPatch: () -> Unit,
     onRemoveFromLibrary: (LibraryGame) -> Unit,
+    onClearGameData: (LibraryGame) -> Unit,
     onRemoveMultipleFromLibrary: (List<LibraryGame>) -> Unit,
     onRefreshCatalog: () -> Unit,
     onBrowse: () -> Unit,
@@ -344,6 +354,7 @@ fun GameHubScreen(
     val pendingDownload by downloadListing.collectAsStateWithLifecycle()
     val selected by selectedGame.collectAsStateWithLifecycle()
     val update by updateState.collectAsStateWithLifecycle()
+    val gameDataReset by gameDataResetState.collectAsStateWithLifecycle()
     val gameInstall by gameInstallState.collectAsStateWithLifecycle()
     val launcherUpdate by launcherUpdateState.collectAsStateWithLifecycle()
     val changelog by changelogState.collectAsStateWithLifecycle()
@@ -429,6 +440,7 @@ fun GameHubScreen(
                                     screenCache = screenCache,
                                     game = visiblePage.game,
                                     update = update,
+                                    gameDataReset = gameDataReset,
                                     launch = launch,
                                     refreshing = refreshingCatalog,
                                     onBack = onBack,
@@ -436,6 +448,7 @@ fun GameHubScreen(
                                     onVerify = onVerify,
                                     onLaunch = { onLaunch(visiblePage.game) },
                                     onRemoveFromLibrary = { onRemoveFromLibrary(visiblePage.game) },
+                                    onClearGameData = { onClearGameData(visiblePage.game) },
                                     onRefresh = onRefreshCatalog,
                                     onResolve = visiblePage.game.listing?.let { listing -> { onOpenDownload(listing) } }
                                 )
@@ -3254,9 +3267,21 @@ private fun LibraryScreen(
                 )
             },
             text = {
+                val removesManagedCopies = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
+                    it.module.nonRootMethod == NonRootMethod.INJECTION
+                }
+                val keepsPatchedInstalls = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
+                    it.module.nonRootMethod == NonRootMethod.DIRECT_PATCH
+                }
                 Text(
-                    "This removes the selected launcher add-on support and any retryable patch files they own. " +
-                        "Installed Android games and save data stay on this device."
+                    when {
+                        removesManagedCopies && keepsPatchedInstalls ->
+                            "This removes the selected add-ons. Managed BlackBox game copies are uninstalled with their sandbox identity, settings, and save data. Directly patched Android games and original installations stay on this device."
+                        removesManagedCopies ->
+                            "This removes the selected add-ons and their managed BlackBox game copies, including sandbox identities, settings, and save data. Original Android games and their data will not be changed."
+                        else ->
+                            "This removes the selected launcher add-on support and any retryable patch files they own. Installed Android games and save data stay on this device."
+                    }
                 )
             },
             confirmButton = {
@@ -3501,6 +3526,7 @@ private fun ModuleScreen(
     screenCache: LauncherScreenCache,
     game: LibraryGame,
     update: ModuleUpdateUiState,
+    gameDataReset: GameDataResetUiState,
     launch: LaunchUiState,
     refreshing: Boolean,
     onBack: () -> Unit,
@@ -3508,6 +3534,7 @@ private fun ModuleScreen(
     onVerify: (String) -> Unit,
     onLaunch: () -> Unit,
     onRemoveFromLibrary: () -> Unit,
+    onClearGameData: () -> Unit,
     onRefresh: () -> Unit,
     onResolve: (() -> Unit)?
 ) {
@@ -3515,6 +3542,7 @@ private fun ModuleScreen(
     val bitmap = rememberLibraryBitmap(screenCache, game, 192)
     val haptic = LocalHapticFeedback.current
     var confirmRemoval by remember(game.packageName) { mutableStateOf(false) }
+    var confirmDataReset by remember(game.packageName) { mutableStateOf(false) }
 
     RefreshableScreen(
         refreshing = refreshing,
@@ -3777,11 +3805,56 @@ private fun ModuleScreen(
         item {
             OutlinedButton(
                 onClick = { confirmRemoval = true },
-                enabled = !update.inProgress && !launch.inProgress,
+                enabled = !update.inProgress && !launch.inProgress && !gameDataReset.inProgress,
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(vertical = 14.dp)
             ) {
                 Text("Remove from Library", color = Danger, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        val canClearGameData = if (BuildConfig.IS_ROOT_MODE) {
+            game.game != null
+        } else {
+            game.module.nonRootMethod == NonRootMethod.INJECTION
+        }
+        if (canClearGameData) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { confirmDataReset = true },
+                        enabled = !update.inProgress && !launch.inProgress && !gameDataReset.inProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        border = BorderStroke(1.dp, Hairline),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                    ) {
+                        Text(
+                            if (gameDataReset.inProgress) "Clearing data..." else "Clear data",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (gameDataReset.headline != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(SurfaceRaised.copy(alpha = 0.72f))
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .animateContentSize()
+                        ) {
+                            Text(
+                                gameDataReset.headline,
+                                color = if (gameDataReset.failed) Danger else Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            gameDataReset.detail?.let { detail ->
+                                Spacer(Modifier.height(3.dp))
+                                Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
             }
         }
         item { Spacer(Modifier.height(12.dp)) }
@@ -3803,6 +3876,8 @@ private fun ModuleScreen(
                             BuildConfig.IS_ROOT_MODE
                         ).method == NonRootMethod.DIRECT_PATCH) {
                         "This removes the add-on and its retryable patch files from the launcher. The currently installed patched game and its data stay on Android; it is not uninstalled or restored to the Google Play version."
+                    } else if (!BuildConfig.IS_ROOT_MODE) {
+                        "This removes the add-on and the managed game copy from BlackBox, including its sandbox identity, settings, and save data. The original Android game and its data will not be changed."
                     } else {
                         "This removes only its add-on from the Library. The original Android game and its data will not be changed."
                     }
@@ -3820,6 +3895,42 @@ private fun ModuleScreen(
             dismissButton = {
                 OutlinedButton(
                     onClick = { confirmRemoval = false },
+                    border = BorderStroke(1.dp, Hairline),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                ) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (confirmDataReset) {
+        AlertDialog(
+            onDismissRequest = { confirmDataReset = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = SurfaceRaised,
+            titleContentColor = Color.White,
+            textContentColor = Muted,
+            title = { Text("Clear ${game.title} data?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    if (BuildConfig.IS_ROOT_MODE) {
+                        "This permanently clears the installed game's local identity, sign-in state, settings, saves, cache, downloads, and OBB data. The installed game and its add-on stay in your Library. The next Play starts with fresh game data."
+                    } else {
+                        "This fully removes the managed BlackBox installation, including its virtual identity, sign-in state, settings, saves, cache, downloads, and OBB data. The add-on stays in your Library and the original Android game is untouched. The next Play starts with a fresh managed installation."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDataReset = false
+                        onClearGameData()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Danger, contentColor = Ink)
+                ) { Text("Clear data") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { confirmDataReset = false },
                     border = BorderStroke(1.dp, Hairline),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
                 ) { Text("Cancel") }

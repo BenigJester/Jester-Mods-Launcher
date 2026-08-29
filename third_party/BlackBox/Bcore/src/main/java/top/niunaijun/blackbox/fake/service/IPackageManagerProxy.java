@@ -28,6 +28,7 @@ import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.core.env.AppSystemEnv;
 import top.niunaijun.blackbox.core.env.SamsungHealthCompat;
+import top.niunaijun.blackbox.core.env.FacebookLoginCompat;
 import top.niunaijun.blackbox.fake.FakeCore;
 import top.niunaijun.blackbox.fake.hook.BinderInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
@@ -131,6 +132,40 @@ public class IPackageManagerProxy extends BinderInvocationStub {
         return filtered;
     }
 
+    private static boolean shouldHideNativeFacebookForGuest(Intent intent) {
+        try {
+            return FacebookLoginCompat.shouldHideNativeLogin(
+                    BActivityThread.getAppPackageName(), intent);
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean shouldHideNativeFacebookForGuest(ComponentName componentName) {
+        try {
+            return FacebookLoginCompat.shouldHideNativeLogin(
+                    BActivityThread.getAppPackageName(), componentName);
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static List<ResolveInfo> filterOutNativeFacebookActivities(
+            Intent intent, List<ResolveInfo> resolves) {
+        if (!shouldHideNativeFacebookForGuest(intent)
+                || resolves == null
+                || resolves.isEmpty()) {
+            return resolves;
+        }
+        ArrayList<ResolveInfo> filtered = new ArrayList<>(resolves.size());
+        for (ResolveInfo resolveInfo : resolves) {
+            if (!FacebookLoginCompat.isNativeFacebookActivity(resolveInfo)) {
+                filtered.add(resolveInfo);
+            }
+        }
+        return filtered;
+    }
+
     public IPackageManagerProxy() {
         super(BRActivityThread.get().sPackageManager().asBinder());
     }
@@ -187,6 +222,13 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             // Privacy-first Samsung Health behavior: when host Samsung Account fallback is OFF,
             // ensure SaSDK cannot resolve intents into the host Samsung Account app.
             if (shouldHideHostSamsungAccountForSamsungHealth(intent)) {
+                return null;
+            }
+
+            // Facebook's native activity runs outside BlackBox and attributes the launch to the
+            // non-root host signer. Hide that route from guests so their SDK can select the
+            // browser/custom-tab login flow instead of failing Facebook's key-hash check.
+            if (shouldHideNativeFacebookForGuest(intent)) {
                 return null;
             }
 
@@ -558,6 +600,11 @@ public class IPackageManagerProxy extends BinderInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             ComponentName componentName = (ComponentName) args[0];
             int flags = MethodParameterUtils.toInt(args[1]);
+            if (shouldHideNativeFacebookForGuest(componentName)) {
+                Slog.i(TAG, "Hiding native Facebook auth activity from guest: "
+                        + componentName.flattenToShortString());
+                return null;
+            }
             ActivityInfo activityInfo = BlackBoxCore.getBPackageManager().getActivityInfo(componentName, flags, BlackBoxCore.getUserId());
             if (activityInfo != null)
                 return activityInfo;
@@ -666,6 +713,8 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             List<ResolveInfo> resolves = BlackBoxCore.getBPackageManager()
                     .queryIntentActivities(intent, flags, type, BActivityThread.getUserId());
 
+            resolves = filterOutNativeFacebookActivities(intent, resolves);
+
             if (resolves != null && !resolves.isEmpty()) {
                 if (shouldHideHostSamsungAccountForSamsungHealthCaller()) {
                     resolves = filterOutSamsungAccountActivities(resolves);
@@ -679,7 +728,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             MethodParameterUtils.replaceUserIdIfNeeded(args, args.length - 1);
             Object hostOut = method.invoke(who, args);
 
-            if (!shouldHideHostSamsungAccountForSamsungHealthCaller()) {
+            boolean hideSamsungAccount = shouldHideHostSamsungAccountForSamsungHealthCaller();
+            boolean hideNativeFacebook = shouldHideNativeFacebookForGuest(intent);
+            if (!hideSamsungAccount && !hideNativeFacebook) {
                 return hostOut;
             }
 
@@ -693,7 +744,12 @@ public class IPackageManagerProxy extends BinderInvocationStub {
                 }
             }
 
-            hostList = filterOutSamsungAccountActivities(hostList);
+            if (hideSamsungAccount) {
+                hostList = filterOutSamsungAccountActivities(hostList);
+            }
+            if (hideNativeFacebook) {
+                hostList = filterOutNativeFacebookActivities(intent, hostList);
+            }
             if (hostList == null) {
                 return hostOut;
             }

@@ -244,7 +244,25 @@ import top.niunaijun.blackbox.utils.compat.PackageParserCompat;
     }
 
     public void removePackage(String packageName) {
-        mPackages.remove(packageName);
+        BPackageSettings removed = mPackages.remove(packageName);
+        synchronized (mAppIds) {
+            mAppIds.remove(packageName);
+        }
+        if (removed != null && removed.pkg != null && removed.pkg.mSharedUserId != null) {
+            String sharedUserId = removed.pkg.mSharedUserId;
+            boolean sharedUserStillUsed = false;
+            for (BPackageSettings settings : mPackages.values()) {
+                if (settings.pkg != null && sharedUserId.equals(settings.pkg.mSharedUserId)) {
+                    sharedUserStillUsed = true;
+                    break;
+                }
+            }
+            if (!sharedUserStillUsed) {
+                mSharedUsers.remove(sharedUserId);
+            }
+        }
+        saveUidLP();
+        SharedUserSetting.saveSharedUsers();
     }
 
     private PackageParser.Package parserApk(String file) {

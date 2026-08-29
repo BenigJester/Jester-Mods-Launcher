@@ -31,6 +31,7 @@ import black.android.app.BRActivityManagerNative;
 import black.android.app.BRIActivityManager;
 import black.com.android.internal.BRRstyleable;
 import top.niunaijun.blackbox.BlackBoxCore;
+import top.niunaijun.blackbox.core.env.FacebookLoginCompat;
 import top.niunaijun.blackbox.core.system.BProcessManagerService;
 import top.niunaijun.blackbox.core.system.ProcessRecord;
 import top.niunaijun.blackbox.core.system.pm.BPackageManagerService;
@@ -106,6 +107,14 @@ public class ActivityStack {
         }
         Log.d(TAG, "startActivityLocked : " + resolveInfo.activityInfo);
         ActivityInfo activityInfo = resolveInfo.activityInfo;
+
+        if (FacebookLoginCompat.isCustomTabRedirect(intent)) {
+            // A browser callback is meaningful only for the Facebook transaction that launched
+            // it. Never fall through and create a fresh CustomTabMainActivity when that live
+            // transaction is gone.
+            deliverFacebookCallbackToRunningActivity(userId, intent, activityInfo);
+            return 0;
+        }
 
         ActivityRecord sourceRecord = findActivityRecordByToken(userId, resultTo);
         if (sourceRecord == null) {
@@ -265,6 +274,38 @@ public class ActivityStack {
             activityRecord.processRecord.bActivityThread.handleNewIntent(activityRecord.token, intent);
         } catch (RemoteException e) {
             e.printStackTrace();
+        }
+    }
+
+    private boolean deliverFacebookCallbackToRunningActivity(
+            int userId, Intent intent, ActivityInfo activityInfo) {
+        String processName = activityInfo.processName == null
+                ? activityInfo.packageName
+                : activityInfo.processName;
+        try {
+            ProcessRecord processRecord = BProcessManagerService.get().startProcessLocked(
+                    activityInfo.packageName,
+                    processName,
+                    userId,
+                    -1,
+                    Binder.getCallingPid());
+            if (processRecord == null || processRecord.bActivityThread == null) {
+                return false;
+            }
+
+            int taskId = processRecord.bActivityThread.handleNewIntentForActivity(
+                    ComponentUtils.toComponentName(activityInfo), intent);
+            if (taskId < 0) {
+                return false;
+            }
+
+            Log.i(TAG, "Recovered the running Facebook callback activity for "
+                    + activityInfo.packageName);
+            mAms.moveTaskToFront(taskId, 0);
+            return true;
+        } catch (Throwable error) {
+            Log.w(TAG, "Could not recover the running Facebook callback activity", error);
+            return false;
         }
     }
 

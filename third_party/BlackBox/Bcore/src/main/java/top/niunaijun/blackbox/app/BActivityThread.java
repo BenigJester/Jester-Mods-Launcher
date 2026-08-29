@@ -1310,28 +1310,95 @@ public class BActivityThread extends IBActivityThread.Stub {
 
     @Override
     public void handleNewIntent(final IBinder token, final Intent intent) {
-        mH.post(() -> {
-            Intent newIntent;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                newIntent = BRReferrerIntent.get()._new(intent, BlackBoxCore.getHostPkg());
-            } else {
-                newIntent = intent;
+        mH.post(() -> performNewIntent(token, intent));
+    }
+
+    @Override
+    public int handleNewIntentForActivity(ComponentName componentName, Intent intent) {
+        if (componentName == null || intent == null) {
+            return -1;
+        }
+
+        Map<IBinder, Object> activities =
+                BRActivityThread.get(BlackBoxCore.mainThread()).mActivities();
+        for (Map.Entry<IBinder, Object> entry : activities.entrySet()) {
+            Object clientRecord = entry.getValue();
+            if (clientRecord == null) {
+                continue;
             }
-            Object mainThread = BlackBoxCore.mainThread();
-            if (BRActivityThread.get(BlackBoxCore.mainThread())._check_performNewIntents(null, null) != null) {
-                BRActivityThread.get(mainThread).performNewIntents(
-                        token,
-                        Collections.singletonList(newIntent)
-                );
-            } else if (BRActivityThreadNMR1.get(mainThread)._check_performNewIntents(null, null, false) != null) {
-                BRActivityThreadNMR1.get(mainThread).performNewIntents(
-                        token,
-                        Collections.singletonList(newIntent),
-                        true);
-            } else if (BRActivityThreadQ.get(mainThread)._check_handleNewIntent(null, null) != null) {
-                BRActivityThreadQ.get(mainThread).handleNewIntent(token, Collections.singletonList(newIntent));
+
+            Activity activity = BRActivityThreadActivityClientRecord.get(clientRecord).activity();
+            if (activity == null
+                    || !componentName.getClassName().equals(activity.getClass().getName())
+                    || activity.isFinishing()) {
+                continue;
             }
-        });
+
+            int taskId = activity.getTaskId();
+            // Do not wait for onNewIntent here. This method is called by BlackBox's activity
+            // manager server, while Facebook's onNewIntent immediately calls finish(), which
+            // enters that server again. Waiting would deadlock both sides. Queue the callback
+            // before the server moves the virtual task to the front, then return its task ID.
+            //
+            // Also keep the callback as a plain Intent. ReferrerIntent appends private parcel
+            // data; Facebook returns the callback intent as its activity result, and Android's
+            // finishActivity endpoint rejects those trailing bytes.
+            Intent callback = new Intent(intent);
+            mH.post(() -> {
+                if (activity.isFinishing()) {
+                    return;
+                }
+                try {
+                    Instrumentation instrumentation =
+                            BRActivityThread.get(BlackBoxCore.mainThread()).mInstrumentation();
+                    if (instrumentation == null) {
+                        Log.w(TAG, "No instrumentation available for live activity delivery");
+                        return;
+                    }
+                    instrumentation.callActivityOnNewIntent(activity, callback);
+                    Log.i(TAG, "Delivered a new intent to the running guest activity");
+                } catch (Throwable error) {
+                    Log.w(TAG, "Could not deliver a new intent to the running guest activity", error);
+                }
+            });
+            Log.i(TAG, "Queued a new intent for the running guest activity");
+            return taskId;
+        }
+        Log.w(TAG, "No live guest activity matched " + componentName.getClassName());
+        return -1;
+    }
+
+    private boolean performNewIntent(IBinder token, Intent intent) {
+        Intent newIntent = makeReferrerIntent(intent);
+        Object mainThread = BlackBoxCore.mainThread();
+        if (BRActivityThread.get(mainThread)._check_performNewIntents(null, null) != null) {
+            BRActivityThread.get(mainThread).performNewIntents(
+                    token,
+                    Collections.singletonList(newIntent)
+            );
+            return true;
+        }
+        if (BRActivityThreadNMR1.get(mainThread)
+                ._check_performNewIntents(null, null, false) != null) {
+            BRActivityThreadNMR1.get(mainThread).performNewIntents(
+                    token,
+                    Collections.singletonList(newIntent),
+                    true);
+            return true;
+        }
+        if (BRActivityThreadQ.get(mainThread)._check_handleNewIntent(null, null) != null) {
+            BRActivityThreadQ.get(mainThread)
+                    .handleNewIntent(token, Collections.singletonList(newIntent));
+            return true;
+        }
+        return false;
+    }
+
+    private Intent makeReferrerIntent(Intent intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            return BRReferrerIntent.get()._new(intent, BlackBoxCore.getHostPkg());
+        }
+        return intent;
     }
 
     @Override
