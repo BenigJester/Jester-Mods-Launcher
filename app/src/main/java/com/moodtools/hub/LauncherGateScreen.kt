@@ -39,6 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -136,6 +137,7 @@ fun LauncherGateScreen(
     onUnlock: () -> Unit,
     onRetry: () -> Unit,
     onEnter: () -> Unit,
+    onCopySupportCode: () -> Unit,
     onExit: () -> Unit
 ) {
     val bootSettled by produceState(initialValue = false) {
@@ -216,6 +218,7 @@ fun LauncherGateScreen(
                                 presentation = targetPresentation,
                                 onUnlock = onUnlock,
                                 onRetry = onRetry,
+                                onCopySupportCode = onCopySupportCode,
                                 onExit = onExit
                             )
                         }
@@ -403,6 +406,7 @@ private fun DefaultGateContent(
     presentation: LauncherGatePresentation,
     onUnlock: () -> Unit,
     onRetry: () -> Unit,
+    onCopySupportCode: () -> Unit,
     onExit: () -> Unit
 ) {
     Column(
@@ -497,6 +501,18 @@ private fun DefaultGateContent(
                     )
                 ) { Text("Continue to Linkvertise", fontWeight = FontWeight.Bold) }
                 else -> error("Unsupported default gate presentation: $presentation")
+            }
+            if (presentation is LauncherGatePresentation.Locked) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onCopySupportCode,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 13.dp),
+                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
+                ) {
+                    Text("Copy support code", fontWeight = FontWeight.SemiBold)
+                }
             }
         }
         Spacer(Modifier.weight(1f))

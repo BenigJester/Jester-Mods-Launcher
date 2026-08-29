@@ -49,6 +49,21 @@ function Read-Required([string]$Prompt, [string]$Default = '') {
     }
 }
 
+function Read-ExistingFile([string]$Prompt, [string[]]$Extensions = @()) {
+    while ($true) {
+        $value = (Read-Host $Prompt).Trim().Trim('"').Trim("'")
+        $item = Get-Item -LiteralPath $value -ErrorAction SilentlyContinue
+        if ($item -and -not $item.PSIsContainer) {
+            if ($Extensions.Count -eq 0 -or $item.Extension.ToLowerInvariant() -in $Extensions) {
+                return $item.FullName
+            }
+            Write-Host "Expected one of: $($Extensions -join ', ')." -ForegroundColor Yellow
+            continue
+        }
+        Write-Host 'That file does not exist. You can drag it into this window.' -ForegroundColor Yellow
+    }
+}
+
 function Read-PositiveLong([string]$Prompt, [long]$Default = 0) {
     while ($true) {
         $value = Read-Required $Prompt $(if ($Default -gt 0) { [string]$Default } else { '' })
@@ -69,6 +84,15 @@ function Convert-VersionToBuild([string]$Version) {
         throw "Version '$Version' cannot be represented as a positive build number."
     }
     return $build
+}
+
+function Get-ProjectLauncherVersion {
+    $propertiesPath = Join-Path $ProjectRoot 'gradle.properties'
+    if (Test-Path -LiteralPath $propertiesPath -PathType Leaf) {
+        $match = [regex]::Match((Get-Content -Raw -LiteralPath $propertiesPath), '(?m)^launcherVersionName=(\d+\.\d+\.\d+)\s*$')
+        if ($match.Success) { return $match.Groups[1].Value }
+    }
+    throw 'launcherVersionName was not found in gradle.properties.'
 }
 
 function Invoke-Checked([string]$Label, [scriptblock]$Action) {
@@ -142,7 +166,7 @@ function Invoke-LauncherBuild([string]$Kind, [string]$Flavor, [long]$VersionCode
     Get-LauncherTasks $Kind $Flavor | ForEach-Object { $arguments.Add($_) }
     $arguments.Add('--no-daemon')
     if ($Kind -in @('release', 'hardened')) {
-        if (-not $VersionName) { $VersionName = Read-Required 'Version name' '1.1.5' }
+        if (-not $VersionName) { $VersionName = Read-Required 'Version name' (Get-ProjectLauncherVersion) }
         $derivedVersionCode = Convert-VersionToBuild $VersionName
         if ($VersionCode -gt 0 -and $VersionCode -ne $derivedVersionCode) {
             throw "Version $VersionName requires build $derivedVersionCode, not $VersionCode."
@@ -155,6 +179,57 @@ function Invoke-LauncherBuild([string]$Kind, [string]$Flavor, [long]$VersionCode
     Invoke-Checked "Build $Kind launcher ($Flavor)" { & (Join-Path $ProjectRoot 'gradlew.bat') @arguments }
 }
 
+function Invoke-EmbeddedPrivateLauncherBuild {
+    Write-Header 'Build allowlisted embedded private module launcher'
+    Write-Host 'This creates a normal launcher APK containing one private module.' -ForegroundColor Gray
+    Write-Host 'Only a device with a signed lease for the exact scope can install or see that module.' -ForegroundColor DarkGray
+    Write-Host ''
+
+    $bundle = Read-ExistingFile 'Built module ZIP (drag it here)' @('.zip')
+    $scope = Read-Required 'Private module scope'
+    if ($scope -notmatch '^[a-z0-9][a-z0-9._-]{2,63}$') {
+        throw 'Private module scope must use 3-64 lowercase letters, digits, dots, underscores, or hyphens.'
+    }
+
+    Write-Host ''
+    Write-Host '  1. Root'
+    Write-Host '  2. Non-root'
+    Write-Host '  B. Back'
+    $flavorChoice = Read-Choice 'Launcher flavor' @('1','2','b')
+    if ($flavorChoice -eq 'b') { return }
+    $flavor = if ($flavorChoice -eq '1') { 'root' } else { 'nonroot' }
+
+    Write-Host ''
+    Write-Host '  1. Debug'
+    Write-Host '  2. Production release'
+    Write-Host '  B. Back'
+    $buildChoice = Read-Choice 'Build type' @('1','2','b')
+    if ($buildChoice -eq 'b') { return }
+    $buildType = if ($buildChoice -eq '1') { 'debug' } else { 'release' }
+    $versionName = if ($buildType -eq 'release') { Read-Required 'Version name' (Get-ProjectLauncherVersion) } else { '' }
+    if ($versionName) { [void](Convert-VersionToBuild $versionName) }
+
+    $websiteCatalog = Join-Path (Split-Path -Parent (Split-Path -Parent $ProjectRoot)) 'website\launcher-modules.json'
+    $parameters = @{
+        ModuleBundle = $bundle
+        Scope = $scope
+        Flavor = $flavor
+        BuildType = $buildType
+    }
+    if ($versionName) { $parameters.VersionName = $versionName }
+    if (Test-Path -LiteralPath $websiteCatalog -PathType Leaf) {
+        $parameters.WebsiteCatalogPath = $websiteCatalog
+        Write-Host "Website scope check: $websiteCatalog" -ForegroundColor DarkGray
+    } else {
+        Write-Warning 'The sibling website catalog was not found, so package/scope matching cannot be checked automatically.'
+    }
+
+    if (-not (Read-YesNo "Build the $flavor $buildType APK now?")) { return }
+    Invoke-Checked "Build embedded private launcher ($flavor $buildType)" {
+        & (Join-Path $PSScriptRoot 'build-embedded-module.ps1') @parameters
+    }
+}
+
 function Show-LauncherMenu {
     while ($true) {
         Write-Header 'Build launcher APKs'
@@ -165,8 +240,9 @@ function Show-LauncherMenu {
         Write-Host '  5. Production release - Root'
         Write-Host '  6. Production release - Non-root'
         Write-Host '  7. Production release - Both'
+        Write-Host '  8. Allowlisted embedded private module build'
         Write-Host '  B. Back'
-        $selection = Read-Choice 'Select an action' @('1','2','3','4','5','6','7','b')
+        $selection = Read-Choice 'Select an action' @('1','2','3','4','5','6','7','8','b')
         switch ($selection) {
             '1' { Invoke-LauncherBuild 'debug' 'root' }
             '2' { Invoke-LauncherBuild 'debug' 'nonroot' }
@@ -175,6 +251,7 @@ function Show-LauncherMenu {
             '5' { Invoke-LauncherBuild 'release' 'root' }
             '6' { Invoke-LauncherBuild 'release' 'nonroot' }
             '7' { Invoke-LauncherBuild 'release' 'both' }
+            '8' { Invoke-EmbeddedPrivateLauncherBuild }
             'b' { return }
         }
         if ($selection -ne 'b') { Wait-ForUser }
@@ -183,7 +260,7 @@ function Show-LauncherMenu {
 
 function Build-CompleteRelease {
     Write-Header 'Build complete production package'
-    $versionName = Read-Required 'Version name' '1.1.5'
+    $versionName = Read-Required 'Version name' (Get-ProjectLauncherVersion)
     $versionCode = Convert-VersionToBuild $versionName
     Write-Host "Build derived from version: $versionCode" -ForegroundColor Gray
     Write-Host ''

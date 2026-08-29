@@ -1,12 +1,12 @@
 package com.moodtools.hub.networking
 
-import android.app.PendingIntent
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -149,37 +149,24 @@ class LauncherUpdateClient(private val context: Context) {
                 "Allow Jester Mods to install app updates in Android settings"
             }
         }
-        val installer = context.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-            setAppPackageName(context.packageName)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+        // A PackageInstaller session has to stage the APK and then deliver a broadcast before
+        // its confirmation UI can open. That extra hop is noticeably slow on low-end devices,
+        // and some OEMs restrict the receiver's attempt to bring the installer to the front.
+        // The verified single APK can instead be handed straight to Android's installer from
+        // the foreground user action. FileProvider grants access to this file only for the
+        // lifetime of the installer intent; the rest of internal launcher storage stays private.
+        val apkUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.launcher-updates",
+            apk
+        )
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, APK_MIME_TYPE)
+                clipData = ClipData.newRawUri("verified_launcher_update", apkUri)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-        }
-        val sessionId = installer.createSession(params)
-        try {
-            installer.openSession(sessionId).use { session ->
-                apk.inputStream().use { input ->
-                    session.openWrite("base.apk", 0L, apk.length()).use { output ->
-                        input.copyTo(output, 64 * 1024)
-                        session.fsync(output)
-                    }
-                }
-                val callback = Intent(context, LauncherUpdateInstallReceiver::class.java)
-                    .setAction(LauncherUpdateInstallReceiver.ACTION_INSTALL_RESULT)
-                    .putExtra(LauncherUpdateInstallReceiver.EXTRA_BUILD, release.build)
-                val sender = PendingIntent.getBroadcast(
-                    context,
-                    (release.build xor (release.build ushr 32)).toInt(),
-                    callback,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                ).intentSender
-                session.commit(sender)
-            }
-        } catch (error: Throwable) {
-            runCatching { installer.abandonSession(sessionId) }
-            throw error
-        }
+        )
     }
 
     fun markInstallSucceeded(build: Long) {
@@ -328,6 +315,7 @@ class LauncherUpdateClient(private val context: Context) {
         private const val BASE_URL = "https://jester.moodtools.workers.dev"
         private const val TAG = "JesterMoodsLauncherUpdate"
         private const val HOST = "jester.moodtools.workers.dev"
+        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val MAX_APK_BYTES = 250L * 1024L * 1024L
         private const val MAX_CHANGELOG_ENTRIES = 50
         private const val MAX_CHANGELOG_ENTRY_CHARACTERS = 8_000

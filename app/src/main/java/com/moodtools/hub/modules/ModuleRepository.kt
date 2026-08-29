@@ -21,7 +21,9 @@ class ModuleRepository(private val context: Context) {
 
     private fun parseConfig(directory: File): ModuleConfig? {
         return runCatching {
-            val json = JSONObject(File(directory, "config.json").readText())
+            val json = JSONObject(
+                File(directory, "config.json").readText(Charsets.UTF_8).removePrefix("\uFEFF")
+            )
             val supported = buildSet {
                 val versions = json.optJSONArray("supported_versions") ?: return@buildSet
                 for (index in 0 until versions.length()) add(versions.getString(index))
@@ -78,6 +80,8 @@ class ModuleRepository(private val context: Context) {
         }.getOrNull()
     }
 
+    internal fun loadCandidate(directory: File): ModuleConfig? = parseConfig(directory)
+
     fun directoryFor(module: ModuleConfig): File = File(menuDirectory, module.packageName)
 
     fun isInstalled(packageName: String): Boolean {
@@ -85,7 +89,8 @@ class ModuleRepository(private val context: Context) {
         return directory.isDirectory &&
             (
                 File(directory, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE).isFile ||
-                    File(directory, LOCAL_TEST_INSTALL_MARKER).isFile
+                    File(directory, LOCAL_TEST_INSTALL_MARKER).isFile ||
+                    File(directory, EMBEDDED_PRIVATE_INSTALL_MARKER).isFile
                 ) &&
             parseConfig(directory) != null
     }
@@ -93,6 +98,32 @@ class ModuleRepository(private val context: Context) {
     fun isLocalTest(packageName: String): Boolean {
         if (!PACKAGE_NAME.matches(packageName)) return false
         return File(File(menuDirectory, packageName), LOCAL_TEST_INSTALL_MARKER).isFile
+    }
+
+    fun embeddedPrivateScope(packageName: String): String? {
+        if (!PACKAGE_NAME.matches(packageName)) return null
+        return runCatching {
+            val directory = File(menuDirectory, packageName).canonicalFile
+            require(directory.parentFile == menuDirectory.canonicalFile)
+            val markerFile = File(directory, EMBEDDED_PRIVATE_INSTALL_MARKER)
+            require(markerFile.isFile && markerFile.canonicalFile.parentFile == directory)
+            val marker = JSONObject(markerFile.readText(Charsets.UTF_8))
+            require(marker.optInt("schema") == 1)
+            require(marker.optString("packageName") == packageName)
+            marker.getString("scope").also { require(it.matches(PRIVATE_SCOPE)) }
+        }.getOrNull()
+    }
+
+    fun embeddedPrivateModules(): Map<String, String> {
+        if (!menuDirectory.isDirectory) return emptyMap()
+        return menuDirectory.listFiles()
+            ?.asSequence()
+            ?.filter(File::isDirectory)
+            ?.mapNotNull { directory ->
+                embeddedPrivateScope(directory.name)?.let { scope -> directory.name to scope }
+            }
+            ?.toMap()
+            .orEmpty()
     }
 
     fun installedBuild(packageName: String): Long {
@@ -108,6 +139,7 @@ class ModuleRepository(private val context: Context) {
         return directory.isDirectory && (
             File(directory, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE).isFile ||
                 File(directory, LOCAL_TEST_INSTALL_MARKER).isFile ||
+                File(directory, EMBEDDED_PRIVATE_INSTALL_MARKER).isFile ||
                 File(directory, "update.json").isFile ||
                 File(directory, "config.json").isFile
             )
@@ -128,7 +160,9 @@ class ModuleRepository(private val context: Context) {
 
     companion object {
         const val LOCAL_TEST_INSTALL_MARKER = "local-test.json"
+        const val EMBEDDED_PRIVATE_INSTALL_MARKER = "embedded-private.json"
         private val PACKAGE_NAME = Regex("^[A-Za-z0-9_.]+$")
+        private val PRIVATE_SCOPE = Regex("[a-z0-9][a-z0-9._-]{2,63}")
         private val SUPPORTED_ABI_NAMES = setOf(
             "armeabi-v7a",
             "arm64-v8a",

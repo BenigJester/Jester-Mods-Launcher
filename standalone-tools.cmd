@@ -24,7 +24,7 @@ if not defined POWERSHELL_EXE (
 )
 
 if not defined POWERSHELL_EXE (
-    echo [ERROR] Could not find powershell.exe or pwsh.exe in PATH.
+    echo [ERROR] Could not find Windows PowerShell or PowerShell 7 in PATH.
     echo         Install PowerShell or repair your PATH, then run this tool again.
     exit /b 3
 )

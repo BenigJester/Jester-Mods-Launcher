@@ -68,6 +68,9 @@ class ModuleCatalogClient(private val context: Context) {
                 val item = modules.getJSONObject(index)
                 val packageName = item.getString("packageName")
                 val slug = item.getString("slug")
+                require(!item.has("privateScope")) {
+                    "Private modules must never appear in the public catalog"
+                }
                 require(packageName.matches(PACKAGE_PATTERN))
                 require(slug.matches(SLUG_PATTERN))
                 val versions = item.getJSONArray("supportedVersions")

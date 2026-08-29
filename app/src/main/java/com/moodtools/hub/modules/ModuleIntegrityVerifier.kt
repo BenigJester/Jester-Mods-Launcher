@@ -32,6 +32,9 @@ class ModuleIntegrityVerifier(
         if (File(moduleDirectory, ModuleRepository.LOCAL_TEST_INSTALL_MARKER).isFile) {
             return verifyLocalTest(moduleDirectory, module, abi)
         }
+        if (File(moduleDirectory, ModuleRepository.EMBEDDED_PRIVATE_INSTALL_MARKER).isFile) {
+            return verifyEmbeddedPrivate(moduleDirectory, module, abi)
+        }
 
         val signedManifest = regularFile(moduleDirectory, SIGNED_MANIFEST_FILE)
         require(signedManifest.length() in 2..MAX_MANIFEST_BYTES) { "Signed module manifest size is invalid" }
@@ -176,6 +179,34 @@ class ModuleIntegrityVerifier(
         return VerifiedModuleInstall(0L, "local-test", abi)
     }
 
+    private fun verifyEmbeddedPrivate(
+        moduleDirectory: File,
+        module: ModuleConfig,
+        abi: String
+    ): VerifiedModuleInstall {
+        require(abi in module.supportedAbis)
+        val markerFile = regularFile(moduleDirectory, ModuleRepository.EMBEDDED_PRIVATE_INSTALL_MARKER)
+        require(markerFile.length() in 2..MAX_PRIVATE_MARKER_BYTES)
+        val marker = JSONObject(markerFile.readText(Charsets.UTF_8))
+        require(marker.optInt("schema") == 1)
+        require(marker.optString("scope").matches(PRIVATE_SCOPE_PATTERN))
+        require(marker.optString("packageName") == module.packageName)
+        require(marker.optString("bundleSha256").matches(SHA256_PATTERN))
+        if (BuildConfig.PRIVATE_MODULE_ENABLED &&
+            module.packageName == BuildConfig.PRIVATE_MODULE_PACKAGE) {
+            require(marker.optString("scope") == BuildConfig.PRIVATE_MODULE_SCOPE)
+            require(marker.optString("bundleSha256") == BuildConfig.PRIVATE_MODULE_SHA256)
+        }
+        val hashes = marker.getJSONObject("files")
+        listOf(CONFIG_FILE, DEX_FILE, NATIVE_FILE).forEach { name ->
+            val expected = hashes.getString(name)
+            require(expected.matches(SHA256_PATTERN) && sha256(regularFile(moduleDirectory, name)) == expected) {
+                "Embedded private module file $name failed verification"
+            }
+        }
+        return VerifiedModuleInstall(0L, "embedded-private", abi)
+    }
+
     private fun regularFile(directory: File, name: String): File {
         val file = File(directory, name)
         require(file.isFile && !Files.isSymbolicLink(file.toPath())) { "Module file $name is missing" }
@@ -229,8 +260,10 @@ class ModuleIntegrityVerifier(
         private const val MAX_DEX_BYTES = 100L * 1024L * 1024L
         private const val MAX_NATIVE_BYTES = 100L * 1024L * 1024L
         private const val MAX_LOCAL_TEST_MARKER_BYTES = 4L * 1024L
+        private const val MAX_PRIVATE_MARKER_BYTES = 4L * 1024L
         private val PACKAGE_PATTERN = Regex("[A-Za-z0-9_.]{3,200}")
         private val SLUG_PATTERN = Regex("[a-z0-9][a-z0-9-]{0,63}")
+        private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
         private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
     }
 }

@@ -73,6 +73,111 @@ class LauncherAccessManager(context: Context) {
         )
     }
 
+    /** Refreshes a server-approved private scope, falling back to its signed offline lease. */
+    internal fun currentPrivateLease(scope: String): LauncherPrivateLease? {
+        require(scope.matches(PRIVATE_SCOPE_PATTERN)) { "Invalid private module scope" }
+        val now = System.currentTimeMillis() / 1_000L
+        val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
+        if (digitalKey.isEmpty()) {
+            clearPrivateLease(scope)
+            return null
+        }
+        val proofIdentity = proofKeys.identity()
+        val cachedText = preferences.getString("$PRIVATE_LEASE_PREFIX$scope", null).orEmpty()
+        val cached = runCatching {
+            LauncherPrivateLeaseVerifier.verify(
+                envelope = JSONObject(cachedText),
+                expectedScope = scope,
+                expectedDeviceId = deviceId,
+                expectedRecoveryId = recoveryId,
+                expectedFlavor = BuildConfig.FLAVOR,
+                expectedProofKeyId = proofIdentity.keyId
+            )
+        }.getOrNull()?.takeIf { lease ->
+            LauncherOfflineLeaseVerifier.clockStatus(
+                issuedAt = lease.issuedAt,
+                expiresAt = lease.expiresAt,
+                now = now,
+                lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
+                elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
+            ) == LauncherLeaseClockStatus.VALID
+        }
+
+        return try {
+            val response = postJson(
+                "$BASE_URL/api/launcher/private-access",
+                JSONObject()
+                    .put("digitalKey", digitalKey)
+                    .put("installationId", installationId)
+                    .put("deviceId", deviceId)
+                    .put("recoveryId", recoveryId)
+                    .put("flavor", BuildConfig.FLAVOR)
+                    .put("accessVersion", ACCESS_VERSION)
+                    .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
+                    .put("proofKeyId", proofIdentity.keyId)
+                    .put("scope", scope)
+            )
+            if (response.has("approved") && !response.optBoolean("approved")) {
+                clearPrivateLease(scope)
+                null
+            } else {
+                require(response.optBoolean("ok")) {
+                    response.optString("message", "Private device approval is unavailable")
+                }
+                val envelope = response.getJSONObject("offlineLease")
+                val lease = LauncherPrivateLeaseVerifier.verify(
+                    envelope = envelope,
+                    expectedScope = scope,
+                    expectedDeviceId = deviceId,
+                    expectedRecoveryId = recoveryId,
+                    expectedFlavor = BuildConfig.FLAVOR,
+                    expectedProofKeyId = proofIdentity.keyId
+                )
+                check(preferences.edit()
+                    .putString("$PRIVATE_LEASE_PREFIX$scope", envelope.toString())
+                    .putLong(privateLastSeenKey(scope), now)
+                    .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
+                    .commit()) { "Private device approval could not be saved" }
+                lease
+            }
+        } catch (error: Exception) {
+            if (cached != null) {
+                android.util.Log.w(
+                    "JesterMoodsPrivateAccess",
+                    "The private access server could not be reached; using the signed offline approval.",
+                    error
+                )
+                rememberPrivateLeaseClock(scope, now)
+                cached
+            } else {
+                throw error
+            }
+        }
+    }
+
+    private fun clearPrivateLease(scope: String) {
+        preferences.edit()
+            .remove("$PRIVATE_LEASE_PREFIX$scope")
+            .remove(privateLastSeenKey(scope))
+            .remove(privateElapsedKey(scope))
+            .apply()
+    }
+
+    private fun rememberPrivateLeaseClock(scope: String, now: Long) {
+        preferences.edit()
+            .putLong(
+                privateLastSeenKey(scope),
+                maxOf(now, preferences.getLong(privateLastSeenKey(scope), 0L))
+            )
+            .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
+            .apply()
+    }
+
+    private fun privateLastSeenKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_last_seen"
+
+    private fun privateElapsedKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_elapsed"
+
     fun currentLease(): LauncherLease? {
         val now = System.currentTimeMillis() / 1000L
         val key = preferences.getString(DIGITAL_KEY, null).orEmpty()
@@ -649,7 +754,7 @@ class LauncherAccessManager(context: Context) {
     }
 
     fun clearLease() {
-        preferences.edit()
+        val editor = preferences.edit()
             .remove(DIGITAL_KEY)
             .remove(ISSUED_AT)
             .remove(EXPIRES_AT)
@@ -657,7 +762,10 @@ class LauncherAccessManager(context: Context) {
             .remove(OFFLINE_LEASE)
             .remove(LAST_SEEN)
             .remove(LAST_ELAPSED_REALTIME)
-            .apply()
+        preferences.all.keys
+            .filter { it.startsWith(PRIVATE_LEASE_PREFIX) }
+            .forEach(editor::remove)
+        editor.apply()
     }
 
     private fun postJson(
@@ -711,6 +819,7 @@ class LauncherAccessManager(context: Context) {
         private const val PENDING_CHALLENGE = "pending_challenge"
         private const val PENDING_EXPIRES = "pending_expires"
         private const val RECOVERY_BOUND_KEY = "recovery_bound_key"
+        private const val PRIVATE_LEASE_PREFIX = "private_lease_"
         private const val FLOW_TTL_MS = 20L * 60L * 1000L
         private const val ACCESS_VERSION = 4
         private const val DEVICE_LOCK_ACCESS_VERSION = 3
@@ -722,6 +831,7 @@ class LauncherAccessManager(context: Context) {
         private const val RECOVERY_ID_NAMESPACE = "jester-moods-launcher-recovery-v1"
         private const val LEGACY_BROKEN_ANDROID_ID = "9774d56d682e549c"
         private val ID_PATTERN = Regex("[A-Za-z0-9_-]{43}")
+        private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
     }
 }
 

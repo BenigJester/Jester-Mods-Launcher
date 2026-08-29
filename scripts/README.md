@@ -2,6 +2,18 @@
 
 Run `standalone-tools.cmd` from the project root for the complete interactive manager.
 
+Build an allowlisted embedded module without adding its ZIP to Git:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-embedded-module.ps1 `
+  -ModuleBundle .\module-output\your.package.zip `
+  -Scope friends-your-game `
+  -WebsiteCatalogPath <path-to-website>\launcher-modules.json `
+  -Flavor nonroot -BuildType release -VersionName 1.1.7
+```
+
+`WebsiteCatalogPath` is optional. When supplied, the helper fails unless the module package and private scope exactly match the website operator catalog. The same flow is available interactively under **Build launcher → Allowlisted embedded private module build**.
+
 It covers module debug/release builds, Root and Non-root launcher builds, complete production packages, guided device testing, APK installation, output inspection, tests, and cleanup. The guided device test is local-only and intentionally stages only the manually selected module folder or folders, or runs launcher-only, so old module-output folders cannot pollute a test run. Its module-only scope reuses an installed launcher without rebuilding or reinstalling it.
 
 `test_helper.cmd` remains available as the direct build/install/device-test helper. Examples:

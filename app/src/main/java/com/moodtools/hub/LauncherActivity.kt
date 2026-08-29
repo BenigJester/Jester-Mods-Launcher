@@ -1,13 +1,18 @@
 package com.moodtools.hub
 
 import android.content.ComponentName
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.os.SystemClock
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.util.Base64
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -37,6 +42,7 @@ import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
 import com.moodtools.hub.modules.PlayStoreVersionStatus
 import com.moodtools.hub.modules.DirectPatchPromptUiState
+import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.sortLibraryGames
 import com.moodtools.hub.modules.mergeCatalogAndLocalModuleConfigs
@@ -47,8 +53,6 @@ import com.moodtools.hub.networking.GameInstallResult
 import com.moodtools.hub.networking.LauncherRelease
 import com.moodtools.hub.networking.LauncherChangelogEntry
 import com.moodtools.hub.networking.LauncherUpdateClient
-import com.moodtools.hub.networking.LauncherUpdateInstallReceiver
-import com.moodtools.hub.networking.LauncherUpdateInstallEvents
 import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
 import com.moodtools.hub.networking.PlayStoreVersionClient
@@ -178,6 +182,7 @@ class LauncherActivity : ComponentActivity() {
                     onUnlock = ::beginLauncherUnlock,
                     onRetry = viewModel::retryAccessRecovery,
                     onEnter = viewModel::enterLauncher,
+                    onCopySupportCode = ::copySupportCode,
                     onExit = { finishAffinity() }
                 )
             }
@@ -194,6 +199,21 @@ class LauncherActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    private fun copySupportCode() {
+        runCatching {
+            val code = viewModel.supportCode()
+            val clip = ClipData.newPlainText("Jester Mods support code", code)
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean("android.content.extra.IS_SENSITIVE", true)
+            }
+            (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                .setPrimaryClip(clip)
+            Toast.makeText(this, "Support code copied", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            Toast.makeText(this, "Support code is unavailable", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -700,6 +720,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val gameInstallClient = GameInstallClient(application)
     private val playStoreVersionClient = PlayStoreVersionClient()
     private val storageManager = SmartStorageManager(application.filesDir, application.cacheDir)
+    private val embeddedPrivateModuleInstaller = EmbeddedPrivateModuleInstaller(application)
     private val gatePreferences = application.getSharedPreferences(GATE_PREFERENCES, android.content.Context.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences(LIBRARY_PREFERENCES, android.content.Context.MODE_PRIVATE)
     private val playStorePreferences = application.getSharedPreferences(PLAY_STORE_VERSION_PREFERENCES, android.content.Context.MODE_PRIVATE)
@@ -710,11 +731,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var launcherUpdateTestChannel = false
     private var debugAccessBypassActive = false
     private var currentLauncherRelease: LauncherRelease? = null
+    @Volatile
+    private var launcherInstallerOpened = false
+    @Volatile
+    private var launcherInstallerRecovery: Job? = null
 
     init {
-        viewModelScope.launch {
-            LauncherUpdateInstallEvents.results.collect { onHostResumed() }
-        }
         viewModelScope.launch {
             GameInstallEvents.results.collect(::onGameInstallResult)
         }
@@ -776,12 +798,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     }
             }
             if (debugAccessBypass) {
-                markLauncherReady(
-                    System.currentTimeMillis() / 1_000L + DEBUG_ACCESS_DURATION_SECONDS
+                completeAuthorizedStartup(
+                    launcherExpiresAt = System.currentTimeMillis() / 1_000L + DEBUG_ACCESS_DURATION_SECONDS,
+                    initialLink = initialLink,
+                    bypassPrivateApproval = true
                 )
-                refreshGames(refreshCatalog = true, forceGameScan = true)
-                checkLauncherUpdate()
-                if (!isLocalTestStageLink(initialLink)) initialLink?.let(::handleDeepLink)
                 return@launch
             }
             _startupState.value = LauncherStartupState.CheckingAccess
@@ -824,10 +845,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     // The server was reached and confirmed there is no recoverable access.
                     _startupState.value = LauncherStartupState.Locked()
                 } else {
-                    markLauncherReady(lease.expiresAt)
-                    refreshGames(refreshCatalog = true, forceGameScan = true)
-                    checkLauncherUpdate()
-                    if (!isLocalTestStageLink(initialLink)) initialLink?.let(::handleDeepLink)
+                    completeAuthorizedStartup(lease.expiresAt, initialLink)
                 }
             }
             .onFailure { error ->
@@ -872,6 +890,60 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun enterLauncher() {
         if (_startupState.value is LauncherStartupState.Ready) _launcherEntered.value = true
+    }
+
+    fun supportCode(): String = accessManager.accountIdentity().grantPassIdentity
+
+    private suspend fun completeAuthorizedStartup(
+        launcherExpiresAt: Long,
+        initialLink: Uri? = null,
+        bypassPrivateApproval: Boolean = false
+    ) {
+        val installedPrivateModules = repository.embeddedPrivateModules()
+        val configuredScope = BuildConfig.PRIVATE_MODULE_SCOPE.takeIf {
+            BuildConfig.PRIVATE_MODULE_ENABLED
+        }
+        val approvalByScope = (installedPrivateModules.values + listOfNotNull(configuredScope))
+            .distinct()
+            .associateWith { scope ->
+                if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith true
+                runCatching {
+                    accessManager.currentPrivateLease(scope)
+                }.onFailure { error ->
+                    android.util.Log.w(
+                        "JesterMoodsPrivateAccess",
+                        "Private module approval could not be refreshed; the module will stay hidden.",
+                        error
+                    )
+                }.getOrNull() != null
+            }
+
+        installedPrivateModules.forEach { (packageName, scope) ->
+            if (approvalByScope[scope] != true) {
+                runCatching { repository.removeFromLibrary(packageName) }
+                    .onFailure { error ->
+                        android.util.Log.e(
+                            "JesterMoodsPrivateModule",
+                            "A private module could not be hidden after approval ended.",
+                            error
+                        )
+                    }
+            }
+        }
+        if (configuredScope != null && approvalByScope[configuredScope] == true) {
+            runCatching { embeddedPrivateModuleInstaller.installIfConfigured() }
+                .onFailure { error ->
+                    android.util.Log.e(
+                        "JesterMoodsPrivateModule",
+                        "Embedded module installation failed; normal launcher startup will continue.",
+                        error
+                    )
+                }
+        }
+        markLauncherReady(launcherExpiresAt)
+        refreshGames(refreshCatalog = true, forceGameScan = true)
+        checkLauncherUpdate()
+        if (!isLocalTestStageLink(initialLink)) initialLink?.let(::handleDeepLink)
     }
 
     private fun markLauncherReady(expiresAt: Long) {
@@ -1009,6 +1081,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val current = _launcherUpdateState.value
         if (!current.available || current.inProgress || current.installing) return
         val release = currentLauncherRelease?.takeIf { it.build == current.build } ?: return
+        launcherInstallerRecovery?.cancel()
+        launcherInstallerRecovery = null
+        launcherInstallerOpened = false
         _launcherUpdateState.value = current.copy(
             inProgress = !current.downloaded,
             installing = false,
@@ -1034,21 +1109,42 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     installing = true,
                     downloaded = true,
                     failed = false,
-                    headline = "Ready to install",
-                    detail = "Confirm the update in the Android system prompt."
+                    headline = "Opening Android installer",
+                    detail = "Android is preparing its confirmation screen."
                 )
                 launcherUpdateClient.install(release)
+                launcherInstallerOpened = true
+                launcherInstallerRecovery = viewModelScope.launch {
+                    delay(LAUNCHER_INSTALLER_RECOVERY_DELAY_MS)
+                    val waiting = _launcherUpdateState.value
+                    if (launcherInstallerOpened && waiting.installing && waiting.build == release.build) {
+                        launcherInstallerOpened = false
+                        launcherInstallerRecovery = null
+                        _launcherUpdateState.value = waiting.copy(
+                            inProgress = false,
+                            installing = false,
+                            downloaded = true,
+                            failed = false,
+                            headline = "Update ready to install",
+                            detail = "Android is taking longer than expected. Tap Install update to open the confirmation again."
+                        )
+                    }
+                }
             }.onFailure { error ->
+                launcherInstallerRecovery?.cancel()
+                launcherInstallerRecovery = null
+                launcherInstallerOpened = false
                 android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update failed", error)
                 val state = _launcherUpdateState.value
+                val downloaded = launcherUpdateClient.isDownloaded(release)
                 _launcherUpdateState.value = state.copy(
                     inProgress = false,
                     installing = false,
-                    downloaded = launcherUpdateClient.isDownloaded(release),
+                    downloaded = downloaded,
                     failed = true,
-                    headline = if (launcherUpdateClient.isDownloaded(release)) "Couldn't open the installer" else "Couldn't download the update",
-                    detail = if (launcherUpdateClient.isDownloaded(release)) {
-                        "Allow Jester Mods to install apps in Android settings, then tap Install update again."
+                    headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the update",
+                    detail = if (downloaded) {
+                        "Android couldn't open its app installer. The verified update is still saved, so you can restart the device and try again."
                     } else {
                         "Check your connection and available storage, then try again."
                     }
@@ -1079,33 +1175,27 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (!current.available) return
         val installed = runCatching { launcherUpdateClient.installedBuild() }.getOrDefault(0L)
         if (installed >= current.build) {
+            launcherInstallerRecovery?.cancel()
+            launcherInstallerRecovery = null
+            launcherInstallerOpened = false
             launcherUpdateClient.markInstallSucceeded(installed)
             currentLauncherRelease = null
             _launcherUpdateState.value = LauncherUpdateUiState()
             return
         }
-        val preferences = LauncherUpdateInstallReceiver.statusPreferences(getApplication())
-        if (preferences.getLong(LauncherUpdateInstallReceiver.BUILD_KEY, -1L) != current.build) return
-        when (preferences.getString(LauncherUpdateInstallReceiver.STATUS_KEY, null)) {
-            LauncherUpdateInstallReceiver.STATUS_FAILURE_VALUE -> {
-                val installerMessage = preferences.getString(LauncherUpdateInstallReceiver.MESSAGE_KEY, null).orEmpty()
-                _launcherUpdateState.value = current.copy(
-                    inProgress = false,
-                    installing = false,
-                    downloaded = true,
-                    failed = true,
-                    headline = "The update wasn't installed",
-                    detail = when {
-                        installerMessage.contains("cancel", ignoreCase = true) ->
-                            "Installation was cancelled. The verified download is still saved."
-                        installerMessage.contains("block", ignoreCase = true) ||
-                            installerMessage.contains("restrict", ignoreCase = true) ->
-                            "Allow Jester Mods to install app updates in Android settings, then try again."
-                        else -> "You can try the installation again. The verified download is still saved."
-                    }
-                )
-                preferences.edit().clear().apply()
-            }
+        if (current.installing && launcherInstallerOpened) {
+            launcherInstallerRecovery?.cancel()
+            launcherInstallerRecovery = null
+            launcherInstallerOpened = false
+            _launcherUpdateState.value = current.copy(
+                inProgress = false,
+                installing = false,
+                downloaded = true,
+                failed = false,
+                headline = "Update ready to install",
+                detail = "Android closed without installing the update. Tap Install update to open it again."
+            )
+            return
         }
     }
 
@@ -1475,7 +1565,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             detail = "This should only take a moment."
         )
         viewModelScope.launch(Dispatchers.IO) {
-            if (!checkAccessForNewProtectedAction(ProtectedActionBoundary.GAME_LAUNCH)) return@launch
+            if (!checkAccessForNewProtectedAction(
+                    ProtectedActionBoundary.GAME_LAUNCH,
+                    game.packageName
+                )) return@launch
 
             val launched = ExecutionModeLaunchBridge.launch(
                 context = getApplication<android.app.Application>(),
@@ -1912,6 +2005,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         progressHeadline: String = "Downloading add-on",
         progressDetail: String? = null
     ): com.moodtools.hub.networking.UpdateResult {
+        require(privateScopeForPackage(request.packageName) == null) {
+            "The embedded private add-on can only be updated by installing a new signed build that contains it."
+        }
         val game = gameHint?.takeIf { it.packageName == request.packageName }
             ?: _games.value.firstOrNull { it.packageName == request.packageName }
             ?: scanner.scan(repository.loadModules()).firstOrNull { it.packageName == request.packageName }
@@ -1922,7 +2018,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         check(game.abiSupported) {
             "Add-on architecture does not support the installed game"
         }
-        if (!checkAccessForNewProtectedAction(ProtectedActionBoundary.MODULE_DOWNLOAD)) {
+        if (!checkAccessForNewProtectedAction(
+                ProtectedActionBoundary.MODULE_DOWNLOAD,
+                request.packageName
+            )) {
             throw NewSessionAccessBoundaryException()
         }
         val abi = game.abi.takeIf { it == "arm64-v8a" || it == "armeabi-v7a" }
@@ -1948,7 +2047,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
-    private fun checkAccessForNewProtectedAction(action: ProtectedActionBoundary): Boolean {
+    private fun checkAccessForNewProtectedAction(
+        action: ProtectedActionBoundary,
+        packageName: String
+    ): Boolean {
         if (debugAccessBypassActive) {
             return true
         }
@@ -1957,7 +2059,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             lease = leaseResult.getOrNull(),
             failure = leaseResult.exceptionOrNull()
         )) {
-            NewSessionAccessDecision.ALLOW -> true
+            NewSessionAccessDecision.ALLOW ->
+                checkPrivateAccessForNewProtectedAction(action, packageName)
             NewSessionAccessDecision.REQUIRE_UNLOCK -> {
                 _launcherEntered.value = false
                 _moduleBrowserOpen.value = false
@@ -1999,6 +2102,66 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
         }
     }
+
+    private fun checkPrivateAccessForNewProtectedAction(
+        action: ProtectedActionBoundary,
+        packageName: String
+    ): Boolean {
+        val scope = privateScopeForPackage(packageName) ?: return true
+        val result = runCatching {
+            accessManager.currentPrivateLease(scope)
+        }
+        val privateLease = result.getOrNull()
+        if (privateLease != null) return true
+
+        if (result.isFailure) {
+            android.util.Log.e(
+                "JesterMoodsPrivateAccess",
+                "Private approval check failed before a protected action",
+                result.exceptionOrNull()
+            )
+        }
+        runCatching { repository.removeFromLibrary(packageName) }
+            .onFailure { error ->
+                android.util.Log.e(
+                    "JesterMoodsPrivateModule",
+                    "The unapproved private module could not be hidden.",
+                    error
+                )
+            }
+        scannedConfigs = null
+        if (_selectedLibraryGame.value?.packageName == packageName) {
+            _selectedLibraryGame.value = null
+            _selectedGame.value = null
+        }
+        refreshGames(forceGameScan = true)
+        val detail = if (result.isFailure) {
+            "Jester Mods could not verify this private add-on approval. Connect and try again."
+        } else {
+            "This device is not approved for this private add-on. Send the support code to the owner."
+        }
+        when (action) {
+            ProtectedActionBoundary.GAME_LAUNCH -> _launchState.value = LaunchUiState(
+                headline = "Private add-on locked",
+                detail = detail,
+                failed = true
+            )
+            ProtectedActionBoundary.MODULE_DOWNLOAD -> _updateState.value = ModuleUpdateUiState(
+                headline = "Private add-on locked",
+                detail = detail,
+                failed = true
+            )
+        }
+        return false
+    }
+
+    private fun privateScopeForPackage(packageName: String): String? =
+        if (BuildConfig.PRIVATE_MODULE_ENABLED &&
+            packageName == BuildConfig.PRIVATE_MODULE_PACKAGE) {
+            BuildConfig.PRIVATE_MODULE_SCOPE
+        } else {
+            repository.embeddedPrivateScope(packageName)
+        }
 
     private fun beginReleaseVerification(packageName: String, gate: ReleaseVerificationRequired) {
         val nonceBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
@@ -2319,9 +2482,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         awaitMinimumAccessCheckGate(gateStartedAt)
         result
             .onSuccess { lease ->
-                markLauncherReady(lease.expiresAt)
-                refreshGames(refreshCatalog = true, forceGameScan = true)
-                checkLauncherUpdate()
+                completeAuthorizedStartup(lease.expiresAt)
             }
             .onFailure { error ->
                 android.util.Log.e("JesterMoodsAccess", "Digital key redemption failed", error)
@@ -2345,6 +2506,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_CHECKED_AT_PREFIX = "checked_at_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_ACCESS_CHECK_GATE_MS = 2_000L
+        private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L
         private const val DEBUG_ACCESS_DURATION_SECONDS = 24L * 60L * 60L
         private const val MAX_RELEASE_GRANT_CHARS = 4096
         private const val LOCAL_TEST_STAGE_DIR = "jester-local-modules"

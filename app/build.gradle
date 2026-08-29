@@ -23,6 +23,72 @@ def releaseKeyPassword = signingValue('releaseKeyPassword') ?: signingValue('key
 def releaseSigningReady = releaseStorePath != null && releaseStorePassword != null &&
         releaseKeyAlias != null && releaseKeyPassword != null
 
+def privateModuleBundleValue = providers.gradleProperty('privateModuleBundle').orNull
+def privateModuleScopeValue = providers.gradleProperty('privateModuleScope').orNull?.trim() ?: ''
+def privateModuleBundle = privateModuleBundleValue
+        ? rootProject.file(privateModuleBundleValue).canonicalFile
+        : null
+def privateModulePackage = ''
+def privateModuleSha256 = ''
+if (privateModuleBundle != null) {
+    if (!privateModuleBundle.isFile()) {
+        throw new GradleException("privateModuleBundle does not exist: ${privateModuleBundle}")
+    }
+    if (!(privateModuleScopeValue ==~ /[a-z0-9][a-z0-9._-]{2,63}/)) {
+        throw new GradleException(
+            'A private module build requires -PprivateModuleScope=<3-64 lowercase letters, digits, dots, underscores, or hyphens>.'
+        )
+    }
+    def archive = new java.util.zip.ZipFile(privateModuleBundle)
+    try {
+        def configEntry = archive.getEntry('config.json')
+        if (configEntry == null || configEntry.directory || configEntry.size < 2 || configEntry.size > 65_536) {
+            throw new GradleException('The private module bundle must contain a small config.json file.')
+        }
+        def configText = archive.getInputStream(configEntry).getText('UTF-8')
+        if (configText.startsWith('\uFEFF')) configText = configText.substring(1)
+        def config = new groovy.json.JsonSlurper().parseText(configText)
+        privateModulePackage = String.valueOf(config.package_name ?: config.target_package ?: '')
+        if (!(privateModulePackage ==~ /[A-Za-z0-9_.]{3,200}/)) {
+            throw new GradleException('The private module bundle contains an invalid package name.')
+        }
+        ['classes.dex', 'libmenu_native.so'].each { requiredName ->
+            def required = archive.getEntry(requiredName)
+            if (required == null || required.directory || required.size <= 0) {
+                throw new GradleException("The private module bundle is missing ${requiredName}.")
+            }
+        }
+    } finally {
+        archive.close()
+    }
+    privateModuleSha256 = java.security.MessageDigest.getInstance('SHA-256')
+        .digest(privateModuleBundle.bytes)
+        .collect { String.format('%02x', it & 0xFF) }
+        .join()
+}
+
+def generatedPrivateModuleAssets = layout.buildDirectory.dir('generated/privateModuleAssets')
+def generatedPrivateModuleAssetsDirectory = file("$buildDir/generated/privateModuleAssets")
+def preparePrivateModuleAssets = tasks.register('preparePrivateModuleAssets') {
+    outputs.dir(generatedPrivateModuleAssets)
+    if (privateModuleBundle != null) inputs.file(privateModuleBundle)
+    doLast {
+        def outputRoot = generatedPrivateModuleAssets.get().asFile
+        project.delete(outputRoot)
+        if (privateModuleBundle != null) {
+            def outputDirectory = new File(outputRoot, 'embedded-private')
+            if (!outputDirectory.mkdirs() && !outputDirectory.isDirectory()) {
+                throw new GradleException('Could not create generated private module assets.')
+            }
+            project.copy {
+                from privateModuleBundle
+                into outputDirectory
+                rename { 'module.zip' }
+            }
+        }
+    }
+}
+
 def releaseSignerSha256 = {
     def keyStore = java.security.KeyStore.getInstance('JKS')
     rootProject.file(releaseStorePath).withInputStream { input ->
@@ -66,10 +132,14 @@ android {
         applicationId 'com.moodtools'
         minSdk 26
         targetSdk 35
-        versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(116)
-        versionName providers.gradleProperty('launcherVersionName').getOrElse('1.1.6')
+        versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(117)
+        versionName providers.gradleProperty('launcherVersionName').getOrElse('1.1.7')
         buildConfigField 'String', 'UPDATE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9ueWd1XDC7a63XAmkmNPfB52dXe/Q6VF/mUQ9639cDm4uLYrQ7+34p+6Vi1m3eU/KV/lY/BlQPWVHM2gwU/xDT32c+zkfojTn8Fb9kCxNLOOIvpMBLDMxHoZvv63z1MS7lK2Zd1dNrLbM26UK0K01nDL15yWJjQ4fxHvxR1t9sRSXgk9aBft/7R0NMgC2TJDIG1n2Fsk7f82r8gIxIKrI4CnTSKA30zwoH46/GhMmoiqaCOEOdqXNoV7ll+bfeN/PNEACxgOGwY750nkkZEgMLvCNXqto4nFflH0bYUTazaJ5z3fOuCJ8pR5hh5L1hk44Zh8F8wO0qyjCBMoByypObgpF0JURcZb6G/kmvAEB1lZet+yFIeycjCxsksVDVo1SbfXZ10Oum1WZz07X3Bn/i2FjGy6YNzKViRd86khRVa79H9ZIDPx1mb1UYREjpx8tMo/G9pmVY0mooEOBMvzWVm4JxYPQJA8G7kfu/zGS1vWZSUcfG1VwDCUULUicu43AgMBAAE="'
         buildConfigField 'String', 'ACCESS_LEASE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAm2Mcwr7+L/dXID3KVJbspglExlWgdd/ofCESWgqUdfpXCTh3RhJm7q6qXJiKODtJw2Rs+HsZAXvw+6A0f6Fjo7+A1pgnIGzWCjihcmEl32t2vOr/vXS3XQbjo+yk9QjEZ2T4EiYHc9YK3iKEAowGZtHF1vZPTJkrbjXXWB3eJ7bf3Py37ZKa2sb07SedifEMyE9LgWMVWEbohTT+EkXlTAY6k2+um3wgt1FEUClo0PaBEDv3jSJCVJuqTzrz3xrhx07+tRHdlDxfwyHimfXdsel7wMEZaxb7ssj2Sfkbp59KsCijHiwz4gI22LGOutW+eP2+t7e8dkB+18eaCF/EGzko3U65Xk6ZivgH2Z07WxpUmvQyPEgNE74y1KZhIWEl274M5PaxtYMZAEUlDI2XtSCZVsm4siiKmMbwEd9fYl3uFoOiOkGlc28Yomwlb8PgsnVI7riF6M05RQd4Iy8ZqfVGGQdERKqKrbBIEn9rVM9n/X2nypBj9zpCjtYLcjApAgMBAAE="'
+        buildConfigField 'boolean', 'PRIVATE_MODULE_ENABLED', privateModuleBundle != null ? 'true' : 'false'
+        buildConfigField 'String', 'PRIVATE_MODULE_PACKAGE', '"' + privateModulePackage + '"'
+        buildConfigField 'String', 'PRIVATE_MODULE_SCOPE', '"' + privateModuleScopeValue + '"'
+        buildConfigField 'String', 'PRIVATE_MODULE_SHA256', '"' + privateModuleSha256 + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables {
             useSupportLibrary true
@@ -181,6 +251,10 @@ android {
         buildConfig true
     }
 
+    sourceSets {
+        main.assets.srcDir(generatedPrivateModuleAssetsDirectory)
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging false
@@ -188,6 +262,13 @@ android {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
         }
+    }
+}
+
+tasks.configureEach { task ->
+    if ((task.name.startsWith('merge') && task.name.endsWith('Assets')) ||
+            task.name.toLowerCase(java.util.Locale.ROOT).contains('lint')) {
+        task.dependsOn(preparePrivateModuleAssets)
     }
 }
 
