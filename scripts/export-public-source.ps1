@@ -28,7 +28,10 @@ $tracked = & git -C $sourceRoot ls-files
 if ($LASTEXITCODE -ne 0) { throw 'Could not read the private repository file list.' }
 foreach ($relative in $tracked) {
     $normalized = $relative.Replace('\', '/')
-    if ($normalized -eq 'README.md' -or $excluded.Where({ $normalized.StartsWith($_) }, 'First').Count -gt 0) {
+    $isPrivateProductionModule = $normalized.StartsWith('modules/') -and
+        -not $normalized.StartsWith('modules/com.example.module/')
+    if ($normalized -in @('README.md', 'LOCAL_HANDOFF.md') -or $isPrivateProductionModule -or
+        $excluded.Where({ $normalized.StartsWith($_) }, 'First').Count -gt 0) {
         continue
     }
     $source = Join-Path $sourceRoot $relative

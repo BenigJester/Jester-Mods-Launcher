@@ -1,6 +1,7 @@
 package top.niunaijun.blackbox.fake.service.context.providers;
 
 import android.os.IInterface;
+import android.os.Build;
 
 import java.lang.reflect.Method;
 import java.util.Set;
@@ -11,6 +12,7 @@ import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
 import top.niunaijun.blackbox.utils.compat.ContextCompat;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.PlayStoreCrashPolicy;
 import android.os.Bundle;
 
 
@@ -49,6 +51,20 @@ public class ContentProviderStub extends ClassInvocationStub implements BContent
         
         
         String methodName = method.getName();
+
+        // Keep the Play Store helper in the same observable failure state on every Android version
+        // supported by the non-root launcher after Zombie Tsunami requests its Play Store service.
+        // The armed bit is local to that Play Store process, so unrelated guests are unaffected.
+        if (PlayStoreCrashPolicy.shouldForceUidMismatch(
+                Build.VERSION.SDK_INT,
+                PlayStoreCrashPolicy.isUidMismatchArmed(),
+                mAppPkg,
+                methodName)) {
+            String message = PlayStoreCrashPolicy.uidMismatchMessage(BlackBoxCore.getHostUid());
+            Slog.w(TAG, PlayStoreCrashPolicy.STATE_ID
+                    + " forcing virtual Play Store provider-query failure: " + message);
+            throw new SecurityException(message);
+        }
         
         
         

@@ -4,6 +4,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 
@@ -15,6 +16,8 @@ import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.entity.ServiceRecord;
 import top.niunaijun.blackbox.entity.UnbindRecord;
 import top.niunaijun.blackbox.proxy.record.ProxyServiceRecord;
+import top.niunaijun.blackbox.utils.PlayStoreCrashPolicy;
+import top.niunaijun.blackbox.utils.Slog;
 
 import static android.app.Service.START_NOT_STICKY;
 
@@ -41,9 +44,54 @@ public class AppServiceDispatcher {
         if (intent == null || serviceInfo == null)
             return null;
 
+        String sourceGuestPackage = intent.getStringExtra(
+                PlayStoreCrashPolicy.SOURCE_GUEST_EXTRA);
+        String sourceSessionToken = intent.getStringExtra(
+                PlayStoreCrashPolicy.SOURCE_SESSION_EXTRA);
+        boolean targetGamePlayStoreBind = PlayStoreCrashPolicy.shouldArmForServiceBind(
+                Build.VERSION.SDK_INT, sourceGuestPackage, serviceInfo.packageName);
+        boolean referenceCrashAlreadyProduced = targetGamePlayStoreBind
+                ? !PlayStoreCrashPolicy.claimReferenceCrash(
+                        BlackBoxCore.getContext(), serviceRecord.mUserId, sourceSessionToken)
+                : PlayStoreCrashPolicy.PLAY_STORE_PACKAGE.equals(serviceInfo.packageName)
+                        && PlayStoreCrashPolicy.hasReferenceCrashClaim(
+                                BlackBoxCore.getContext(), serviceRecord.mUserId);
+        if (referenceCrashAlreadyProduced) {
+            intent.removeExtra(PlayStoreCrashPolicy.SOURCE_GUEST_EXTRA);
+            intent.removeExtra(PlayStoreCrashPolicy.SOURCE_SESSION_EXTRA);
+            Slog.i(TAG, PlayStoreCrashPolicy.STATE_ID
+                    + " returned a stable dead binding after the reference crash");
+            return null;
+        }
+        intent.removeExtra(PlayStoreCrashPolicy.SOURCE_GUEST_EXTRA);
+        intent.removeExtra(PlayStoreCrashPolicy.SOURCE_SESSION_EXTRA);
+        boolean forcePlayStoreUidMismatch = PlayStoreCrashPolicy.armForServiceBind(
+                Build.VERSION.SDK_INT, sourceGuestPackage, serviceInfo.packageName);
+        if (forcePlayStoreUidMismatch) {
+            Slog.w(TAG, PlayStoreCrashPolicy.STATE_ID + " armed in Play Store process: source="
+                    + sourceGuestPackage + " service=" + serviceInfo.name);
+        }
 
+        Service service;
+        try {
+            service = getOrCreateService(serviceRecord);
+        } catch (RuntimeException failure) {
+            if (!forcePlayStoreUidMismatch || containsPinnedUidMismatch(failure)) {
+                throw failure;
+            }
+            Slog.w(TAG, PlayStoreCrashPolicy.STATE_ID
+                    + " replaced a different Play Store startup failure", failure);
+            throw PlayStoreCrashPolicy.uidMismatchException(BlackBoxCore.getHostUid());
+        }
 
-        Service service = getOrCreateService(serviceRecord);
+        // Most Play Store builds query a provider during makeApplication(), so ContentProviderStub
+        // produces the original observed stack before reaching here. This fallback pins the same
+        // process, exception type, and message when a different Play Store build skips that query.
+        if (forcePlayStoreUidMismatch) {
+            Slog.w(TAG, PlayStoreCrashPolicy.STATE_ID
+                    + " using service-bind fallback because no provider query occurred");
+            throw PlayStoreCrashPolicy.uidMismatchException(BlackBoxCore.getHostUid());
+        }
         if (service == null)
             return null;
         intent.setExtrasClassLoader(service.getClassLoader());
@@ -66,6 +114,19 @@ public class AppServiceDispatcher {
             e.printStackTrace();
         }
         return null;
+    }
+
+    private boolean containsPinnedUidMismatch(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof SecurityException
+                    && PlayStoreCrashPolicy.uidMismatchMessage(BlackBoxCore.getHostUid())
+                            .equals(current.getMessage())) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     public int onStartCommand(Intent proxyIntent, int flags, int startId) {

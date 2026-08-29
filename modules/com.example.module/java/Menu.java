@@ -392,7 +392,8 @@ public class Menu {
                 mExpanded.setVisibility(View.GONE);
                 Main.SetMenuExpanded(false);
                 updateColorAnimationState();
-                Toast.makeText(view.getContext(), OfflineTranslator.tr("Icon hidden. Remember the hidden icon position"), Toast.LENGTH_LONG).show();
+                Main.ShowNativeToast(view.getContext(),
+                        "Icon hidden. Remember the hidden icon position", Toast.LENGTH_LONG);
             }
         });
         hideButton.setOnLongClickListener(new View.OnLongClickListener() {
@@ -402,7 +403,8 @@ public class Menu {
                 mExpanded.setVisibility(View.GONE);
                 Main.SetMenuExpanded(false);
                 updateColorAnimationState();
-                Toast.makeText(view.getContext(), OfflineTranslator.tr("Icon hidden. Remember the hidden icon position"), Toast.LENGTH_LONG).show();
+                Main.ShowNativeToast(view.getContext(),
+                        "Icon hidden. Remember the hidden icon position", Toast.LENGTH_LONG);
                 return true;
             }
         });
@@ -511,10 +513,9 @@ public class Menu {
         float density = getContext.getResources().getDisplayMetrics().density;
         int screenHeightDp = Math.round(calculateAvailableWindowHeightPx() / density);
         int available = Math.max(112, screenHeightDp - MENU_CHROME_HEIGHT_DP - 12);
-        // This is a maximum, not a forced height. The ScrollView remains compact when its
-        // current feature list is shorter and grows as collapses or settings add content.
-        int preferred = Math.round(available * (expanded ? 0.92f : 0.72f));
-        return Math.max(112, Math.min(available, preferred));
+        // Let long content use the full safe visible height. AT_MOST measurement still keeps
+        // short menus compact, while the footer guard prevents the panel leaving the screen.
+        return available;
     }
 
     private int calculateAvailableWindowHeightPx() {
@@ -1698,6 +1699,22 @@ public class Menu {
         header.setText(label);
     }
 
+    private void showOneShotToast(CharSequence message) {
+        showOneShotToast(message, Toast.LENGTH_SHORT);
+    }
+
+    private void showOneShotToast(CharSequence message, int length) {
+        if (message == null) return;
+        String text = message.toString().trim();
+        if (text.length() == 0) return;
+        Main.ShowNativeToast(getContext, text, length);
+    }
+
+    private void showToggleToast(CharSequence label, boolean enabled) {
+        if (label == null) return;
+        showOneShotToast(label.toString() + ": " + (enabled ? "ON" : "OFF"));
+    }
+
     private void Switch(LinearLayout linLayout, final int featNum, final String featName, boolean swiOn) {
         final LinearLayout row = new LinearLayout(getContext);
         row.setLayoutParams(featureLayoutParams(3, 3));
@@ -1740,6 +1757,9 @@ public class Menu {
                     colorAnimations = bool;
                     updateColorAnimationState();
                 } else {
+                    if (featNum >= 0) {
+                        showToggleToast(label.getText(), bool);
+                    }
                     Preferences.changeFeatureBool(featName, featNum, bool);
                 }
                 animateToggleFeedback(switchR);
@@ -1819,6 +1839,9 @@ public class Menu {
                         stopChecking = true;
                         break;
                 }
+                if (featNum >= 0) {
+                    showOneShotToast(button.getText());
+                }
                 Preferences.changeFeatureInt(featName, featNum, 0);
             }
         });
@@ -1863,6 +1886,7 @@ public class Menu {
             boolean isOn = finalIsOn;
 
             public void onClick(View v) {
+                showToggleToast(finalfeatName, isOn);
                 Preferences.changeFeatureBool(finalfeatName, featNum, isOn);
                 //Log.d(TAG, finalfeatName + " " + featNum + " " + isActive2);
                 if (isOn) {
@@ -2094,9 +2118,7 @@ public class Menu {
                                     : MULTI_SELECT_EXPLICIT_MARKER | mask;
                             Preferences.changeFeatureInt(featName, featNum, encoded);
                             selected.setText(multiSelectSpinnerLabel(featName, entries, encoded));
-                            Toast.makeText(getContext,
-                                    multiSelectSelectionToast(entries, encoded),
-                                    Toast.LENGTH_SHORT).show();
+                            showOneShotToast(multiSelectSelectionToast(entries, encoded));
                         }
                     });
                     options.addView(optionRow,
@@ -2535,6 +2557,7 @@ public class Menu {
         checkBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showToggleToast(checkBox.getText(), isChecked);
                 if (checkBox.isChecked()) {
                     Preferences.changeFeatureBool(featName, featNum, isChecked);
                 } else {

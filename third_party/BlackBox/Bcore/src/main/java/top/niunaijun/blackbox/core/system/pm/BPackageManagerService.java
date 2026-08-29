@@ -47,6 +47,7 @@ import top.niunaijun.blackbox.entity.pm.InstallResult;
 import top.niunaijun.blackbox.entity.pm.InstalledPackage;
 import top.niunaijun.blackbox.utils.AbiUtils;
 import top.niunaijun.blackbox.utils.BzFileUtils;
+import top.niunaijun.blackbox.utils.PlayStoreCrashPolicy;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.PackageParserCompat;
 
@@ -619,6 +620,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
     @Override
     public void stopPackage(String packageName, int userId) {
+        PlayStoreCrashPolicy.clearReferenceCrashClaims(
+                BlackBoxCore.getContext(), packageName, userId);
         BProcessManagerService.get().killPackageAsUser(packageName, userId);
     }
 

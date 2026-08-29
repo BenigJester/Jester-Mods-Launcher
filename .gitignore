@@ -6,10 +6,8 @@
 module-output/
 captures/
 
-# Module sources
-modules/*
-!modules/com.example.module/
-!modules/com.example.module/**
+# Production module sources are tracked only in this private repository.
+# Generated native/DEX/package outputs remain excluded by the rules below.
 
 # Native build output
 **/.cxx/

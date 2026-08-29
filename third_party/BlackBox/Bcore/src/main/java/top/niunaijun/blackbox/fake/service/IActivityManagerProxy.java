@@ -11,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.provider.DocumentsContract;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.text.TextUtils;
@@ -56,6 +57,7 @@ import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.proxy.record.ProxyBroadcastRecord;
 import top.niunaijun.blackbox.proxy.record.ProxyPendingRecord;
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.PlayStoreCrashPolicy;
 import top.niunaijun.blackbox.utils.Reflector;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -488,6 +490,21 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             int userId = intent.getIntExtra("_B_|_UserId", -1);
             userId = userId == -1 ? BActivityThread.getUserId() : userId;
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, userId);
+            String sourceGuestPackage = BActivityThread.getAppPackageName();
+            String servicePackage = resolveInfo != null && resolveInfo.serviceInfo != null
+                    ? resolveInfo.serviceInfo.packageName
+                    : intent.getComponent() != null
+                            ? intent.getComponent().getPackageName()
+                            : intent.getPackage();
+            if (PlayStoreCrashPolicy.shouldArmForServiceBind(
+                    Build.VERSION.SDK_INT, sourceGuestPackage, servicePackage)) {
+                intent.putExtra(PlayStoreCrashPolicy.SOURCE_GUEST_EXTRA, sourceGuestPackage);
+                intent.putExtra(
+                        PlayStoreCrashPolicy.SOURCE_SESSION_EXTRA,
+                        PlayStoreCrashPolicy.sourceSessionToken());
+                Slog.i(TAG, PlayStoreCrashPolicy.STATE_ID + " tagged service bind: source="
+                        + sourceGuestPackage + " target=" + servicePackage + " user=" + userId);
+            }
             if (isPlayLicensingIntent(intent)) {
                 String resolved = resolveInfo != null && resolveInfo.serviceInfo != null
                         ? resolveInfo.serviceInfo.packageName + "/" + resolveInfo.serviceInfo.name

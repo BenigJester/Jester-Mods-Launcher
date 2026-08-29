@@ -11,3 +11,11 @@ It covers module debug/release builds, Root and Non-root launcher builds, comple
 - `test_helper.cmd launcher root "" "" release`
 
 Production builds ask for a numeric `major.minor.patch` version, derive the build by removing its dots (`1.1.1` becomes `111`), then apply the pair equally to Root and Non-root APKs.
+
+For the representative Zombie Tsunami BlackBox compatibility-state check, install the non-root APK and run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-blackbox-zombie-crash.ps1`.
+The verifier requires state `BB-PLAY-UID-001`, the exact Play Store package/UID exception,
+a stable non-restarting Play binding, and a live focused Zombie Tsunami process. This state is
+scoped to game guests in the non-root launcher and applies to every supported Android version
+(API 26+) when the virtual Play Store is available. Zombie Tsunami is the live reference case;
+the same policy gate also covers 1945 Air Force, The Wild Darkness, and other game packages.

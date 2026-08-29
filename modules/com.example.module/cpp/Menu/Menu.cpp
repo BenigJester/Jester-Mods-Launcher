@@ -262,7 +262,7 @@ void Init(JNIEnv *env, jobject thiz, jobject ctx, jobject title, jobject subtitl
                                      "</marquee></b>"));
 
     if (!brandingToastShown.test_and_set()) {
-        Toast(env, ctx, OBFUSCATE("Modded by Jester"), ToastLength::LENGTH_LONG);
+        Toast(env, ctx, OBFUSCATE("Menu by Jester"), ToastLength::LENGTH_LONG);
     }
 }
 
@@ -281,7 +281,6 @@ jobjectArray SettingsList(JNIEnv *env, jobject activityObject) {
     const char *features[] = {
             OBFUSCATE("Category_Preferences"),
             OBFUSCATE("-1_Toggle_Save feature preferences"), //-1 is checked on Preferences.java
-            OBFUSCATE("-3_Toggle_Expanded panel height"),
             OBFUSCATE("-700_Toggle_Menu animations"),
             OBFUSCATE("-701_Toggle_Color animations"),
             OBFUSCATE("-702_Spinner_Language_English,Filipino,Korean,Japanese,Chinese (Simplified),Spanish,Vietnamese,Indonesian"),
