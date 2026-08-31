@@ -136,8 +136,9 @@ class LauncherUpdateClient(private val context: Context) {
             if (target.exists()) require(target.delete()) { "Could not replace the previous launcher download" }
             require(temporary.renameTo(target)) { "Could not save the launcher update" }
             return target
-        } finally {
-            temporary.delete()
+        } catch (error: Throwable) {
+            if (temporary.length() == release.size) temporary.delete()
+            throw error
         }
     }
 

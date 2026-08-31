@@ -33,6 +33,9 @@ class ReleaseVerificationRequired(
     val requiredReleaseBuild: Long
 ) : Exception("Release verification is required")
 
+class ModuleDownloadAuthorizationExpired(cause: Throwable? = null) :
+    Exception("The module download authorization expired", cause)
+
 class UpdateClient(private val moduleRoot: File) {
     private val baseUrl = "https://jester.moodtools.workers.dev"
 
@@ -139,7 +142,9 @@ class UpdateClient(private val moduleRoot: File) {
         require(packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
         require(abi == "arm64-v8a" || abi == "armeabi-v7a")
         require(authorization.capability.length in 80..4096)
-        require(authorization.expiresAt > System.currentTimeMillis() / 1000L)
+        if (authorization.expiresAt <= System.currentTimeMillis() / 1000L) {
+            throw ModuleDownloadAuthorizationExpired()
+        }
         val envelope = authorization.manifest
         val payload = SignedEnvelopeVerifier.payload(envelope)
         require(payload.getInt("schema") == 1)
@@ -183,8 +188,6 @@ class UpdateClient(private val moduleRoot: File) {
         val nextConfig = File(moduleRoot, "config.json.next")
         val nextSignedManifest = File(moduleRoot, "${ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE}.next")
         val nextPrivateMarker = privateScope?.let { File(moduleRoot, "${ModuleRepository.PRIVATE_INSTALL_MARKER}.next") }
-        nextNative.delete()
-        nextDex.delete()
         nextConfig.delete()
         nextSignedManifest.delete()
         nextPrivateMarker?.delete()
@@ -238,8 +241,6 @@ class UpdateClient(private val moduleRoot: File) {
             commitStandalonePayload(nextNative, nextDex, nextConfig, nextSignedManifest, nextPrivateMarker)
             File(moduleRoot, "update.json").writeText(payload.toString())
         } finally {
-            nextNative.delete()
-            nextDex.delete()
             nextConfig.delete()
             nextSignedManifest.delete()
             nextPrivateMarker?.delete()
@@ -350,7 +351,29 @@ class UpdateClient(private val moduleRoot: File) {
         require(path.startsWith(allowedPrefix))
         require(expectedSha256.matches(Regex("[0-9a-fA-F]{64}")))
         output.parentFile?.mkdirs()
-        val temporary = File(output.parentFile, "${output.name}.part")
+        if (output.isFile && output.length() == expectedBytes &&
+            sha256(output) == expectedSha256.lowercase()
+        ) {
+            if (progressTotalBytes > 0L) {
+                onProgress?.invoke(
+                    (progressBaseBytes + expectedBytes).coerceAtMost(progressTotalBytes),
+                    progressTotalBytes
+                )
+            }
+            return
+        }
+        output.delete()
+        val temporary = File(
+            output.parentFile,
+            "${output.name}.${expectedSha256.lowercase().take(16)}.part"
+        )
+        output.parentFile?.listFiles()?.forEach { candidate ->
+            if (candidate != temporary && candidate.isFile &&
+                candidate.name.startsWith("${output.name}.") && candidate.name.endsWith(".part")
+            ) {
+                candidate.delete()
+            }
+        }
         try {
             FastFileDownloader.download(
                 destination = temporary,
@@ -376,17 +399,17 @@ class UpdateClient(private val moduleRoot: File) {
                         )
                     }
                 },
-                onDiagnostic = { message -> Log.w("JesterMoodsDownload", message) },
-                // Every protected module range needs its own server challenge and signed proof.
-                // One continuous request is substantially faster on this route; range requests
-                // remain available when the stream must resume after an interruption.
-                allowParallelRanges = false
+                onDiagnostic = { message -> Log.w("JesterMoodsDownload", message) }
             )
             require(sha256(temporary) == expectedSha256.lowercase()) { "Payload hash verification failed" }
             if (output.exists()) require(output.delete())
             require(temporary.renameTo(output)) { "Could not commit downloaded payload" }
-        } finally {
-            temporary.delete()
+        } catch (error: Throwable) {
+            if (temporary.length() == expectedBytes) temporary.delete()
+            if (error.hasHttpStatus(401, 403)) {
+                throw ModuleDownloadAuthorizationExpired(error)
+            }
+            throw error
         }
     }
 
@@ -419,4 +442,13 @@ class UpdateClient(private val moduleRoot: File) {
     companion object {
         private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
     }
+}
+
+private fun Throwable.hasHttpStatus(vararg statuses: Int): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is FastFileDownloader.HttpDownloadException && current.status in statuses) return true
+        current = current.cause?.takeUnless { it === current }
+    }
+    return false
 }

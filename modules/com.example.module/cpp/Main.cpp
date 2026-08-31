@@ -1,8 +1,10 @@
 #include <atomic>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <jni.h>
 #include <unistd.h>
@@ -34,6 +36,12 @@ enum class CompatibilityState : int {
 // Generic MultiSelectSpinner callback contract. The example descriptor has three selectable
 // entries after its leading "All Options" row, so its decoded native mask occupies bits 0..2.
 constexpr int kExampleMultiSelectAllMask = (1 << 3) - 1;
+
+// Add explicit feature IDs here to omit those controls from a shared build.
+// Both positive and negative IDs are supported. Keep this list empty to expose
+// the complete catalog. Example: {3, 4, 30, 31, 32, -50}.
+constexpr std::initializer_list<int> kHiddenFeatureIds = {
+};
 
 void hack_thread();
 void compatibility_wait_timeout();
@@ -321,83 +329,165 @@ std::string CompatibilityFeatureDescriptor() {
 // Complete feature-descriptor catalog
 // ---------------------------------------------------------------------------------------------
 
+bool IsFeatureHidden(int featureId) {
+    for (const int hiddenFeatureId : kHiddenFeatureIds) {
+        if (hiddenFeatureId == featureId) return true;
+    }
+    return false;
+}
+
+bool HasVisibleFeature(std::initializer_list<int> featureIds) {
+    for (const int featureId : featureIds) {
+        if (!IsFeatureHidden(featureId)) return true;
+    }
+    return false;
+}
+
+void AddFeatureIfVisible(std::vector<std::string> *features, int featureId,
+                         const char *descriptor) {
+    if (features != nullptr && !IsFeatureHidden(featureId)) {
+        features->emplace_back(descriptor);
+    }
+}
+
 jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
     (void) context;
 
     const std::string compatibilityDescriptor = CompatibilityFeatureDescriptor();
-    const char *features[] = {
-            // Keep compatibility as a standalone top-level RichTextView. Prefixing it with
-            // CollapseAdd_ before a Collapse_ parent would make it an orphaned child.
-            compatibilityDescriptor.c_str(),
-            // Display-only types do not call Changes.
-            OBFUSCATE("Category_Display Only Types"),
-            OBFUSCATE("RichTextView_<b>RichTextView</b> supports compact formatted guidance."),
-            OBFUSCATE("RichWebView_<html><body><b>RichWebView</b><br>supports HTML content.</body></html>"),
-            OBFUSCATE("ButtonLink_Project Website_https://example.com"),
+    std::vector<std::string> features;
+    features.reserve(48);
 
-            OBFUSCATE("Category_Standalone Callback Controls"),
-            OBFUSCATE("1_Toggle_Basic Toggle"),
-            OBFUSCATE("2_Toggle_Default On Toggle_True"),
-            OBFUSCATE("3_Toggle_Testing Toggle_ForTesting"),
-            OBFUSCATE("4_Toggle_Default On Testing Toggle_True_ForTesting"),
-            OBFUSCATE("5_Button_Ordinary Button"),
-            OBFUSCATE("6_ActionButton_Primary Action Button"),
-            OBFUSCATE("7_ButtonOnOff_Two State Button"),
-            OBFUSCATE("8_CheckBox_Example Check Box"),
-            OBFUSCATE("9_RadioButton_Example Radio_First,Second,Third"),
-            OBFUSCATE("10_SeekBar_Example Seek Bar_0_100"),
-            OBFUSCATE("11_Spinner_Example Spinner_Alpha,Beta,Gamma"),
-            // MultiSelectSpinner keeps its popup open while radio-styled rows are toggled.
-            // The first CSV entry selects every later entry. Callback value 0 means all;
-            // otherwise bit 30 marks an explicit subset and bits 0..29 represent the entries.
-            OBFUSCATE("29_MultiSelectSpinner_Example Multi Select_All Options,Alpha,Beta,Gamma"),
+    // Keep compatibility as a standalone top-level RichTextView. Prefixing it with
+    // CollapseAdd_ before a Collapse_ parent would make it an orphaned child.
+    features.emplace_back(compatibilityDescriptor);
 
-            OBFUSCATE("Category_Input Types"),
-            OBFUSCATE("12_InputText_Text Input Without Default"),
-            OBFUSCATE("13_InputText_Guest_Text Input With Default"),
-            OBFUSCATE("14_InputValue_100000_Integer Input With Maximum"),
-            OBFUSCATE("15_InputValue_Integer Input Without Maximum"),
-            OBFUSCATE("16_InputFloat_100.5_Float Input With Maximum"),
-            OBFUSCATE("17_InputFloat_Float Input Without Maximum"),
-            OBFUSCATE("18_InputLValue_9999999999_Long Input With Maximum"),
-            OBFUSCATE("19_InputLValue_Long Input Without Maximum"),
+    // Display-only types have no callback IDs and are always included.
+    features.emplace_back(OBFUSCATE("Category_Display Only Types"));
+    features.emplace_back(OBFUSCATE(
+            "RichTextView_<b>RichTextView</b> supports compact formatted guidance."));
+    features.emplace_back(OBFUSCATE(
+            "RichWebView_<html><body><b>RichWebView</b><br>supports HTML content.</body></html>"));
+    features.emplace_back(OBFUSCATE("ButtonLink_Project Website_https://example.com"));
 
-            // Top-level collapse, default-open suffix, CollapseAdd prefix, connected group,
-            // ActionButton workflow, nested collapse, and CollapseEnd.
-            OBFUSCATE("Collapse_Default Open Collapse_True"),
-            OBFUSCATE("20_CollapseAdd_Toggle_Collapse Child Toggle"),
-            OBFUSCATE("CollapseAdd_Group_Connected Input Workflow"),
-            OBFUSCATE("23_CollapseAdd_InputValue_500_Grouped Amount"),
-            OBFUSCATE("24_CollapseAdd_Spinner_Grouped Mode_One,Two,Three"),
-            OBFUSCATE("25_CollapseAdd_ActionButton_Apply Grouped Values"),
-            OBFUSCATE("CollapseAdd_GroupEnd"),
-            OBFUSCATE("CollapseAdd_Collapse_Nested Collapse_True"),
-            OBFUSCATE("21_CollapseAdd_Button_Nested Child Button"),
-            OBFUSCATE("CollapseEnd"),
-            OBFUSCATE("22_CollapseAdd_Button_Back In Parent Collapse"),
+    if (HasVisibleFeature({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29})) {
+        features.emplace_back(OBFUSCATE("Category_Standalone Callback Controls"));
+        AddFeatureIfVisible(&features, 1, OBFUSCATE("1_Toggle_Basic Toggle"));
+        AddFeatureIfVisible(&features, 2,
+                            OBFUSCATE("2_Toggle_Default On Toggle_True"));
+        AddFeatureIfVisible(&features, 3,
+                            OBFUSCATE("3_Toggle_Testing Toggle_ForTesting"));
+        AddFeatureIfVisible(
+                &features, 4,
+                OBFUSCATE("4_Toggle_Default On Testing Toggle_True_ForTesting"));
+        AddFeatureIfVisible(&features, 5, OBFUSCATE("5_Button_Ordinary Button"));
+        AddFeatureIfVisible(&features, 6,
+                            OBFUSCATE("6_ActionButton_Primary Action Button"));
+        AddFeatureIfVisible(&features, 7,
+                            OBFUSCATE("7_ButtonOnOff_Two State Button"));
+        AddFeatureIfVisible(&features, 8,
+                            OBFUSCATE("8_CheckBox_Example Check Box"));
+        AddFeatureIfVisible(
+                &features, 9,
+                OBFUSCATE("9_RadioButton_Example Radio_First,Second,Third"));
+        AddFeatureIfVisible(&features, 10,
+                            OBFUSCATE("10_SeekBar_Example Seek Bar_0_100"));
+        AddFeatureIfVisible(
+                &features, 11,
+                OBFUSCATE("11_Spinner_Example Spinner_Alpha,Beta,Gamma"));
+        // The first MultiSelectSpinner CSV entry selects every later entry.
+        AddFeatureIfVisible(
+                &features, 29,
+                OBFUSCATE("29_MultiSelectSpinner_Example Multi Select_All Options,Alpha,Beta,Gamma"));
+    }
 
-            // Marker and ID examples.
-            OBFUSCATE("Collapse_Prefix and State Examples_ForTesting"),
-            OBFUSCATE("26_CollapseAdd_Button_Explicit Positive ID"),
-            OBFUSCATE("-50_CollapseAdd_Toggle_Signed Negative ID"),
-            OBFUSCATE("CollapseAdd_Toggle_Automatic ID Example"),
-            OBFUSCATE("27_CollapseAdd_ButtonOnOff_Default On Child_True"),
-            OBFUSCATE("28_CollapseAdd_CheckBox_Default On Testing Child_True_ForTesting"),
+    if (HasVisibleFeature({12, 13, 14, 15, 16, 17, 18, 19})) {
+        features.emplace_back(OBFUSCATE("Category_Input Types"));
+        AddFeatureIfVisible(&features, 12,
+                            OBFUSCATE("12_InputText_Text Input Without Default"));
+        AddFeatureIfVisible(&features, 13,
+                            OBFUSCATE("13_InputText_Guest_Text Input With Default"));
+        AddFeatureIfVisible(
+                &features, 14,
+                OBFUSCATE("14_InputValue_100000_Integer Input With Maximum"));
+        AddFeatureIfVisible(&features, 15,
+                            OBFUSCATE("15_InputValue_Integer Input Without Maximum"));
+        AddFeatureIfVisible(
+                &features, 16,
+                OBFUSCATE("16_InputFloat_100.5_Float Input With Maximum"));
+        AddFeatureIfVisible(&features, 17,
+                            OBFUSCATE("17_InputFloat_Float Input Without Maximum"));
+        AddFeatureIfVisible(
+                &features, 18,
+                OBFUSCATE("18_InputLValue_9999999999_Long Input With Maximum"));
+        AddFeatureIfVisible(&features, 19,
+                            OBFUSCATE("19_InputLValue_Long Input Without Maximum"));
+    }
 
-            // Safe, disabled native examples.
-            OBFUSCATE("Collapse_Native Implementation Examples"),
-            OBFUSCATE("30_CollapseAdd_Toggle_Patch Example_ForTesting"),
-            OBFUSCATE("31_CollapseAdd_Toggle_Hook Example_ForTesting"),
-            OBFUSCATE("32_CollapseAdd_Button_Direct Function Call Example_ForTesting")
-    };
+    // Structural rows are emitted only while at least one child remains visible.
+    if (HasVisibleFeature({20, 21, 22, 23, 24, 25})) {
+        features.emplace_back(OBFUSCATE("Collapse_Default Open Collapse_True"));
+        AddFeatureIfVisible(&features, 20,
+                            OBFUSCATE("20_CollapseAdd_Toggle_Collapse Child Toggle"));
+        if (HasVisibleFeature({23, 24, 25})) {
+            features.emplace_back(OBFUSCATE(
+                    "CollapseAdd_Group_Connected Input Workflow"));
+            AddFeatureIfVisible(&features, 23,
+                                OBFUSCATE("23_CollapseAdd_InputValue_500_Grouped Amount"));
+            AddFeatureIfVisible(
+                    &features, 24,
+                    OBFUSCATE("24_CollapseAdd_Spinner_Grouped Mode_One,Two,Three"));
+            AddFeatureIfVisible(
+                    &features, 25,
+                    OBFUSCATE("25_CollapseAdd_ActionButton_Apply Grouped Values"));
+            features.emplace_back(OBFUSCATE("CollapseAdd_GroupEnd"));
+        }
+        if (!IsFeatureHidden(21)) {
+            features.emplace_back(OBFUSCATE(
+                    "CollapseAdd_Collapse_Nested Collapse_True"));
+            AddFeatureIfVisible(&features, 21,
+                                OBFUSCATE("21_CollapseAdd_Button_Nested Child Button"));
+            features.emplace_back(OBFUSCATE("CollapseEnd"));
+        }
+        AddFeatureIfVisible(&features, 22,
+                            OBFUSCATE("22_CollapseAdd_Button_Back In Parent Collapse"));
+    }
 
-    const int featureCount = sizeof(features) / sizeof(features[0]);
+    // The automatic-ID row intentionally remains visible: it has no stable ID to put in
+    // kHiddenFeatureIds. Production controls should always use explicit IDs.
+    features.emplace_back(OBFUSCATE("Collapse_Prefix and State Examples_ForTesting"));
+    AddFeatureIfVisible(&features, 26,
+                        OBFUSCATE("26_CollapseAdd_Button_Explicit Positive ID"));
+    AddFeatureIfVisible(&features, -50,
+                        OBFUSCATE("-50_CollapseAdd_Toggle_Signed Negative ID"));
+    features.emplace_back(OBFUSCATE("CollapseAdd_Toggle_Automatic ID Example"));
+    AddFeatureIfVisible(
+            &features, 27,
+            OBFUSCATE("27_CollapseAdd_ButtonOnOff_Default On Child_True"));
+    AddFeatureIfVisible(
+            &features, 28,
+            OBFUSCATE("28_CollapseAdd_CheckBox_Default On Testing Child_True_ForTesting"));
+
+    if (HasVisibleFeature({30, 31, 32})) {
+        features.emplace_back(OBFUSCATE("Collapse_Native Implementation Examples"));
+        AddFeatureIfVisible(
+                &features, 30,
+                OBFUSCATE("30_CollapseAdd_Toggle_Patch Example_ForTesting"));
+        AddFeatureIfVisible(
+                &features, 31,
+                OBFUSCATE("31_CollapseAdd_Toggle_Hook Example_ForTesting"));
+        AddFeatureIfVisible(
+                &features, 32,
+                OBFUSCATE("32_CollapseAdd_Button_Direct Function Call Example_ForTesting"));
+    }
+
+    const jsize featureCount = static_cast<jsize>(features.size());
     jclass stringClass = env->FindClass(OBFUSCATE("java/lang/String"));
     jobjectArray result = env->NewObjectArray(featureCount, stringClass,
                                                env->NewStringUTF(OBFUSCATE("")));
 
-    for (int i = 0; i < featureCount; ++i) {
-        env->SetObjectArrayElement(result, i, env->NewStringUTF(features[i]));
+    for (jsize i = 0; i < featureCount; ++i) {
+        env->SetObjectArrayElement(
+                result, i, env->NewStringUTF(features[static_cast<size_t>(i)].c_str()));
     }
     return result;
 }

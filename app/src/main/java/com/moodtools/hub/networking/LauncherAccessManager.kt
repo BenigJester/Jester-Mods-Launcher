@@ -29,6 +29,12 @@ data class LauncherPrivateCatalog(
     val capability: String
 )
 
+internal sealed class LauncherPrivateAccessResult {
+    data class Approved(val lease: LauncherPrivateLease) : LauncherPrivateAccessResult()
+    data object Denied : LauncherPrivateAccessResult()
+    data class Unavailable(val error: Throwable) : LauncherPrivateAccessResult()
+}
+
 class LauncherModuleAuthorization internal constructor(
     val manifest: JSONObject,
     val capability: String,
@@ -79,88 +85,100 @@ class LauncherAccessManager(context: Context) {
         )
     }
 
-    /** Refreshes a server-approved private scope, falling back to its signed offline lease. */
-    internal fun currentPrivateLease(scope: String): LauncherPrivateLease? {
+    /** Refreshes a private scope and distinguishes authoritative denial from temporary unavailability. */
+    internal fun checkPrivateAccess(scope: String): LauncherPrivateAccessResult {
         require(scope.matches(PRIVATE_SCOPE_PATTERN)) { "Invalid private module scope" }
-        val now = System.currentTimeMillis() / 1_000L
-        val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
-        if (digitalKey.isEmpty()) {
-            clearPrivateLease(scope)
-            return null
-        }
-        val proofIdentity = proofKeys.identity()
-        val cachedText = preferences.getString("$PRIVATE_LEASE_PREFIX$scope", null).orEmpty()
-        val cached = runCatching {
-            LauncherPrivateLeaseVerifier.verify(
-                envelope = JSONObject(cachedText),
-                expectedScope = scope,
-                expectedDeviceId = deviceId,
-                expectedRecoveryId = recoveryId,
-                expectedFlavor = BuildConfig.FLAVOR,
-                expectedProofKeyId = proofIdentity.keyId
-            )
-        }.getOrNull()?.takeIf { lease ->
-            LauncherOfflineLeaseVerifier.clockStatus(
-                issuedAt = lease.issuedAt,
-                expiresAt = lease.expiresAt,
-                now = now,
-                lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
-                elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
-            ) == LauncherLeaseClockStatus.VALID
-        }
-
         return try {
-            val response = postJson(
-                "$BASE_URL/api/launcher/private-access",
-                JSONObject()
-                    .put("digitalKey", digitalKey)
-                    .put("installationId", installationId)
-                    .put("deviceId", deviceId)
-                    .put("recoveryId", recoveryId)
-                    .put("flavor", BuildConfig.FLAVOR)
-                    .put("accessVersion", ACCESS_VERSION)
-                    .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
-                    .put("proofKeyId", proofIdentity.keyId)
-                    .put("scope", scope)
-            )
-            if (response.has("approved") && !response.optBoolean("approved")) {
-                clearPrivateLease(scope)
-                null
-            } else {
-                require(response.optBoolean("ok")) {
-                    response.optString("message", "Private device approval is unavailable")
-                }
-                val envelope = response.getJSONObject("offlineLease")
-                val lease = LauncherPrivateLeaseVerifier.verify(
-                    envelope = envelope,
+            val now = System.currentTimeMillis() / 1_000L
+            val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
+            if (digitalKey.isEmpty()) {
+                return LauncherPrivateAccessResult.Unavailable(
+                    IllegalStateException("Active launcher access is required")
+                )
+            }
+            val proofIdentity = proofKeys.identity()
+            val cachedText = preferences.getString("$PRIVATE_LEASE_PREFIX$scope", null).orEmpty()
+            val cached = runCatching {
+                LauncherPrivateLeaseVerifier.verify(
+                    envelope = JSONObject(cachedText),
                     expectedScope = scope,
                     expectedDeviceId = deviceId,
                     expectedRecoveryId = recoveryId,
                     expectedFlavor = BuildConfig.FLAVOR,
                     expectedProofKeyId = proofIdentity.keyId
                 )
-                check(preferences.edit()
-                    .putString("$PRIVATE_LEASE_PREFIX$scope", envelope.toString())
-                    .putLong(privateLastSeenKey(scope), now)
-                    .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
-                    .commit()) { "Private device approval could not be saved" }
-                lease
+            }.getOrNull()?.takeIf { lease ->
+                LauncherOfflineLeaseVerifier.clockStatus(
+                    issuedAt = lease.issuedAt,
+                    expiresAt = lease.expiresAt,
+                    now = now,
+                    lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
+                    elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                    lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
+                ) == LauncherLeaseClockStatus.VALID
             }
-        } catch (error: Exception) {
-            if (cached != null) {
-                android.util.Log.w(
-                    "JesterMoodsPrivateAccess",
-                    "The private access server could not be reached; using the signed offline approval.",
-                    error
+            try {
+                val response = postJson(
+                    "$BASE_URL/api/launcher/private-access",
+                    JSONObject()
+                        .put("digitalKey", digitalKey)
+                        .put("installationId", installationId)
+                        .put("deviceId", deviceId)
+                        .put("recoveryId", recoveryId)
+                        .put("flavor", BuildConfig.FLAVOR)
+                        .put("accessVersion", ACCESS_VERSION)
+                        .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
+                        .put("proofKeyId", proofIdentity.keyId)
+                        .put("scope", scope)
                 )
-                rememberPrivateLeaseClock(scope, now)
-                cached
-            } else {
-                throw error
+                if (response.has("approved") && !response.optBoolean("approved")) {
+                    clearPrivateLease(scope)
+                    LauncherPrivateAccessResult.Denied
+                } else {
+                    require(response.optBoolean("ok")) {
+                        response.optString("message", "Private device approval is unavailable")
+                    }
+                    val envelope = response.getJSONObject("offlineLease")
+                    val lease = LauncherPrivateLeaseVerifier.verify(
+                        envelope = envelope,
+                        expectedScope = scope,
+                        expectedDeviceId = deviceId,
+                        expectedRecoveryId = recoveryId,
+                        expectedFlavor = BuildConfig.FLAVOR,
+                        expectedProofKeyId = proofIdentity.keyId
+                    )
+                    check(preferences.edit()
+                        .putString("$PRIVATE_LEASE_PREFIX$scope", envelope.toString())
+                        .putLong(privateLastSeenKey(scope), now)
+                        .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
+                        .commit()) { "Private device approval could not be saved" }
+                    LauncherPrivateAccessResult.Approved(lease)
+                }
+            } catch (error: Exception) {
+                if (cached != null) {
+                    android.util.Log.w(
+                        "JesterMoodsPrivateAccess",
+                        "The private access server could not be reached; using the signed offline approval.",
+                        error
+                    )
+                    rememberPrivateLeaseClock(scope, now)
+                    LauncherPrivateAccessResult.Approved(cached)
+                } else {
+                    LauncherPrivateAccessResult.Unavailable(error)
+                }
             }
+        } catch (error: Throwable) {
+            LauncherPrivateAccessResult.Unavailable(error)
         }
     }
+
+    /** Compatibility wrapper for callers that need an approved signed lease. */
+    internal fun currentPrivateLease(scope: String): LauncherPrivateLease? =
+        when (val result = checkPrivateAccess(scope)) {
+            is LauncherPrivateAccessResult.Approved -> result.lease
+            LauncherPrivateAccessResult.Denied -> null
+            is LauncherPrivateAccessResult.Unavailable -> throw result.error
+        }
 
     private fun clearPrivateLease(scope: String) {
         preferences.edit()

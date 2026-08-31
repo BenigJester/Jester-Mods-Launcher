@@ -2,7 +2,6 @@ package com.moodtools.hub.networking
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,17 +16,16 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class FastFileDownloaderTest {
     @Test
-    fun downloadsLargeFilesInVerifiedRanges() {
+    fun downloadsLargeFilesInExactlyOneStream() {
         val payload = deterministicBytes(17 * 1024 * 1024 + 37)
         val destination = temporaryFile()
-        val requestedRanges = Collections.synchronizedList(mutableListOf<LongRange>())
+        val requestedRanges = Collections.synchronizedList(mutableListOf<LongRange?>())
         val progress = Collections.synchronizedList(mutableListOf<Long>())
         try {
             FastFileDownloader.download(
                 destination = destination,
                 expectedBytes = payload.size.toLong(),
                 openConnection = { range ->
-                    requireNotNull(range)
                     requestedRanges += range
                     FakeDownloadConnection(payload, range)
                 },
@@ -35,14 +33,8 @@ class FastFileDownloaderTest {
             )
 
             assertArrayEquals(payload, destination.readBytes())
-            val sortedRanges = requestedRanges.sortedBy(LongRange::first)
-            assertEquals(3, sortedRanges.size)
-            assertEquals(0L, sortedRanges.first().first)
-            assertEquals(payload.lastIndex.toLong(), sortedRanges.last().last)
-            sortedRanges.zipWithNext().forEach { (before, after) ->
-                assertEquals(before.last + 1L, after.first)
-            }
-            assertEquals(payload.size.toLong(), sortedRanges.sumOf { it.last - it.first + 1L })
+            assertEquals(listOf<LongRange?>(null), requestedRanges)
+            assertEquals(progress.sorted(), progress)
             assertEquals(payload.size.toLong(), progress.last())
             assertTrue(progress.size < payload.size / (64 * 1024))
         } finally {
@@ -51,51 +43,33 @@ class FastFileDownloaderTest {
     }
 
     @Test
-    fun downloadsLargeFilesInOneStreamWhenParallelRangesAreDisabled() {
-        val payload = deterministicBytes(19 * 1024 * 1024 + 37)
+    fun restartsTheSingleStreamWhenTheServerIgnoresAResumeRange() {
+        val payload = deterministicBytes(9 * 1024 * 1024 + 11)
         val destination = temporaryFile()
         val requestedRanges = Collections.synchronizedList(mutableListOf<LongRange?>())
+        val fullAttempts = AtomicInteger()
+        val interruptedAt = 640 * 1024
         try {
             FastFileDownloader.download(
                 destination = destination,
                 expectedBytes = payload.size.toLong(),
                 openConnection = { range ->
                     requestedRanges += range
-                    FakeDownloadConnection(payload, range)
-                },
-                allowParallelRanges = false
-            )
-
-            assertArrayEquals(payload, destination.readBytes())
-            assertEquals(listOf<LongRange?>(null), requestedRanges)
-        } finally {
-            destination.delete()
-        }
-    }
-
-    @Test
-    fun fallsBackToOneStreamWhenRangesAreUnavailable() {
-        val payload = deterministicBytes(9 * 1024 * 1024 + 11)
-        val destination = temporaryFile()
-        val rangeAttempts = AtomicInteger()
-        val fullAttempts = AtomicInteger()
-        try {
-            FastFileDownloader.download(
-                destination = destination,
-                expectedBytes = payload.size.toLong(),
-                openConnection = { range ->
                     if (range == null) {
-                        fullAttempts.incrementAndGet()
-                        FakeDownloadConnection(payload, null)
+                        val failAfter = if (fullAttempts.getAndIncrement() == 0) interruptedAt else null
+                        FakeDownloadConnection(payload, null, failAfter)
                     } else {
-                        rangeAttempts.incrementAndGet()
+                        // Simulate a server returning a full 200 response to the resume request.
                         FakeDownloadConnection(payload, null)
                     }
                 }
             )
 
             assertArrayEquals(payload, destination.readBytes())
-            assertTrue(rangeAttempts.get() in 1..2)
+            assertEquals(
+                listOf<LongRange?>(null, interruptedAt.toLong()..payload.lastIndex.toLong()),
+                requestedRanges
+            )
             assertEquals(1, fullAttempts.get())
         } finally {
             destination.delete()
@@ -103,43 +77,36 @@ class FastFileDownloaderTest {
     }
 
     @Test
-    fun resumesOnlyTheUnfinishedBytesOfABrokenRange() {
+    fun resumesOnlyTheUnfinishedBytesOfABrokenLargeStream() {
         val payload = deterministicBytes(17 * 1024 * 1024 + 37)
         val destination = temporaryFile()
-        val requestedRanges = Collections.synchronizedList(mutableListOf<LongRange>())
+        val requestedRanges = Collections.synchronizedList(mutableListOf<LongRange?>())
         val diagnostics = Collections.synchronizedList(mutableListOf<String>())
-        val firstPartAttempts = AtomicInteger()
         val fullAttempts = AtomicInteger()
+        val interruptedAt = 768 * 1024
         try {
             FastFileDownloader.download(
                 destination = destination,
                 expectedBytes = payload.size.toLong(),
                 openConnection = { range ->
-                    if (range == null) {
-                        fullAttempts.incrementAndGet()
-                        FakeDownloadConnection(payload, null)
-                    } else {
-                        requestedRanges += range
-                        val failAfter = if (range.first == 0L && firstPartAttempts.getAndIncrement() == 0) {
-                            768 * 1024
-                        } else {
-                            null
-                        }
-                        FakeDownloadConnection(payload, range, failAfter)
-                    }
+                    requestedRanges += range
+                    val failAfter = if (range == null && fullAttempts.getAndIncrement() == 0) {
+                        interruptedAt
+                    } else null
+                    FakeDownloadConnection(payload, range, failAfter)
                 },
                 onDiagnostic = { diagnostics += it }
             )
 
             assertArrayEquals(payload, destination.readBytes())
-            val firstPartRequests = requestedRanges.filter { it.first < payload.size / 3 }
-                .sortedBy(LongRange::first)
-            assertEquals(2, firstPartRequests.size)
-            assertEquals(0L, firstPartRequests[0].first)
-            assertEquals((768 * 1024).toLong(), firstPartRequests[1].first)
-            assertEquals(firstPartRequests[0].last, firstPartRequests[1].last)
-            assertEquals(0, fullAttempts.get())
-            assertTrue(diagnostics.any { it.contains("Retrying range 1/3") })
+            assertEquals(
+                listOf<LongRange?>(null, interruptedAt.toLong()..payload.lastIndex.toLong()),
+                requestedRanges
+            )
+            assertEquals(1, fullAttempts.get())
+            assertTrue(diagnostics.any {
+                it.contains("Retrying stream at byte $interruptedAt of ${payload.size}")
+            })
         } finally {
             destination.delete()
         }
@@ -181,9 +148,8 @@ class FastFileDownloaderTest {
 
     @Test
     fun resumesAnOtherworldSizedSingleStreamDownload() {
-        // The published compressed Otherworld Legends native payload is 7,695,424 bytes. Keep this
-        // regression below the 8 MiB parallel threshold so the production-sized medium-file
-        // path and its exact-byte resume behavior remain covered without depending on a private
+        // The published compressed Otherworld Legends native payload is 7,695,424 bytes. Keep its
+        // production-sized exact-byte resume behavior covered without depending on a private
         // module artifact in source control.
         val payload = deterministicBytes(7_695_424)
         val destination = temporaryFile()
@@ -226,21 +192,68 @@ class FastFileDownloaderTest {
         val payload = deterministicBytes(9 * 1024 * 1024 + 11)
         val destination = temporaryFile()
         val fullAttempts = AtomicInteger()
+        val interruptedAt = 640 * 1024
         try {
             val error = assertThrows(IOException::class.java) {
                 FastFileDownloader.download(
                     destination = destination,
                     expectedBytes = payload.size.toLong(),
                     openConnection = { range ->
-                        if (range == null) fullAttempts.incrementAndGet()
-                        FakeDownloadConnection(payload, range, wrongContentRange = range != null)
+                        val failAfter = if (range == null && fullAttempts.getAndIncrement() == 0) {
+                            interruptedAt
+                        } else null
+                        FakeDownloadConnection(
+                            payload,
+                            range,
+                            failAfterBytes = failAfter,
+                            wrongContentRange = range != null
+                        )
                     }
                 )
             }
 
-            assertTrue(error.message.orEmpty().contains("Range"))
-            assertEquals(0, fullAttempts.get())
-            assertFalse(destination.exists())
+            assertTrue(error.cause?.message.orEmpty().contains("range", ignoreCase = true))
+            assertEquals(1, fullAttempts.get())
+            assertEquals(interruptedAt.toLong(), destination.length())
+        } finally {
+            destination.delete()
+        }
+    }
+
+    @Test
+    fun preservesAndResumesProgressAcrossSeparateDownloadAttempts() {
+        val payload = deterministicBytes(4 * 1024 * 1024 + 29)
+        val destination = temporaryFile()
+        val requestedRanges = mutableListOf<LongRange?>()
+        val interruptedAt = 640 * 1024
+        var requests = 0
+        try {
+            assertThrows(IOException::class.java) {
+                FastFileDownloader.download(
+                    destination = destination,
+                    expectedBytes = payload.size.toLong(),
+                    openConnection = { range ->
+                        requestedRanges += range
+                        when (requests++) {
+                            0 -> FakeDownloadConnection(payload, range, interruptedAt)
+                            else -> HttpStatusConnection(401)
+                        }
+                    }
+                )
+            }
+            assertEquals(interruptedAt.toLong(), destination.length())
+
+            FastFileDownloader.download(
+                destination = destination,
+                expectedBytes = payload.size.toLong(),
+                openConnection = { range ->
+                    requestedRanges += range
+                    FakeDownloadConnection(payload, range)
+                }
+            )
+
+            assertArrayEquals(payload, destination.readBytes())
+            assertEquals(interruptedAt.toLong(), requestedRanges.last()?.first)
         } finally {
             destination.delete()
         }
@@ -284,6 +297,15 @@ class FastFileDownloaderTest {
         } ?: ByteArrayInputStream(payload)).let { input ->
             failAfterBytes?.let { FailingInputStream(input, it) } ?: input
         }
+    }
+
+    private class HttpStatusConnection(
+        private val status: Int
+    ) : HttpURLConnection(URL("https://jester.moodtools.workers.dev/test")) {
+        override fun connect() = Unit
+        override fun disconnect() = Unit
+        override fun usingProxy() = false
+        override fun getResponseCode(): Int = status
     }
 
     private class FailingInputStream(

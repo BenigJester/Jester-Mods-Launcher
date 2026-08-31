@@ -5,23 +5,18 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.min
 
 /**
- * Streams a signed, fixed-size file without turning UI progress updates into the bottleneck.
- * Large files use independent byte ranges. Transient failures resume only the unfinished bytes;
- * a server that genuinely does not support ranges safely falls back to one resumable stream.
- * The caller still verifies the signed SHA-256 before activation.
+ * Streams a fixed-size file through exactly one active HTTP connection at a time without turning
+ * UI progress updates into the bottleneck. Transient failures resume the same sequential transfer
+ * from its first unfinished byte. The caller still verifies the signed SHA-256 before activation.
  */
 internal object FastFileDownloader {
     private const val BUFFER_BYTES = 256 * 1024
     private const val PROGRESS_BYTES = 512L * 1024L
     private const val PROGRESS_NANOS = 200L * 1_000_000L
-    private const val PARALLEL_PART_BYTES = 8L * 1024L * 1024L
-    private const val MAX_PARALLEL_PARTS = 4
-    private const val MAX_REQUEST_ATTEMPTS = 4
-    private const val INITIAL_RETRY_DELAY_MILLIS = 250L
+    private const val MAX_REQUEST_ATTEMPTS = 6
+    private const val INITIAL_RETRY_DELAY_MILLIS = 500L
     private val CONTENT_RANGE = Regex("bytes (\\d+)-(\\d+)/(\\d+)")
 
     fun download(
@@ -29,33 +24,12 @@ internal object FastFileDownloader {
         expectedBytes: Long,
         openConnection: (range: LongRange?) -> HttpURLConnection,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
-        onDiagnostic: (message: String) -> Unit = {},
-        allowParallelRanges: Boolean = true
+        onDiagnostic: (message: String) -> Unit = {}
     ) {
         require(expectedBytes > 0L) { "Download size must be positive" }
         destination.parentFile?.mkdirs()
-        destination.delete()
-
-        val parts = if (allowParallelRanges) {
-            min(
-                MAX_PARALLEL_PARTS,
-                ((expectedBytes + PARALLEL_PART_BYTES - 1L) / PARALLEL_PART_BYTES).toInt()
-            )
-        } else {
-            1
-        }
-        val downloadedInRanges = parts >= 2 && tryParallelDownload(
-            destination,
-            expectedBytes,
-            parts,
-            openConnection,
-            onProgress,
-            onDiagnostic
-        )
-        if (!downloadedInRanges) {
-            destination.delete()
-            downloadSingle(destination, expectedBytes, openConnection, onProgress, onDiagnostic)
-        }
+        if (destination.length() > expectedBytes) destination.delete()
+        downloadSingle(destination, expectedBytes, openConnection, onProgress, onDiagnostic)
         require(destination.length() == expectedBytes) { "Download size verification failed" }
     }
 
@@ -66,10 +40,13 @@ internal object FastFileDownloader {
         onProgress: (Long, Long) -> Unit,
         onDiagnostic: (String) -> Unit
     ) {
-        RandomAccessFile(destination, "rw").use { it.setLength(0L) }
-        val reporter = ProgressReporter(expectedBytes, onProgress)
-        var cursor = 0L
+        var cursor = destination.takeIf(File::isFile)?.length() ?: 0L
+        val reporter = ProgressReporter(expectedBytes, cursor, onProgress)
         var attempt = 1
+
+        if (cursor > 0L) {
+            onDiagnostic("Resuming saved download at byte $cursor of $expectedBytes")
+        }
 
         while (cursor < expectedBytes) {
             val requestedRange = if (cursor > 0L) cursor..(expectedBytes - 1L) else null
@@ -81,8 +58,8 @@ internal object FastFileDownloader {
                     if (isRetryableStatus(responseCode)) {
                         throw RetryableDownloadException("Temporary HTTP response $responseCode")
                     }
-                    require(responseCode == HttpURLConnection.HTTP_OK) {
-                        "Download request failed with HTTP $responseCode"
+                    if (responseCode != HttpURLConnection.HTTP_OK) {
+                        throw HttpDownloadException(responseCode)
                     }
                     validateContentLength(connection, expectedBytes)
                 } else if (responseCode == HttpURLConnection.HTTP_OK) {
@@ -118,7 +95,6 @@ internal object FastFileDownloader {
                 }
             } catch (error: Exception) {
                 if (!isRetryable(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
-                    destination.delete()
                     throw DownloadFailureException(
                         "Single-stream download failed after $attempt attempt(s) at byte " +
                             "$cursor of $expectedBytes (${failureKind(error)})",
@@ -142,147 +118,17 @@ internal object FastFileDownloader {
         reporter.finish()
     }
 
-    private fun tryParallelDownload(
-        destination: File,
-        expectedBytes: Long,
-        parts: Int,
-        openConnection: (LongRange?) -> HttpURLConnection,
-        onProgress: (Long, Long) -> Unit,
-        onDiagnostic: (String) -> Unit
-    ): Boolean {
-        RandomAccessFile(destination, "rw").use { it.setLength(expectedBytes) }
-        val reporter = ProgressReporter(expectedBytes, onProgress)
-        val failure = AtomicReference<Throwable?>(null)
-        val activeConnections = mutableSetOf<HttpURLConnection>()
-        val connectionLock = Any()
-        val partSize = (expectedBytes + parts - 1L) / parts
-
-        fun stopWorkers(error: Throwable) {
-            if (failure.compareAndSet(null, error)) {
-                synchronized(connectionLock) {
-                    activeConnections.forEach(HttpURLConnection::disconnect)
-                }
-            }
-        }
-
-        val workers = (0 until parts).mapNotNull { index ->
-            val start = index * partSize
-            val end = min(expectedBytes - 1L, start + partSize - 1L)
-            if (start > end) return@mapNotNull null
-            Thread({
-                var cursor = start
-                var attempt = 1
-                while (cursor <= end && failure.get() == null) {
-                    var connection: HttpURLConnection? = null
-                    try {
-                        val requestedRange = cursor..end
-                        connection = openConnection(requestedRange)
-                        synchronized(connectionLock) { activeConnections += connection }
-                        if (failure.get() != null) return@Thread
-                        validateRangeResponse(connection, requestedRange, expectedBytes)
-                        BufferedInputStream(connection.inputStream, BUFFER_BYTES).use { input ->
-                            RandomAccessFile(destination, "rw").use { output ->
-                                output.seek(cursor)
-                                val buffer = ByteArray(BUFFER_BYTES)
-                                while (cursor <= end) {
-                                    failure.get()?.let {
-                                        throw InterruptedException("Parallel download stopped")
-                                    }
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    require(cursor + count - 1L <= end) {
-                                        "Download range is larger than expected"
-                                    }
-                                    output.write(buffer, 0, count)
-                                    cursor += count
-                                    reporter.add(count.toLong())
-                                }
-                            }
-                        }
-                        if (cursor <= end) {
-                            throw RetryableDownloadException("Download range ended early")
-                        }
-                    } catch (error: Exception) {
-                        if (failure.get() != null) return@Thread
-                        if (error is RangeUnavailableException) {
-                            stopWorkers(error)
-                            return@Thread
-                        }
-                        if (!isRetryable(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
-                            stopWorkers(
-                                DownloadFailureException(
-                                    "Range ${index + 1}/$parts failed after $attempt attempt(s) " +
-                                        "at byte $cursor of ${end + 1L} (${failureKind(error)})",
-                                    error
-                                )
-                            )
-                            return@Thread
-                        }
-                        onDiagnostic(
-                            "Retrying range ${index + 1}/$parts at byte $cursor of ${end + 1L} " +
-                                "after attempt $attempt (${failureKind(error)})"
-                        )
-                        connection?.let { opened ->
-                            synchronized(connectionLock) { activeConnections -= opened }
-                            opened.disconnect()
-                        }
-                        connection = null
-                        try {
-                            retryDelay(attempt)
-                        } catch (interrupted: InterruptedException) {
-                            stopWorkers(interrupted)
-                            Thread.currentThread().interrupt()
-                            return@Thread
-                        }
-                        attempt++
-                    } finally {
-                        connection?.let { opened ->
-                            synchronized(connectionLock) { activeConnections -= opened }
-                            opened.disconnect()
-                        }
-                    }
-                }
-            }, "MoodToolsRangeDownload-$index").apply { start() }
-        }
-
-        try {
-            workers.forEach(Thread::join)
-        } catch (error: InterruptedException) {
-            stopWorkers(error)
-            workers.forEach(Thread::interrupt)
-            Thread.currentThread().interrupt()
-            throw error
-        }
-
-        val terminalFailure = failure.get()
-        if (terminalFailure != null) {
-            destination.delete()
-            reporter.reset()
-            if (terminalFailure is RangeUnavailableException) {
-                onDiagnostic("Server does not support parallel byte ranges; using one stream")
-                return false
-            }
-            throw terminalFailure
-        }
-        RandomAccessFile(destination, "rw").use { it.fd.sync() }
-        reporter.finish()
-        return true
-    }
-
     private fun validateRangeResponse(
         connection: HttpURLConnection,
         range: LongRange,
         expectedBytes: Long
     ) {
         val responseCode = connection.responseCode
-        if (responseCode == HttpURLConnection.HTTP_OK) {
-            throw RangeUnavailableException()
-        }
         if (isRetryableStatus(responseCode)) {
             throw RetryableDownloadException("Temporary HTTP response $responseCode")
         }
-        require(responseCode == HttpURLConnection.HTTP_PARTIAL) {
-            "Range request failed with HTTP $responseCode"
+        if (responseCode != HttpURLConnection.HTTP_PARTIAL) {
+            throw HttpDownloadException(responseCode)
         }
         val expectedPartBytes = range.last - range.first + 1L
         validateContentLength(connection, expectedPartBytes)
@@ -303,8 +149,11 @@ internal object FastFileDownloader {
         }
     }
 
-    private fun isRetryable(error: Exception): Boolean =
-        error is IOException || error is RetryableDownloadException
+    private fun isRetryable(error: Exception): Boolean = when (error) {
+        is HttpDownloadException -> isRetryableStatus(error.status)
+        is IOException, is RetryableDownloadException -> true
+        else -> false
+    }
 
     private fun isRetryableStatus(status: Int): Boolean =
         status == HttpURLConnection.HTTP_CLIENT_TIMEOUT ||
@@ -321,7 +170,9 @@ internal object FastFileDownloader {
         Thread.sleep(INITIAL_RETRY_DELAY_MILLIS shl (failedAttempt - 1).coerceAtMost(2))
     }
 
-    private class RangeUnavailableException : Exception("Download server does not support byte ranges")
+    internal class HttpDownloadException(val status: Int) : IOException(
+        "Download request failed with HTTP $status"
+    )
 
     private class RetryableDownloadException(message: String) : IOException(message)
 
@@ -329,11 +180,16 @@ internal object FastFileDownloader {
 
     private class ProgressReporter(
         private val totalBytes: Long,
+        initialBytes: Long,
         private val callback: (Long, Long) -> Unit
     ) {
-        private var downloadedBytes = 0L
-        private var lastPublishedBytes = 0L
+        private var downloadedBytes = initialBytes
+        private var lastPublishedBytes = initialBytes
         private var lastPublishedAt = System.nanoTime()
+
+        init {
+            if (initialBytes > 0L) callback(initialBytes, totalBytes)
+        }
 
         @Synchronized
         fun add(bytes: Long) {

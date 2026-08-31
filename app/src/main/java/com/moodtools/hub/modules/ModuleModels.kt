@@ -200,7 +200,8 @@ data class ModuleListing(
     val installedBuild: Long,
     val installedComplete: Boolean,
     val deviceArchitectureSupported: Boolean = true,
-    val playStoreVersionStatus: PlayStoreVersionStatus? = null
+    val playStoreVersionStatus: PlayStoreVersionStatus? = null,
+    val privateAccessExpiresAtEpochSeconds: Long? = null
 ) {
     val playStoreVersionSupported: Boolean?
         get() = playStoreVersionStatus?.isSupportedBy(catalog.config)
@@ -251,7 +252,9 @@ data class LibraryGame(
     val lastLaunchedAtEpochMillis: Long = 0L,
     val running: Boolean = false,
     val launchAction: LibraryLaunchAction = LibraryLaunchAction.PLAY,
-    val playStoreVersionStatus: PlayStoreVersionStatus? = listing?.playStoreVersionStatus
+    val playStoreVersionStatus: PlayStoreVersionStatus? = listing?.playStoreVersionStatus,
+    val privateScope: String? = listing?.catalog?.privateScope,
+    val privateAccessExpiresAtEpochSeconds: Long? = listing?.privateAccessExpiresAtEpochSeconds
 ) {
     val packageName: String
         get() = module.packageName

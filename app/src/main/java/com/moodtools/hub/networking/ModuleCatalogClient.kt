@@ -9,6 +9,7 @@ import com.moodtools.hub.modules.GamePackageFormat
 import com.moodtools.hub.modules.ModuleConfig
 import com.moodtools.hub.modules.ModuleUpdateStatus
 import com.moodtools.hub.modules.NonRootMethod
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -19,6 +20,7 @@ class ModuleCatalogClient(
     private val accessManager: LauncherAccessManager
 ) {
     private val cacheFile = File(context.filesDir, "launcher-module-catalog.json")
+    private val privateCacheFile = File(context.filesDir, "launcher-private-module-catalog.json")
     @Volatile
     private var memoryCache: List<CatalogModule>? = null
 
@@ -30,33 +32,108 @@ class ModuleCatalogClient(
     /** Returns verified in-memory/disk data without waiting for the network. */
     fun loadCached(): List<CatalogModule>? {
         memoryCache?.let { return it }
-        if (!cacheFile.isFile) return null
-        return runCatching { parse(JSONObject(cacheFile.readText()), null) }
-            .getOrNull()
-            ?.also { memoryCache = it }
+        val publicModules = loadCachedPublic()
+        val privateModules = loadCachedPrivate()
+        if (publicModules == null && privateModules == null) return null
+        return mergeCatalogs(publicModules.orEmpty(), privateModules.orEmpty())
+            .also { memoryCache = it }
     }
 
     /** Refreshes the cache from the signed launcher endpoint. */
     fun refresh(): List<CatalogModule> {
         val remote = requestCatalog()
         val publicModules = parse(remote, null)
-        memoryCache = publicModules
         runCatching { cacheFile.writeText(remote.toString()) }
             .onFailure { Log.w(TAG, "Could not persist module catalog cache", it) }
-        val privateModules = runCatching {
+        val privateResult = runCatching {
             val privateCatalog = accessManager.privateCatalog()
-            privateCatalog.envelopes.flatMap { envelope ->
-                val payload = SignedEnvelopeVerifier.payload(envelope)
-                val scope = payload.getString("scope").also { require(it.matches(PRIVATE_SCOPE_PATTERN)) }
-                parse(envelope, scope, privateCatalog.capability)
-            }
+            mergeRefreshedPrivateCatalog(privateCatalog)
         }.onFailure {
-            Log.i(TAG, "Private catalog is unavailable for this launcher identity", it)
-        }.getOrDefault(emptyList())
-        return (publicModules + privateModules).also { modules ->
-            require(modules.map { it.config.packageName }.distinct().size == modules.size)
-            require(modules.map { it.slug }.distinct().size == modules.size)
+            Log.i(TAG, "Private catalog refresh failed; retaining the verified private cache", it)
         }
+        val privateModules = privateResult.getOrElse { loadCachedPrivate().orEmpty() }
+        return mergeCatalogs(publicModules, privateModules).also { memoryCache = it }
+    }
+
+    private fun loadCachedPublic(): List<CatalogModule>? {
+        if (!cacheFile.isFile) return null
+        return runCatching { parse(JSONObject(cacheFile.readText()), null) }
+            .onFailure { Log.w(TAG, "The public module catalog cache is invalid", it) }
+            .getOrNull()
+    }
+
+    private fun loadCachedPrivate(): List<CatalogModule>? {
+        val envelopes = loadCachedPrivateEnvelopes() ?: return null
+        return runCatching { parsePrivateCatalog(envelopes, privateCatalogCapability = null) }
+            .onFailure { Log.w(TAG, "The private module catalog cache is invalid", it) }
+            .getOrNull()
+    }
+
+    private fun loadCachedPrivateEnvelopes(): List<JSONObject>? {
+        if (!privateCacheFile.isFile) return null
+        return runCatching {
+            val cache = JSONObject(privateCacheFile.readText())
+            require(cache.optInt("schema") == PRIVATE_CACHE_SCHEMA)
+            val catalogs = cache.getJSONArray("catalogs")
+            require(catalogs.length() in 0..MAX_PRIVATE_CATALOGS)
+            buildList {
+                for (index in 0 until catalogs.length()) add(catalogs.getJSONObject(index))
+            }
+        }.onFailure { Log.w(TAG, "The private module catalog cache is invalid", it) }
+            .getOrNull()
+    }
+
+    private fun mergeRefreshedPrivateCatalog(
+        privateCatalog: LauncherPrivateCatalog
+    ): List<CatalogModule> {
+        val freshScopes = privateCatalog.envelopes.mapTo(hashSetOf(), ::privateScope)
+        require(freshScopes.size == privateCatalog.envelopes.size) {
+            "The private catalog contains duplicate scopes"
+        }
+        val retainedEnvelopes = loadCachedPrivateEnvelopes().orEmpty().filter { envelope ->
+            val scope = privateScope(envelope)
+            scope !in freshScopes &&
+                accessManager.checkPrivateAccess(scope) !== LauncherPrivateAccessResult.Denied
+        }
+        val freshModules = parsePrivateCatalog(
+            privateCatalog.envelopes,
+            privateCatalog.capability
+        )
+        val retainedModules = parsePrivateCatalog(
+            retainedEnvelopes,
+            privateCatalogCapability = null
+        )
+        persistPrivateCatalog(privateCatalog.envelopes + retainedEnvelopes)
+        return mergeCatalogs(freshModules, retainedModules)
+    }
+
+    private fun persistPrivateCatalog(envelopes: List<JSONObject>) {
+        val catalogs = JSONArray().also { array -> envelopes.forEach(array::put) }
+        val cache = JSONObject()
+            .put("schema", PRIVATE_CACHE_SCHEMA)
+            .put("catalogs", catalogs)
+        runCatching { privateCacheFile.writeText(cache.toString()) }
+            .onFailure { Log.w(TAG, "Could not persist private module catalog cache", it) }
+    }
+
+    private fun parsePrivateCatalog(
+        envelopes: List<JSONObject>,
+        privateCatalogCapability: String?
+    ): List<CatalogModule> = envelopes.flatMap { envelope ->
+        parse(envelope, privateScope(envelope), privateCatalogCapability)
+    }
+
+    private fun privateScope(envelope: JSONObject): String =
+        SignedEnvelopeVerifier.payload(envelope).getString("scope").also {
+            require(it.matches(PRIVATE_SCOPE_PATTERN))
+        }
+
+    private fun mergeCatalogs(
+        publicModules: List<CatalogModule>,
+        privateModules: List<CatalogModule>
+    ): List<CatalogModule> = (publicModules + privateModules).also { modules ->
+        require(modules.map { it.config.packageName }.distinct().size == modules.size)
+        require(modules.map { it.slug }.distinct().size == modules.size)
     }
 
     private fun requestCatalog(): JSONObject {
@@ -296,6 +373,8 @@ class ModuleCatalogClient(
         private const val MAX_ICON_BYTES = 5L * 1024L * 1024L
         private const val MAX_MODULE_DOWNLOAD_BYTES = 80L * 1024L * 1024L
         private const val MAX_CATALOG_MODULES = 2_000
+        private const val MAX_PRIVATE_CATALOGS = 64
+        private const val PRIVATE_CACHE_SCHEMA = 1
         private const val DEFAULT_CATEGORY = "Other"
         private const val MAX_CATEGORY_LENGTH = 40
         private const val MAX_TAGS = 12

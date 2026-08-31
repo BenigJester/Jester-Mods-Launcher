@@ -48,6 +48,7 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.sortLibraryGames
 import com.moodtools.hub.modules.mergeCatalogAndLocalModuleConfigs
 import com.moodtools.hub.networking.LauncherAccessManager
+import com.moodtools.hub.networking.LauncherPrivateAccessResult
 import com.moodtools.hub.networking.GameInstallClient
 import com.moodtools.hub.networking.GameInstallEvents
 import com.moodtools.hub.networking.GameInstallResult
@@ -56,6 +57,7 @@ import com.moodtools.hub.networking.LauncherChangelogEntry
 import com.moodtools.hub.networking.LauncherUpdateClient
 import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
+import com.moodtools.hub.networking.ModuleDownloadAuthorizationExpired
 import com.moodtools.hub.networking.PlayStoreVersionClient
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
@@ -95,13 +97,23 @@ private enum class PackageReplacementPhase {
     WAITING_FOR_INSTALL_RESULT
 }
 
+private class PendingGameInstaller(
+    val packageName: String,
+    val versionCode: Long,
+    @Volatile var sessionId: Int? = null
+)
+
+private enum class InstallerPermissionTarget {
+    LAUNCHER_UPDATE,
+    ORIGINAL_GAME,
+    PACKAGE_REPLACEMENT
+}
+
 class LauncherActivity : ComponentActivity() {
     private val viewModel by viewModels<LauncherViewModel>()
     private var waitingForLauncherUnlock = false
-    private var waitingForInstallerPermission = false
-    private var waitingForGameInstallerPermission = false
+    private var pendingInstallerPermissionTarget: InstallerPermissionTarget? = null
     private var pendingGameInstall: ModuleListing? = null
-    private var waitingForPackageReplacementPermission = false
     private var pendingPackageReplacement: PackageReplacementRequest? = null
     private var packageReplacementPhase = PackageReplacementPhase.IDLE
     private var packageReplacementReconciliation: Job? = null
@@ -111,6 +123,11 @@ class LauncherActivity : ComponentActivity() {
     ) { result ->
         val request = pendingPackageReplacement ?: return@registerForActivityResult
         reconcilePackageUninstall(request, result.resultCode)
+    }
+    private val unknownSourcesSettings = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        reconcileInstallerPermission()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -236,37 +253,6 @@ class LauncherActivity : ComponentActivity() {
             waitingForLauncherUnlock = false
             viewModel.onUnlockBrowserReturnedWithoutCallback()
         }
-        if (waitingForInstallerPermission) {
-            waitingForInstallerPermission = false
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
-                viewModel.downloadAndInstallLauncherUpdate()
-            } else {
-                viewModel.onLauncherInstallPermissionDenied()
-            }
-        }
-        if (waitingForGameInstallerPermission) {
-            waitingForGameInstallerPermission = false
-            val listing = pendingGameInstall
-            pendingGameInstall = null
-            if (listing != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                    packageManager.canRequestPackageInstalls())) {
-                viewModel.downloadAndInstallGame(listing)
-            } else if (listing != null) {
-                viewModel.onGameInstallPermissionDenied()
-            }
-        }
-        if (waitingForPackageReplacementPermission) {
-            waitingForPackageReplacementPermission = false
-            val request = pendingPackageReplacement
-            if (request != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                    packageManager.canRequestPackageInstalls())) {
-                showPackageReplacementWarning(request)
-            } else if (request != null) {
-                finishPackageReplacementWithFailure(
-                    "Allow Jester Mods to install unknown apps before patching ${request.title}."
-                )
-            }
-        }
         schedulePackageReplacementReconciliation()
     }
 
@@ -275,6 +261,7 @@ class LauncherActivity : ComponentActivity() {
             packageReplacementPhase == PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT) {
             packageReplacementLeftLauncher = true
         }
+        viewModel.onHostPaused()
         super.onPause()
     }
 
@@ -338,13 +325,7 @@ class LauncherActivity : ComponentActivity() {
     private fun requestPackageReplacementPermissionOrConfirm(request: PackageReplacementRequest) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()) {
-            waitingForPackageReplacementPermission = true
-            runCatching {
-                startActivity(
-                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
-                )
-            }.onFailure {
-                waitingForPackageReplacementPermission = false
+            openInstallerPermissionSettings(InstallerPermissionTarget.PACKAGE_REPLACEMENT) {
                 finishPackageReplacementWithFailure(
                     "Android could not open the unknown-app installation setting."
                 )
@@ -555,13 +536,7 @@ class LauncherActivity : ComponentActivity() {
     private fun downloadOrInstallLauncherUpdate() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()) {
-            waitingForInstallerPermission = true
-            runCatching {
-                startActivity(
-                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
-                )
-            }.onFailure {
-                waitingForInstallerPermission = false
+            openInstallerPermissionSettings(InstallerPermissionTarget.LAUNCHER_UPDATE) {
                 viewModel.onLauncherInstallPermissionDenied()
             }
             return
@@ -575,13 +550,58 @@ class LauncherActivity : ComponentActivity() {
             is GameInstallSource.DirectDownload -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                     !packageManager.canRequestPackageInstalls()) {
-                    waitingForGameInstallerPermission = true
                     pendingGameInstall = listing
-                    startActivity(
-                        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
-                    )
+                    openInstallerPermissionSettings(InstallerPermissionTarget.ORIGINAL_GAME) {
+                        pendingGameInstall = null
+                        viewModel.onGameInstallPermissionDenied()
+                    }
                 } else {
                     viewModel.downloadAndInstallGame(listing)
+                }
+            }
+        }
+    }
+
+    private fun openInstallerPermissionSettings(
+        target: InstallerPermissionTarget,
+        onLaunchFailure: () -> Unit
+    ) {
+        if (pendingInstallerPermissionTarget != null) return
+        pendingInstallerPermissionTarget = target
+        runCatching {
+            unknownSourcesSettings.launch(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            )
+        }.onFailure {
+            pendingInstallerPermissionTarget = null
+            onLaunchFailure()
+        }
+    }
+
+    private fun reconcileInstallerPermission() {
+        val target = pendingInstallerPermissionTarget ?: return
+        pendingInstallerPermissionTarget = null
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            packageManager.canRequestPackageInstalls()
+        when (target) {
+            InstallerPermissionTarget.LAUNCHER_UPDATE -> {
+                if (granted) viewModel.downloadAndInstallLauncherUpdate()
+                else viewModel.onLauncherInstallPermissionDenied()
+            }
+            InstallerPermissionTarget.ORIGINAL_GAME -> {
+                val listing = pendingGameInstall
+                pendingGameInstall = null
+                if (listing != null && granted) viewModel.downloadAndInstallGame(listing)
+                else if (listing != null) viewModel.onGameInstallPermissionDenied()
+            }
+            InstallerPermissionTarget.PACKAGE_REPLACEMENT -> {
+                val request = pendingPackageReplacement
+                if (request != null && granted) {
+                    showPackageReplacementWarning(request)
+                } else if (request != null) {
+                    finishPackageReplacementWithFailure(
+                        "Allow Jester Mods to install unknown apps before patching ${request.title}."
+                    )
                 }
             }
         }
@@ -748,6 +768,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var launcherInstallerOpened = false
     @Volatile
     private var launcherInstallerRecovery: Job? = null
+    @Volatile
+    private var pendingGameInstaller: PendingGameInstaller? = null
+    @Volatile
+    private var gameInstallerLeftLauncher = false
+    @Volatile
+    private var gameInstallerRecovery: Job? = null
+    private var privateAccessExpiryByScope: Map<String, Long> = emptyMap()
 
     init {
         viewModelScope.launch {
@@ -919,20 +946,24 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val approvalByScope = (installedPrivateModules.values + listOfNotNull(configuredScope))
             .distinct()
             .associateWith { scope ->
-                if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith true
-                runCatching {
-                    accessManager.currentPrivateLease(scope)
-                }.onFailure { error ->
-                    android.util.Log.w(
-                        "JesterMoodsPrivateAccess",
-                        "Private module approval could not be refreshed; the module will stay hidden.",
-                        error
-                    )
-                }.getOrNull() != null
+                if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith null
+                accessManager.checkPrivateAccess(scope).also { result ->
+                    if (result is LauncherPrivateAccessResult.Unavailable) {
+                        android.util.Log.w(
+                            "JesterMoodsPrivateAccess",
+                            "Private module approval could not be refreshed; retaining local support.",
+                            result.error
+                        )
+                    }
+                }
             }
 
+        privateAccessExpiryByScope = approvalByScope.mapNotNull { (scope, result) ->
+            (result as? LauncherPrivateAccessResult.Approved)?.lease?.grantExpiresAt?.let { scope to it }
+        }.toMap()
+
         installedPrivateModules.forEach { (packageName, scope) ->
-            if (approvalByScope[scope] != true) {
+            if (approvalByScope[scope] === LauncherPrivateAccessResult.Denied) {
                 runCatching { repository.removeFromLibrary(packageName) }
                     .onFailure { error ->
                         android.util.Log.e(
@@ -943,7 +974,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     }
             }
         }
-        if (configuredScope != null && approvalByScope[configuredScope] == true) {
+        val configuredApproved = configuredScope != null &&
+            (bypassPrivateApproval && BuildConfig.DEBUG ||
+                approvalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
+        if (configuredApproved) {
             runCatching { embeddedPrivateModuleInstaller.installIfConfigured() }
                 .onFailure { error ->
                     android.util.Log.e(
@@ -1184,6 +1218,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 refreshGames(refreshCatalog = true, forceGameScan = true)
             }
         }
+        reconcileReturnedGameInstaller()
         val current = _launcherUpdateState.value
         if (!current.available) return
         val installed = runCatching { launcherUpdateClient.installedBuild() }.getOrDefault(0L)
@@ -1212,13 +1247,24 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
+    fun onHostPaused() {
+        if (pendingGameInstaller != null && _gameInstallState.value.installing) {
+            gameInstallerLeftLauncher = true
+        }
+    }
+
     private fun checkLauncherUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
             val releaseResult = runCatching { launcherUpdateClient.refresh(launcherUpdateTestChannel) }
             val release = releaseResult.getOrElse { error ->
                 android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update check failed", error)
                 launcherUpdateClient.loadCached(launcherUpdateTestChannel)
-            } ?: return@launch
+            }
+            if (release == null && launcherUpdateTestChannel && BuildConfig.DEBUG) {
+                publishLauncherUpdatePreview()
+                return@launch
+            }
+            release ?: return@launch
             val history = if (launcherUpdateTestChannel) {
                 emptyList()
             } else {
@@ -1227,6 +1273,28 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
             publishLauncherUpdate(release, history)
         }
+    }
+
+    private fun publishLauncherUpdatePreview() {
+        val installedBuild = launcherUpdateClient.installedBuild()
+        _launcherUpdateState.value = LauncherUpdateUiState(
+            available = true,
+            screenOpen = true,
+            build = installedBuild + 1L,
+            version = "Preview",
+            notes = "A polished update experience, ready for the next signed launcher release.",
+            changelog = listOf(
+                LauncherChangelogEntry(
+                    build = installedBuild + 1L,
+                    version = "Preview",
+                    notes = "Preview of the launcher update window. No package will be downloaded.",
+                    publishedAtEpochSeconds = System.currentTimeMillis() / 1_000L
+                )
+            ),
+            headline = "A launcher update is available",
+            detail = "Design preview triggered by the debug launcher.",
+            totalBytes = 24L * 1024L * 1024L
+        )
     }
 
     private fun publishLauncherUpdate(
@@ -1255,6 +1323,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
         _launcherUpdateState.value = LauncherUpdateUiState(
             available = true,
+            screenOpen = true,
             build = release.build,
             version = release.version,
             notes = release.notes,
@@ -1383,8 +1452,18 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     headline = "Ready to install",
                     detail = "Confirm the original game installation in the Android prompt."
                 )
-                gameInstallClient.install(listing.catalog)
+                val pending = PendingGameInstaller(
+                    packageName = listing.catalog.config.packageName,
+                    versionCode = source.versionCode
+                )
+                gameInstallerRecovery?.cancel()
+                gameInstallerRecovery = null
+                pendingGameInstaller = pending
+                gameInstallerLeftLauncher = false
+                pending.sessionId = gameInstallClient.install(listing.catalog)
+                if (pendingGameInstaller === pending) scheduleGameInstallerRecovery(pending)
             }.onFailure { error ->
+                clearGameInstallerWait()
                 android.util.Log.e("JesterMoodsGameInstall", "Game download or install failed", error)
                 val downloaded = gameInstallClient.isDownloaded(listing.catalog)
                 val progress = _gameInstallState.value
@@ -1405,27 +1484,127 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun onGameInstallResult(result: GameInstallResult) {
+        val pending = pendingGameInstaller ?: return
+        if (result.packageName != pending.packageName || result.versionCode != pending.versionCode) return
+        if (result.sessionId >= 0 && pending.sessionId != null && result.sessionId != pending.sessionId) return
         viewModelScope.launch(Dispatchers.IO) {
             if (result.successful) {
-                refreshGames(forceGameScan = true)
-                _gameInstallState.value = GameInstallUiState(
-                    completed = true,
-                    headline = "Original game installed",
-                    detail = "You can now add it to your Jester Mods library."
-                )
+                finishGameInstallSuccessfully(pending)
             } else {
+                if (!clearGameInstallerWait(pending)) return@launch
+                val message = result.message.orEmpty()
                 _gameInstallState.value = GameInstallUiState(
                     downloaded = true,
                     failed = true,
                     headline = "The game wasn't installed",
-                    detail = if (result.message.orEmpty().contains("cancel", ignoreCase = true)) {
-                        "Installation was cancelled. The verified download is still saved."
-                    } else {
-                        "Try the installation again. The verified download is still saved."
+                    detail = when {
+                        message.contains("cancel", ignoreCase = true) ->
+                            "Installation was cancelled. The verified download is still saved."
+                        message.contains("screen", ignoreCase = true) ||
+                            message.contains("open", ignoreCase = true) ->
+                            "Android couldn't open its installer. The verified download is still saved; tap Try again."
+                        else -> "Try the installation again. The verified download is still saved."
                     }
                 )
             }
         }
+    }
+
+    private fun scheduleGameInstallerRecovery(pending: PendingGameInstaller) {
+        gameInstallerRecovery?.cancel()
+        gameInstallerRecovery = viewModelScope.launch(Dispatchers.IO) {
+            delay(GAME_INSTALLER_RECOVERY_DELAY_MS)
+            gameInstallerRecovery = null
+            reconcileGameInstaller(pending, returnedFromInstaller = false)
+        }
+    }
+
+    private fun reconcileReturnedGameInstaller() {
+        val pending = pendingGameInstaller ?: return
+        if (!gameInstallerLeftLauncher || !_gameInstallState.value.installing) return
+        gameInstallerLeftLauncher = false
+        gameInstallerRecovery?.cancel()
+        gameInstallerRecovery = viewModelScope.launch(Dispatchers.IO) {
+            val deadline = SystemClock.elapsedRealtime() + GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS
+            while (pendingGameInstaller === pending && _gameInstallState.value.installing) {
+                val installed = gameInstallClient.isInstalledAtLeast(
+                    pending.packageName,
+                    pending.versionCode
+                )
+                when (GameInstallerReconciliationPolicy.decide(
+                    installed = installed,
+                    launcherLeft = gameInstallerLeftLauncher,
+                    deadlineReached = SystemClock.elapsedRealtime() >= deadline
+                )) {
+                    GameInstallerReconciliationDecision.SUCCEEDED -> {
+                        gameInstallerRecovery = null
+                        finishGameInstallSuccessfully(pending)
+                        return@launch
+                    }
+                    GameInstallerReconciliationDecision.KEEP_WAITING ->
+                        delay(GAME_INSTALLER_RECONCILE_POLL_MS)
+                    GameInstallerReconciliationDecision.FAILED -> {
+                        gameInstallerRecovery = null
+                        finishGameInstallerReconciliationFailure(pending, returnedFromInstaller = true)
+                        return@launch
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun reconcileGameInstaller(
+        pending: PendingGameInstaller,
+        returnedFromInstaller: Boolean
+    ) {
+        if (pendingGameInstaller !== pending || !_gameInstallState.value.installing) return
+        when (GameInstallerReconciliationPolicy.decide(
+            installed = gameInstallClient.isInstalledAtLeast(pending.packageName, pending.versionCode),
+            launcherLeft = gameInstallerLeftLauncher,
+            deadlineReached = true
+        )) {
+            GameInstallerReconciliationDecision.SUCCEEDED -> finishGameInstallSuccessfully(pending)
+            GameInstallerReconciliationDecision.KEEP_WAITING -> Unit
+            GameInstallerReconciliationDecision.FAILED ->
+                finishGameInstallerReconciliationFailure(pending, returnedFromInstaller)
+        }
+    }
+
+    private fun finishGameInstallerReconciliationFailure(
+        pending: PendingGameInstaller,
+        returnedFromInstaller: Boolean
+    ) {
+        if (!clearGameInstallerWait(pending)) return
+        _gameInstallState.value = GameInstallUiState(
+            downloaded = true,
+            failed = true,
+            headline = "Android installer closed",
+            detail = if (returnedFromInstaller) {
+                "The installation wasn't completed. The verified download is still saved; tap Try again."
+            } else {
+                "Android didn't open its installer in time. The verified download is still saved; tap Try again."
+            }
+        )
+    }
+
+    private suspend fun finishGameInstallSuccessfully(pending: PendingGameInstaller) {
+        if (!clearGameInstallerWait(pending)) return
+        gameInstallClient.clearDownload(pending.packageName, pending.versionCode)
+        refreshGames(forceGameScan = true)
+        _gameInstallState.value = GameInstallUiState(
+            completed = true,
+            headline = "Original game installed",
+            detail = "You can now add it to your Jester Mods library."
+        )
+    }
+
+    private fun clearGameInstallerWait(expected: PendingGameInstaller? = null): Boolean {
+        if (expected != null && pendingGameInstaller !== expected) return false
+        gameInstallerRecovery?.cancel()
+        gameInstallerRecovery = null
+        pendingGameInstaller = null
+        gameInstallerLeftLauncher = false
+        return true
     }
 
     fun openLibraryGame(game: LibraryGame) {
@@ -2108,12 +2287,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             getApplication<android.app.Application>().filesDir,
             "menus/${request.packageName}"
         )
-        val authorization = accessManager.authorizeModule(request.packageName, abi)
-        return UpdateClient(moduleDirectory).applyStandalone(
-            request.packageName,
-            abi,
-            authorization
-        ) { downloaded, total ->
+        val client = UpdateClient(moduleDirectory)
+        val publishProgress: (Long, Long) -> Unit = { downloaded, total ->
             val current = _updateState.value
             _updateState.value = current.copy(
                 inProgress = true,
@@ -2122,6 +2297,22 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 downloadedBytes = downloaded,
                 totalBytes = total
             )
+        }
+        fun downloadWithFreshAuthorization() = client.applyStandalone(
+            request.packageName,
+            abi,
+            accessManager.authorizeModule(request.packageName, abi),
+            onProgress = publishProgress
+        )
+        return try {
+            downloadWithFreshAuthorization()
+        } catch (expired: ModuleDownloadAuthorizationExpired) {
+            android.util.Log.w(
+                "JesterMoodsDownload",
+                "Module authorization expired during transfer; renewing it once.",
+                expired
+            )
+            downloadWithFreshAuthorization()
         }
     }
 
@@ -2186,37 +2377,43 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         packageName: String
     ): Boolean {
         val scope = privateScopeForPackage(packageName) ?: return true
-        val result = runCatching {
-            accessManager.currentPrivateLease(scope)
+        val result = accessManager.checkPrivateAccess(scope)
+        if (result is LauncherPrivateAccessResult.Approved) {
+            if (privateAccessExpiryByScope[scope] != result.lease.grantExpiresAt) {
+                privateAccessExpiryByScope = privateAccessExpiryByScope + (scope to result.lease.grantExpiresAt)
+                refreshGames()
+            }
+            return true
         }
-        val privateLease = result.getOrNull()
-        if (privateLease != null) return true
 
-        if (result.isFailure) {
+        val denied = result === LauncherPrivateAccessResult.Denied
+        if (denied) {
+            privateAccessExpiryByScope = privateAccessExpiryByScope - scope
+            runCatching { repository.removeFromLibrary(packageName) }
+                .onFailure { error ->
+                    android.util.Log.e(
+                        "JesterMoodsPrivateModule",
+                        "The denied private module could not be removed.",
+                        error
+                    )
+                }
+            scannedConfigs = null
+            if (_selectedLibraryGame.value?.packageName == packageName) {
+                _selectedLibraryGame.value = null
+                _selectedGame.value = null
+            }
+            refreshGames(forceGameScan = true)
+        } else if (result is LauncherPrivateAccessResult.Unavailable) {
             android.util.Log.e(
                 "JesterMoodsPrivateAccess",
-                "Private approval check failed before a protected action",
-                result.exceptionOrNull()
+                "Private approval check failed before a protected action; retaining local support",
+                result.error
             )
         }
-        runCatching { repository.removeFromLibrary(packageName) }
-            .onFailure { error ->
-                android.util.Log.e(
-                    "JesterMoodsPrivateModule",
-                    "The unapproved private module could not be hidden.",
-                    error
-                )
-            }
-        scannedConfigs = null
-        if (_selectedLibraryGame.value?.packageName == packageName) {
-            _selectedLibraryGame.value = null
-            _selectedGame.value = null
-        }
-        refreshGames(forceGameScan = true)
-        val detail = if (result.isFailure) {
-            "Jester Mods could not verify this private add-on approval. Connect and try again."
-        } else {
+        val detail = if (denied) {
             "This device is not approved for this private add-on. Send the support code to the owner."
+        } else {
+            "Jester Mods could not verify this private add-on approval. Connect and try again."
         }
         when (action) {
             ProtectedActionBoundary.GAME_LAUNCH -> _launchState.value = LaunchUiState(
@@ -2425,8 +2622,33 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun playStoreVersionKey(packageName: String): String = PLAY_STORE_VERSION_PREFIX + packageName
     private fun playStoreCheckedAtKey(packageName: String): String = PLAY_STORE_CHECKED_AT_PREFIX + packageName
 
+    private fun resolvePrivateAccessExpiries(
+        catalog: List<com.moodtools.hub.modules.CatalogModule>
+    ) {
+        val now = System.currentTimeMillis() / 1_000L
+        val unresolvedScopes = catalog.mapNotNull { it.privateScope }
+            .distinct()
+            .filter { scope -> (privateAccessExpiryByScope[scope] ?: 0L) <= now }
+        if (unresolvedScopes.isEmpty()) return
+
+        val resolved = privateAccessExpiryByScope.toMutableMap()
+        unresolvedScopes.forEach { scope ->
+            when (val result = accessManager.checkPrivateAccess(scope)) {
+                is LauncherPrivateAccessResult.Approved -> resolved[scope] = result.lease.grantExpiresAt
+                LauncherPrivateAccessResult.Denied -> resolved.remove(scope)
+                is LauncherPrivateAccessResult.Unavailable -> android.util.Log.w(
+                    "JesterMoodsPrivateAccess",
+                    "The private access timer for $scope could not be refreshed.",
+                    result.error
+                )
+            }
+        }
+        privateAccessExpiryByScope = resolved
+    }
+
     private fun publishGames(catalog: List<com.moodtools.hub.modules.CatalogModule>, forceGameScan: Boolean) {
         val application = getApplication<android.app.Application>()
+        resolvePrivateAccessExpiries(catalog)
         if (catalog.isEmpty()) {
             val localConfigs = repository.loadModules().filter { repository.isInLibrary(it.packageName) }
             val local = scanGames(localConfigs, forceGameScan)
@@ -2446,7 +2668,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     running = game != null && ExecutionModeLaunchBridge.isGameRunning(application, config.packageName),
                     launchAction = game?.let {
                         ExecutionModeLaunchBridge.libraryLaunchAction(application, it)
-                    } ?: LibraryLaunchAction.PLAY
+                    } ?: LibraryLaunchAction.PLAY,
+                    privateScope = repository.privateScope(config.packageName),
+                    privateAccessExpiresAtEpochSeconds = repository.privateScope(config.packageName)
+                        ?.let(privateAccessExpiryByScope::get)
                 )
             })
         } else {
@@ -2467,7 +2692,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     installedBuild = repository.installedBuild(item.config.packageName),
                     installedComplete = repository.isInstalled(item.config.packageName),
                     deviceArchitectureSupported = DeviceArchitectureGuard.supports(item.config.supportedAbis),
-                    playStoreVersionStatus = playStoreStatuses[item.config.packageName]
+                    playStoreVersionStatus = playStoreStatuses[item.config.packageName],
+                    privateAccessExpiresAtEpochSeconds = item.privateScope
+                        ?.let(privateAccessExpiryByScope::get)
                 )
             }
             _availableModules.value = listings
@@ -2514,7 +2741,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         ),
                         launchAction = game?.let {
                             ExecutionModeLaunchBridge.libraryLaunchAction(application, it)
-                        } ?: LibraryLaunchAction.PLAY
+                        } ?: LibraryLaunchAction.PLAY,
+                        privateScope = repository.privateScope(config.packageName),
+                        privateAccessExpiresAtEpochSeconds = repository.privateScope(config.packageName)
+                            ?.let(privateAccessExpiryByScope::get)
                     )
                 }
             _libraryGames.value = sortLibraryGames(catalogLibraryGames + localOnlyLibraryGames)
@@ -2587,6 +2817,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_ACCESS_CHECK_GATE_MS = 2_000L
         private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L
+        private const val GAME_INSTALLER_RECONCILE_POLL_MS = 250L
+        private const val GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS = 10_000L
+        private const val GAME_INSTALLER_RECOVERY_DELAY_MS = 20_000L
         private const val DEBUG_ACCESS_DURATION_SECONDS = 24L * 60L * 60L
         private const val MAX_RELEASE_GRANT_CHARS = 4096
         private const val LOCAL_TEST_STAGE_DIR = "jester-local-modules"

@@ -27,6 +27,26 @@ class LauncherPrivateLeaseVerifierTest {
         assertEquals(fixture.scope, lease.scope)
         assertEquals(10_000L, lease.issuedAt)
         assertEquals(20_000L, lease.expiresAt)
+        assertEquals(200_000L, lease.grantExpiresAt)
+    }
+
+    @Test
+    fun acceptsLegacyLeaseAndUsesItsOfflineExpiryAsTheDisplayedGrantExpiry() {
+        val fixture = privateLeaseFixture(includeGrantExpiry = false)
+
+        val lease = LauncherPrivateLeaseVerifier.verify(
+            envelope = fixture.envelope,
+            expectedScope = fixture.scope,
+            expectedDeviceId = fixture.deviceId,
+            expectedRecoveryId = fixture.recoveryId,
+            expectedFlavor = "nonroot",
+            expectedProofKeyId = fixture.proofKeyId,
+            now = 11_000L,
+            publicKeyDerBase64 = fixture.publicKey
+        )
+
+        assertEquals(20_000L, lease.expiresAt)
+        assertEquals(20_000L, lease.grantExpiresAt)
     }
 
     @Test
@@ -71,13 +91,13 @@ class LauncherPrivateLeaseVerifierTest {
         }.isFailure)
     }
 
-    private fun privateLeaseFixture(): PrivateLeaseFixture {
+    private fun privateLeaseFixture(includeGrantExpiry: Boolean = true): PrivateLeaseFixture {
         val scope = "friends-zombie"
         val deviceId = "d".repeat(43)
         val recoveryId = "r".repeat(43)
         val proofKeyId = "p".repeat(43)
         val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(3072) }.generateKeyPair()
-        val payloadBytes = JSONObject()
+        val payload = JSONObject()
             .put("schema", 1)
             .put("audience", "moodtools-private-module-lease")
             .put("leaseVersion", 1)
@@ -91,6 +111,8 @@ class LauncherPrivateLeaseVerifierTest {
             .put("proofKeyId", proofKeyId)
             .put("issuedAt", 10_000L)
             .put("expiresAt", 20_000L)
+        if (includeGrantExpiry) payload.put("grantExpiresAt", 200_000L)
+        val payloadBytes = payload
             .toString()
             .toByteArray()
         val signature = Signature.getInstance("SHA256withRSA").run {

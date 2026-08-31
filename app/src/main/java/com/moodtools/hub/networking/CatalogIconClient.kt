@@ -3,6 +3,7 @@ package com.moodtools.hub.networking
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import com.moodtools.hub.modules.CatalogModule
 import java.io.File
 import java.net.HttpURLConnection
@@ -33,30 +34,22 @@ class CatalogIconClient(context: Context) {
             }
             target.delete()
 
-            val connection = open(BASE_URL + (icon.cachePath ?: icon.path), module.privateCatalogCapability)
             val temporary = File(cacheDirectory, "${target.name}.part")
             try {
-                require(connection.responseCode in 200..299) {
-                    "Game icon request failed: ${connection.responseCode}"
-                }
-                connection.contentLengthLong.takeIf { it >= 0L }?.let {
-                    require(it == icon.size) { "Game icon size does not match the catalog" }
-                }
-                var received = 0L
-                connection.inputStream.use { input ->
-                    temporary.outputStream().use { output ->
-                        val buffer = ByteArray(32 * 1024)
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            received += count
-                            require(received <= icon.size) { "Game icon is larger than expected" }
-                            output.write(buffer, 0, count)
+                FastFileDownloader.download(
+                    destination = temporary,
+                    expectedBytes = icon.size,
+                    openConnection = { range ->
+                        open(
+                            BASE_URL + (icon.cachePath ?: icon.path),
+                            module.privateCatalogCapability
+                        ).apply {
+                            range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
                         }
-                        output.fd.sync()
-                    }
-                }
-                require(received == icon.size && sha256(temporary) == icon.sha256) {
+                    },
+                    onDiagnostic = { message -> Log.w(TAG, message) }
+                )
+                require(sha256(temporary) == icon.sha256) {
                     "Game icon verification failed"
                 }
                 val decoded = BitmapFactory.decodeFile(temporary.absolutePath)
@@ -72,9 +65,9 @@ class CatalogIconClient(context: Context) {
                 }
                 memoryCache[icon.sha256] = decoded
                 decoded
-            } finally {
-                connection.disconnect()
-                temporary.delete()
+            } catch (error: Throwable) {
+                if (temporary.length() == icon.size) temporary.delete()
+                throw error
             }
         }
     }
@@ -86,8 +79,10 @@ class CatalogIconClient(context: Context) {
             requestMethod = "GET"
             connectTimeout = 15_000
             readTimeout = 30_000
+            useCaches = false
             instanceFollowRedirects = false
             setRequestProperty("Accept", "image/png,image/jpeg,image/webp")
+            setRequestProperty("Accept-Encoding", "identity")
             capability?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
     }
@@ -108,6 +103,7 @@ class CatalogIconClient(context: Context) {
     private companion object {
         const val BASE_URL = "https://jester.moodtools.workers.dev"
         const val HOST = "jester.moodtools.workers.dev"
+        const val TAG = "JesterMoodsCatalogIcon"
         val memoryCache = ConcurrentHashMap<String, Bitmap>()
         val cacheLock = Any()
     }

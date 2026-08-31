@@ -3,4 +3,7 @@
     <files-path
         name="verified_launcher_updates"
         path="launcher-updates/" />
+    <files-path
+        name="verified_original_games"
+        path="game-downloads/" />
 </paths>

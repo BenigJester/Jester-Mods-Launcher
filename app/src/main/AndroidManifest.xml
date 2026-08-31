@@ -41,7 +41,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JesterMoods">
 
-        <!-- Exposes only verified launcher-update APKs to Android's installer. -->
+        <!-- Exposes only verified launcher-update and original-game APKs to Android's installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.launcher-updates"

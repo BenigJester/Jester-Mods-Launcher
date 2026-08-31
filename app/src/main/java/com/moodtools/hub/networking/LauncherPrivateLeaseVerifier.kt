@@ -6,7 +6,8 @@ import org.json.JSONObject
 internal data class LauncherPrivateLease(
     val scope: String,
     val issuedAt: Long,
-    val expiresAt: Long
+    val expiresAt: Long,
+    val grantExpiresAt: Long
 )
 
 internal object LauncherPrivateLeaseVerifier {
@@ -29,6 +30,13 @@ internal object LauncherPrivateLeaseVerifier {
         )
         val issuedAt = payload.getLong("issuedAt")
         val expiresAt = payload.getLong("expiresAt")
+        // Leases issued before the grant-expiry claim was introduced remain usable until
+        // their already-signed offline expiry, then refresh into the richer contract.
+        val grantExpiresAt = if (payload.has("grantExpiresAt")) {
+            payload.getLong("grantExpiresAt")
+        } else {
+            expiresAt
+        }
         require(payload.optInt("schema") == 1 && payload.optString("audience") == AUDIENCE)
         require(payload.optInt("leaseVersion") == LEASE_VERSION)
         require(payload.optInt("accessVersion") == ACCESS_VERSION)
@@ -41,8 +49,10 @@ internal object LauncherPrivateLeaseVerifier {
         require(payload.optString("grantId").length in 16..80)
         require(issuedAt > 0L && expiresAt > issuedAt)
         require(expiresAt - issuedAt <= MAX_OFFLINE_TTL_SECONDS)
+        require(grantExpiresAt >= expiresAt)
+        require(grantExpiresAt - issuedAt <= MAX_MANAGED_ACCESS_TTL_SECONDS)
         require(now + CLOCK_SKEW_SECONDS >= issuedAt && now < expiresAt)
-        return LauncherPrivateLease(expectedScope, issuedAt, expiresAt)
+        return LauncherPrivateLease(expectedScope, issuedAt, expiresAt, grantExpiresAt)
     }
 
     private const val KEY_ID = "launcher-lease-rsa-2026-01"
@@ -50,5 +60,6 @@ internal object LauncherPrivateLeaseVerifier {
     private const val LEASE_VERSION = 1
     private const val ACCESS_VERSION = 4
     private const val MAX_OFFLINE_TTL_SECONDS = 7L * 24L * 60L * 60L
+    private const val MAX_MANAGED_ACCESS_TTL_SECONDS = 10L * 365L * 24L * 60L * 60L
     private const val CLOCK_SKEW_SECONDS = 5L * 60L
 }

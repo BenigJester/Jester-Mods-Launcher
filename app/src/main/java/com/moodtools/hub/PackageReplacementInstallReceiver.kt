@@ -38,7 +38,20 @@ class PackageReplacementInstallReceiver : BroadcastReceiver() {
             } else {
                 @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)
             }
-            confirmation?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let(context::startActivity)
+            if (confirmation == null) {
+                emitFailure(packageName, "Android did not provide an installation screen")
+                return
+            }
+            runCatching {
+                confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(confirmation)
+            }.onFailure { error ->
+                emitFailure(
+                    packageName,
+                    error.message?.take(240)?.takeIf { it.isNotBlank() }
+                        ?: "Android could not open its installation screen"
+                )
+            }
             return
         }
         PackageReplacementInstallEvents.results.tryEmit(
@@ -46,6 +59,16 @@ class PackageReplacementInstallReceiver : BroadcastReceiver() {
                 packageName = packageName,
                 successful = status == PackageInstaller.STATUS_SUCCESS,
                 message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)?.take(240)
+            )
+        )
+    }
+
+    private fun emitFailure(packageName: String, message: String) {
+        PackageReplacementInstallEvents.results.tryEmit(
+            PackageReplacementInstallResult(
+                packageName = packageName,
+                successful = false,
+                message = message
             )
         )
     }

@@ -69,6 +69,27 @@ class LibraryGameTest {
     }
 
     @Test
+    fun libraryCarriesPrivateGrantIdentityAndExpiryFromItsListing() {
+        val scope = "private.township"
+        val expiry = 1_900_000_000L
+        val regular = libraryGame("Private")
+        val listing = regular.listing!!.copy(
+            catalog = regular.listing.catalog.copy(privateScope = scope),
+            privateAccessExpiresAtEpochSeconds = expiry
+        )
+        val privateGame = LibraryGame(
+            module = regular.module,
+            game = regular.game,
+            listing = listing,
+            installedBuild = regular.installedBuild,
+            installedComplete = regular.installedComplete
+        )
+
+        assertEquals(scope, privateGame.privateScope)
+        assertEquals(expiry, privateGame.privateAccessExpiresAtEpochSeconds)
+    }
+
+    @Test
     fun updatingCatalogStateSuppressesOnlyThePlayStoreOutdatedWarning() {
         val playStore = PlayStoreVersionStatus(
             latestVersion = "2.0",

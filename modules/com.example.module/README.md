@@ -16,6 +16,32 @@ radio-styled choices in the same inline popup used by the ordinary Spinner. The
 native callback receives `0` when all entries are selected; explicit subsets use
 bit 30 as a marker and bits 0 through 29 as the selected-item mask.
 
+## Choose which features to expose
+
+`cpp/Main.cpp` defines `kHiddenFeatureIds` near the top of the template. Add the
+explicit numeric IDs that should be omitted from a shared build:
+
+```cpp
+constexpr std::initializer_list<int> kHiddenFeatureIds = {
+        3, 4, 30, 31, 32, -50
+};
+```
+
+Both positive and signed negative IDs are supported. The descriptors keep their
+original explicit IDs, so hiding one control never renumbers another control or
+changes its `Changes` callback. When a category, connected group, nested collapse,
+or collapse contains only explicit-ID children, hiding every child omits its
+structural rows too.
+The list is empty by default and therefore exposes the complete example catalog.
+
+Display-only rows do not have callback IDs and remain visible. The automatic-ID
+example also cannot be selected through `kHiddenFeatureIds` because its number is
+derived from its position at runtime; use explicit IDs for every production control
+that may need to be hidden. Hidden controls are not returned to Java, so their saved
+preferences are not loaded for that menu session. This is a feature-list visibility
+filter, not a security boundary: the corresponding native implementation remains in
+the compiled library unless it is separately removed.
+
 ## Choose the non-root method
 
 Every module must declare one non-root method in `config.json`. Copy one of the

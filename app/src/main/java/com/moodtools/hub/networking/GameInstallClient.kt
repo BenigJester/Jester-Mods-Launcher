@@ -1,6 +1,7 @@
 package com.moodtools.hub.networking
 
 import android.app.PendingIntent
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -8,6 +9,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.moodtools.hub.modules.CatalogModule
 import com.moodtools.hub.modules.GameInstallSource
 import com.moodtools.hub.modules.GamePackageFormat
@@ -62,12 +64,13 @@ class GameInstallClient(private val context: Context) {
             if (target.exists()) require(target.delete()) { "Could not replace the previous game download" }
             require(temporary.renameTo(target)) { "Could not save the game download" }
             return target
-        } finally {
-            temporary.delete()
+        } catch (error: Throwable) {
+            if (temporary.length() == source.size) temporary.delete()
+            throw error
         }
     }
 
-    fun install(game: CatalogModule) {
+    fun install(game: CatalogModule): Int? {
         val source = game.installSource as? GameInstallSource.DirectDownload
             ?: error("This game is installed through the Play Store")
         val packageFile = downloadedFile(game)
@@ -78,6 +81,26 @@ class GameInstallClient(private val context: Context) {
             require(context.packageManager.canRequestPackageInstalls()) {
                 "Allow Jester Mods to install games in Android settings"
             }
+        }
+
+        // A verified standalone APK can be handed directly to Android from the foreground
+        // user action. This avoids the PackageInstaller broadcast-to-activity hop that is
+        // slow or occasionally suppressed on low-memory/OEM Android builds. Split packages
+        // still need a PackageInstaller session so Android can receive every APK atomically.
+        if (source.format == GamePackageFormat.APK) {
+            val apkUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.launcher-updates",
+                packageFile
+            )
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(apkUri, APK_MIME_TYPE)
+                    clipData = ClipData.newRawUri("verified_original_game", apkUri)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+            return null
         }
 
         val installer = context.packageManager.packageInstaller
@@ -110,9 +133,10 @@ class GameInstallClient(private val context: Context) {
                     .setAction(GameInstallReceiver.ACTION_INSTALL_RESULT)
                     .putExtra(GameInstallReceiver.EXTRA_PACKAGE, game.config.packageName)
                     .putExtra(GameInstallReceiver.EXTRA_VERSION_CODE, source.versionCode)
+                    .putExtra(GameInstallReceiver.EXTRA_SESSION_ID, sessionId)
                 val sender = PendingIntent.getBroadcast(
                     context,
-                    game.config.packageName.hashCode() xor source.versionCode.hashCode(),
+                    sessionId,
                     callback,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 ).intentSender
@@ -122,6 +146,21 @@ class GameInstallClient(private val context: Context) {
             runCatching { installer.abandonSession(sessionId) }
             throw error
         }
+        return sessionId
+    }
+
+    fun isInstalledAtLeast(packageName: String, versionCode: Long): Boolean {
+        if (!packageName.matches(PACKAGE_PATTERN) || versionCode <= 0L) return false
+        val info = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(packageName, 0)
+        }.getOrNull() ?: return false
+        val installedVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION") info.versionCode.toLong()
+        }
+        return installedVersion >= versionCode
     }
 
     fun clearDownload(packageName: String, versionCode: Long) {
@@ -294,6 +333,7 @@ class GameInstallClient(private val context: Context) {
 
     companion object {
         private const val HOST = "jester.moodtools.workers.dev"
+        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val MAX_APKS_ENTRIES = 256
         private const val MAX_EXTRACTED_APKS_BYTES = 4L * 1024L * 1024L * 1024L
         private val PACKAGE_PATTERN = Regex("[A-Za-z0-9_.]{3,200}")

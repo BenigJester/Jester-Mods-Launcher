@@ -36,9 +36,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
@@ -94,15 +96,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moodtools.hub.BuildConfig
+import com.moodtools.hub.formatRemainingAccessPrimary
 import com.moodtools.hub.networking.CatalogIconClient
 import com.moodtools.hub.networking.LauncherChangelogEntry
 import com.moodtools.hub.networking.ModuleChangelog
 import com.moodtools.hub.networking.ModuleChangelogEntry
 import com.moodtools.hub.networking.ModuleFeaturesClient
 import java.text.SimpleDateFormat
+import java.text.DateFormat
 import java.util.Date
 import java.util.LinkedHashMap
 import java.util.Locale
@@ -122,6 +128,8 @@ private val AccentBlue = Color(0xFF8CB9FF)
 private val Muted = Color(0xFFAAB3BF)
 private val Hairline = Color(0xFF2A313C)
 private val Danger = Color(0xFFFFB4AB)
+private val PrivateGold = Color(0xFFFFD99A)
+private val PrivateViolet = Color(0xFFC7B4FF)
 
 /** Launcher-owned update state. The module itself no longer needs to own an updater screen. */
 data class ModuleUpdateUiState(
@@ -369,7 +377,6 @@ fun GameHubScreen(
     var libraryQuery by rememberSaveable { mutableStateOf("") }
     var libraryManaging by rememberSaveable { mutableStateOf(false) }
     val page = when {
-        launcherUpdate.screenOpen -> LauncherPage.LauncherUpdate
         changelog.open -> LauncherPage.Changelog
         accountIdentity.open -> LauncherPage.AccountIdentity
         pendingDownload != null -> LauncherPage.Download(pendingDownload!!)
@@ -609,6 +616,13 @@ fun GameHubScreen(
                     }
                 }
             }
+        }
+        if (launcherUpdate.screenOpen) {
+            LauncherUpdateDialog(
+                update = launcherUpdate,
+                onDismiss = onCloseLauncherUpdate,
+                onInstall = onInstallLauncherUpdate
+            )
         }
         if (directPatchPrompt.visible) {
             DirectPatchInstallDialog(
@@ -1845,6 +1859,251 @@ private fun LauncherUpdateScreen(
 }
 
 @Composable
+private fun LauncherUpdateDialog(
+    update: LauncherUpdateUiState,
+    onDismiss: () -> Unit,
+    onInstall: () -> Unit
+) {
+    val busy = update.inProgress || update.installing
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(
+            dismissOnBackPress = !busy,
+            dismissOnClickOutside = !busy,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .padding(horizontal = 18.dp, vertical = 24.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, Accent.copy(alpha = 0.28f))
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .heightIn(max = 720.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF1A2929), SurfaceRaised, Color(0xFF10151C))
+                        )
+                    ),
+                contentPadding = PaddingValues(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    Row(verticalAlignment = Alignment.Top) {
+                        UpdateEmblem()
+                        Spacer(Modifier.width(15.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "A NEW ERA AWAITS",
+                                color = Accent,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Launcher update",
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Version ${update.version ?: "new"}  ·  Build ${update.build}",
+                                color = AccentBlue,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            "Later",
+                            color = if (busy) Muted.copy(alpha = 0.4f) else Muted,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(enabled = !busy, onClick = onDismiss)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        "The next chapter of Jester Mods is ready. Update securely without leaving the launcher.",
+                        color = Muted,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color.White.copy(alpha = 0.045f))
+                            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(22.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            "WHAT'S NEW",
+                            color = PrivateGold,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        val entries = update.changelog.ifEmpty {
+                            listOf(
+                                LauncherChangelogEntry(
+                                    build = update.build,
+                                    version = update.version ?: "New version",
+                                    notes = update.notes.orEmpty(),
+                                    publishedAtEpochSeconds = 0L
+                                )
+                            )
+                        }
+                        entries.forEachIndexed { index, entry ->
+                            if (index > 0) {
+                                Spacer(Modifier.height(12.dp))
+                                Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            Text(entry.version, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                entry.notes.ifBlank { "Includes launcher improvements and reliability fixes." },
+                                color = Muted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+                if (update.totalBytes > 0L) {
+                    item {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Accent.copy(alpha = 0.07f))
+                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Verified package", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text(formatDownloadSize(update.totalBytes), color = Accent, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                if (update.inProgress || update.installing || update.downloaded || update.downloadedBytes > 0L) {
+                    item {
+                        DownloadProgressBar(
+                            downloadedBytes = update.downloadedBytes,
+                            totalBytes = update.totalBytes,
+                            waiting = update.inProgress,
+                            color = Accent
+                        )
+                    }
+                }
+                if (update.headline != null || update.detail != null) {
+                    item {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background((if (update.failed) Danger else AccentBlue).copy(alpha = 0.08f))
+                                .padding(14.dp)
+                        ) {
+                            update.headline?.let {
+                                Text(it, color = if (update.failed) Danger else Color.White, fontWeight = FontWeight.SemiBold)
+                            }
+                            update.detail?.let {
+                                Spacer(Modifier.height(3.dp))
+                                Text(it, color = Muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                item {
+                    Button(
+                        onClick = onInstall,
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = PaddingValues(vertical = 15.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+                    ) {
+                        Text(
+                            when {
+                                update.inProgress -> "Downloading…"
+                                update.installing -> "Waiting for Android…"
+                                update.downloaded -> "Install update"
+                                update.failed -> "Try again"
+                                else -> "Begin the update"
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Text(
+                        "Signed and verified by Jester Mods. Your library, add-ons, and access remain on this device.",
+                        color = Muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateEmblem() {
+    Box(
+        modifier = Modifier
+            .size(58.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    listOf(Accent.copy(alpha = 0.28f), AccentBlue.copy(alpha = 0.08f))
+                )
+            )
+            .border(1.dp, Accent.copy(alpha = 0.42f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(28.dp).semantics { contentDescription = "Launcher update" }) {
+            val centerX = size.width / 2f
+            drawLine(
+                color = Accent,
+                start = androidx.compose.ui.geometry.Offset(centerX, size.height * 0.18f),
+                end = androidx.compose.ui.geometry.Offset(centerX, size.height * 0.68f),
+                strokeWidth = 3.5f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = Accent,
+                start = androidx.compose.ui.geometry.Offset(size.width * 0.30f, size.height * 0.48f),
+                end = androidx.compose.ui.geometry.Offset(centerX, size.height * 0.70f),
+                strokeWidth = 3.5f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = Accent,
+                start = androidx.compose.ui.geometry.Offset(size.width * 0.70f, size.height * 0.48f),
+                end = androidx.compose.ui.geometry.Offset(centerX, size.height * 0.70f),
+                strokeWidth = 3.5f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = AccentBlue,
+                start = androidx.compose.ui.geometry.Offset(size.width * 0.23f, size.height * 0.84f),
+                end = androidx.compose.ui.geometry.Offset(size.width * 0.77f, size.height * 0.84f),
+                strokeWidth = 3.5f,
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+@Composable
 private fun ModuleBrowserScreen(
     screenCache: LauncherScreenCache,
     listings: List<ModuleListing>,
@@ -2231,6 +2490,12 @@ private fun ModuleDownloadScreen(
             Spacer(Modifier.height(10.dp))
             Text("Add-on details", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Text("See what is included and required before adding this add-on to your library.", color = Muted)
+        }
+
+        if (listing.catalog.privateScope != null && listing.privateAccessExpiresAtEpochSeconds != null) {
+            item {
+                PrivateModuleAccessTimer(listing.privateAccessExpiresAtEpochSeconds)
+            }
         }
 
         item {
@@ -2660,6 +2925,126 @@ private fun moduleDownloadSizeLabel(module: CatalogModule, abi: String?): String
 }
 
 @Composable
+private fun PrivateModuleAccessTimer(
+    expiresAtEpochSeconds: Long,
+    compact: Boolean = false
+) {
+    val expiresAtMillis = remember(expiresAtEpochSeconds) { expiresAtEpochSeconds * 1_000L }
+    val now by produceState(initialValue = System.currentTimeMillis(), expiresAtMillis) {
+        while (true) {
+            value = System.currentTimeMillis()
+            if (value >= expiresAtMillis) break
+            delay(minOf(1_000L, maxOf(250L, expiresAtMillis - value)))
+        }
+    }
+    val remaining = expiresAtMillis - now
+    val remainingText = formatRemainingAccessPrimary(remaining)
+    val expiryText = remember(expiresAtMillis, compact) {
+        if (compact) {
+            SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(expiresAtMillis))
+        } else {
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(expiresAtMillis))
+        }
+    }
+    val shape = RoundedCornerShape(if (compact) 16.dp else 26.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        Color(0xFF2A2118),
+                        Color(0xFF201D2E),
+                        Color(0xFF171E29)
+                    )
+                )
+            )
+            .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.38f)), shape)
+            .semantics {
+                contentDescription = "Private access $remainingText, available until $expiryText"
+            }
+            .padding(
+                horizontal = if (compact) 13.dp else 20.dp,
+                vertical = if (compact) 11.dp else 18.dp
+            )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "PRIVATE ACCESS",
+                color = PrivateGold,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "VERIFIED",
+                color = PrivateViolet,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(if (compact) 5.dp else 10.dp))
+        Text(
+            remainingText,
+            color = Color.White,
+            style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold
+        )
+        if (!compact) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Your private add-on grant is active on this device.",
+                color = Muted,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(PrivateGold.copy(alpha = 0.16f)))
+            Spacer(Modifier.height(11.dp))
+        } else {
+            Spacer(Modifier.height(2.dp))
+        }
+        if (compact) {
+            Text(
+                "GRANTED UNTIL",
+                color = Muted,
+                style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(Modifier.height(1.dp))
+            Text(
+                expiryText,
+                color = Color.White.copy(alpha = 0.88f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "AVAILABLE UNTIL",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    expiryText,
+                    color = Color.White.copy(alpha = 0.88f),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ModuleListingCard(
     screenCache: LauncherScreenCache,
     listing: ModuleListing,
@@ -2740,6 +3125,13 @@ private fun ModuleListingCard(
                     )
                 )
             }
+        }
+        if (listing.catalog.privateScope != null && listing.privateAccessExpiresAtEpochSeconds != null) {
+            Spacer(Modifier.height(13.dp))
+            PrivateModuleAccessTimer(
+                expiresAtEpochSeconds = listing.privateAccessExpiresAtEpochSeconds,
+                compact = true
+            )
         }
         Spacer(Modifier.height(14.dp))
         Button(
@@ -3427,7 +3819,7 @@ private fun CompactGameCard(
     val addOnOutdated = game.playStoreOutdatedWarning
     val addOnUpdating = game.playStoreUpdateInProgress
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .scale(scale)
@@ -3445,78 +3837,95 @@ private fun CompactGameCard(
                     if (managing) onToggleSelection() else onOpenGame(game)
                 }
             )
-            .padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 14.dp, vertical = 13.dp)
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = game.title,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp))
-            )
-        } else {
-            Box(
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceRaised),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(game.title.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = game.title,
+                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceRaised),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(game.title.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold)
+                }
             }
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                game.title,
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                libraryStatusLabel(game),
-                color = when {
-                    addOnOutdated -> Danger
-                    addOnUpdating -> AccentBlue
-                    game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
-                    game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Muted
-                    game.status == LibraryGameStatus.UPDATE_AVAILABLE -> Accent
-                    else -> Danger
-                },
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(7.dp))
-            LauncherMethodBadge(
-                launcherMethodPresentation(game.module.nonRootMethod, BuildConfig.IS_ROOT_MODE)
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        if (managing) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(if (selected) AccentBlue else SurfaceRaised)
-                    .border(
-                        BorderStroke(1.dp, if (selected) AccentBlue else Muted.copy(alpha = 0.55f)),
-                        CircleShape
-                    )
-                    .clickable(onClick = onToggleSelection)
-                    .semantics {
-                        contentDescription = if (selected) {
-                            "Unselect ${game.title}"
-                        } else {
-                            "Select ${game.title}"
-                        }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    game.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    libraryStatusLabel(game),
+                    color = when {
+                        addOnOutdated -> Danger
+                        addOnUpdating -> AccentBlue
+                        game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
+                        game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Muted
+                        game.status == LibraryGameStatus.UPDATE_AVAILABLE -> Accent
+                        else -> Danger
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                if (selected) Text("✓", color = Ink, fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(7.dp))
+                LauncherMethodBadge(
+                    launcherMethodPresentation(game.module.nonRootMethod, BuildConfig.IS_ROOT_MODE)
+                )
             }
-        } else {
-            Text("›", color = Accent, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.width(10.dp))
+            if (managing) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) AccentBlue else SurfaceRaised)
+                        .border(
+                            BorderStroke(1.dp, if (selected) AccentBlue else Muted.copy(alpha = 0.55f)),
+                            CircleShape
+                        )
+                        .clickable(onClick = onToggleSelection)
+                        .semantics {
+                            contentDescription = if (selected) {
+                                "Unselect ${game.title}"
+                            } else {
+                                "Select ${game.title}"
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) Text("✓", color = Ink, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Text(
+                    "›",
+                    color = Accent,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+            }
+        }
+        if (game.privateScope != null && game.privateAccessExpiresAtEpochSeconds != null) {
+            Spacer(Modifier.height(12.dp))
+            PrivateModuleAccessTimer(
+                expiresAtEpochSeconds = game.privateAccessExpiresAtEpochSeconds,
+                compact = true
+            )
         }
     }
 }
@@ -3599,6 +4008,11 @@ private fun ModuleScreen(
                         Text("Architecture ${architectureLabel(it.abi)}", color = Muted)
                     }
                 }
+            }
+        }
+        if (game.privateScope != null && game.privateAccessExpiresAtEpochSeconds != null) {
+            item {
+                PrivateModuleAccessTimer(game.privateAccessExpiresAtEpochSeconds)
             }
         }
         item {

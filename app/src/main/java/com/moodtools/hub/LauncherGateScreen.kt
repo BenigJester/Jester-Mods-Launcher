@@ -556,17 +556,3 @@ private fun GateBrandHeader() {
         }
     }
 }
-
-private fun formatRemainingAccessPrimary(milliseconds: Long): String {
-    if (milliseconds <= 0L) return "Expired"
-    var minutes = (milliseconds + 59_999L) / 60_000L
-    val days = minutes / 1_440L
-    minutes %= 1_440L
-    val hours = minutes / 60L
-    minutes %= 60L
-    return buildString {
-        if (days > 0L) append("${days}d ")
-        if (days > 0L || hours > 0L) append("${hours}h ")
-        if (days == 0L) append("${minutes}m")
-    }
-}
