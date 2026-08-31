@@ -93,6 +93,8 @@ class LibraryGameTest {
     fun updatingCatalogStateSuppressesOnlyThePlayStoreOutdatedWarning() {
         val playStore = PlayStoreVersionStatus(
             latestVersion = "2.0",
+            listingUpdatedAtEpochSeconds = null,
+            updateAvailable = true,
             checkedAtEpochSeconds = 1,
             checkedDay = 1
         )
@@ -115,6 +117,25 @@ class LibraryGameTest {
     }
 
     @Test
+    fun listingRevisionDetectsUpdatesWhenGoogleDoesNotPublishAVersion() {
+        val current = PlayStoreVersionStatus(
+            latestVersion = null,
+            listingUpdatedAtEpochSeconds = 1_787_824_746,
+            updateAvailable = false,
+            checkedAtEpochSeconds = 1_787_824_800,
+            checkedDay = 1
+        )
+        val newer = current.copy(
+            listingUpdatedAtEpochSeconds = 1_787_911_146,
+            updateAvailable = true
+        )
+        val game = libraryGame("Revision check")
+
+        assertEquals(true, current.isSupportedBy(game.module))
+        assertEquals(false, newer.isSupportedBy(game.module))
+    }
+
+    @Test
     fun librarySelectionSupportsIndividualAndFilteredBatchToggles() {
         val first = toggleLibrarySelection(emptySet(), "com.example.first")
         val twoSelected = toggleVisibleLibrarySelection(
@@ -133,6 +154,26 @@ class LibraryGameTest {
         assertEquals(
             setOf("com.example.second"),
             toggleLibrarySelection(twoSelected, "com.example.first")
+        )
+    }
+
+    @Test
+    fun installedModuleUpdatePromptCollectsEveryEligibleLibraryUpdate() {
+        val first = libraryGame("First", installedBuild = 1, latestBuild = 2)
+        val second = libraryGame("Second", installedBuild = 4, latestBuild = 7)
+        val third = libraryGame("Third", installedBuild = 2, latestBuild = 3)
+        val current = libraryGame("Current", installedBuild = 5, latestBuild = 5)
+        val incomplete = libraryGame(
+            "Incomplete",
+            installedBuild = 1,
+            latestBuild = 2,
+            installedComplete = false
+        )
+        val localTest = libraryGame("Local", installedBuild = 1, latestBuild = 2).copy(localTest = true)
+
+        assertEquals(
+            listOf(first, second, third),
+            installedModuleUpdates(listOf(first, current, second, incomplete, localTest, third))
         )
     }
 

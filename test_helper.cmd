@@ -1079,7 +1079,7 @@ if defined LAUNCHER_ONLY (
 "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am force-stop %APP_ID% >nul 2>nul
 if /I "!LAUNCHER_BUILD!"=="debug" (
     if defined LAUNCHER_ONLY (
-        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity --ez moodtools.test_bypass_unlock true --ez moodtools.test_launcher_update true
+        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity --ez moodtools.test_bypass_unlock true --ez moodtools.test_module_updates true
     ) else (
         "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity
     )

@@ -38,10 +38,12 @@ import com.moodtools.hub.modules.LibraryGameStatus
 import com.moodtools.hub.modules.LibraryLaunchAction
 import com.moodtools.hub.modules.LaunchUiState
 import com.moodtools.hub.modules.LauncherUpdateUiState
+import com.moodtools.hub.modules.InstalledModuleUpdatesUiState
 import com.moodtools.hub.modules.ModuleRepository
 import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
 import com.moodtools.hub.modules.PlayStoreVersionStatus
+import com.moodtools.hub.modules.installedModuleUpdates
 import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
@@ -140,7 +142,8 @@ class LauncherActivity : ComponentActivity() {
         viewModel.start(
             initialLink = intent?.data,
             debugAccessBypass = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_ACCESS_BYPASS_EXTRA, false) == true,
-            debugLauncherUpdateTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_LAUNCHER_UPDATE_TEST_EXTRA, false) == true
+            debugLauncherUpdateTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_LAUNCHER_UPDATE_TEST_EXTRA, false) == true,
+            debugModuleUpdatesTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_MODULE_UPDATES_TEST_EXTRA, false) == true
         )
         setContent {
             val startup by viewModel.startupState.collectAsStateWithLifecycle()
@@ -158,6 +161,7 @@ class LauncherActivity : ComponentActivity() {
                     gameDataResetState = viewModel.gameDataResetState,
                     gameInstallState = viewModel.gameInstallState,
                     launcherUpdateState = viewModel.launcherUpdateState,
+                    installedModuleUpdatesState = viewModel.installedModuleUpdatesState,
                     changelogState = viewModel.changelogState,
                     accountIdentityState = viewModel.accountIdentityState,
                     launchState = viewModel.launchState,
@@ -183,6 +187,8 @@ class LauncherActivity : ComponentActivity() {
                     onOpenLauncherUpdate = viewModel::openLauncherUpdate,
                     onCloseLauncherUpdate = viewModel::closeLauncherUpdate,
                     onInstallLauncherUpdate = ::downloadOrInstallLauncherUpdate,
+                    onDismissInstalledModuleUpdates = viewModel::dismissInstalledModuleUpdates,
+                    onReviewInstalledModuleUpdate = viewModel::reviewInstalledModuleUpdate,
                     onOpenChangelog = viewModel::openChangelog,
                     onCloseChangelog = viewModel::closeChangelog,
                     onOpenAccountIdentity = viewModel::openAccountIdentity,
@@ -684,6 +690,7 @@ class LauncherActivity : ComponentActivity() {
         private const val PACKAGE_REPLACEMENT_INSTALL_RECONCILE_TIMEOUT_MS = 12_000L
         private const val DEBUG_ACCESS_BYPASS_EXTRA = "moodtools.test_bypass_unlock"
         private const val DEBUG_LAUNCHER_UPDATE_TEST_EXTRA = "moodtools.test_launcher_update"
+        private const val DEBUG_MODULE_UPDATES_TEST_EXTRA = "moodtools.test_module_updates"
     }
 
 }
@@ -725,6 +732,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val _launcherUpdateState = MutableStateFlow(LauncherUpdateUiState())
     val launcherUpdateState: StateFlow<LauncherUpdateUiState> = _launcherUpdateState
 
+    private val _installedModuleUpdatesState = MutableStateFlow(InstalledModuleUpdatesUiState())
+    val installedModuleUpdatesState: StateFlow<InstalledModuleUpdatesUiState> = _installedModuleUpdatesState
+
     private val _changelogState = MutableStateFlow(ChangelogUiState())
     val changelogState: StateFlow<ChangelogUiState> = _changelogState
     private val _accountIdentityState = MutableStateFlow(AccountIdentityUiState())
@@ -763,6 +773,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var scannedConfigs: List<com.moodtools.hub.modules.ModuleConfig>? = null
     private var detectedGamesCache: List<InstalledGame> = emptyList()
     private var launcherUpdateTestChannel = false
+    private var moduleUpdatesTestPreviewActive = false
     private var debugAccessBypassActive = false
     private var currentLauncherRelease: LauncherRelease? = null
     @Volatile
@@ -776,6 +787,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     @Volatile
     private var gameInstallerRecovery: Job? = null
     private var privateAccessExpiryByScope: Map<String, Long> = emptyMap()
+    @Volatile
+    private var acknowledgedInstalledModuleUpdates: Set<String> = emptySet()
 
     init {
         viewModelScope.launch {
@@ -786,11 +799,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun start(
         initialLink: Uri?,
         debugAccessBypass: Boolean = false,
-        debugLauncherUpdateTest: Boolean = false
+        debugLauncherUpdateTest: Boolean = false,
+        debugModuleUpdatesTest: Boolean = false
     ) {
         if (started) return
         started = true
         launcherUpdateTestChannel = debugLauncherUpdateTest
+        moduleUpdatesTestPreviewActive = debugModuleUpdatesTest
         debugAccessBypassActive = debugAccessBypass
         _launcherEntered.value = false
         viewModelScope.launch(Dispatchers.IO) {
@@ -977,6 +992,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 }
         }
         markLauncherReady(launcherExpiresAt)
+        if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
+            _launcherEntered.value = true
+        }
         refreshGames(refreshCatalog = true, forceGameScan = true)
         checkLauncherUpdate()
         if (!isLocalTestStageLink(initialLink)) initialLink?.let(::handleDeepLink)
@@ -1111,6 +1129,23 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (!current.inProgress && !current.installing) {
             _launcherUpdateState.value = current.copy(screenOpen = false)
         }
+    }
+
+    fun dismissInstalledModuleUpdates() {
+        val current = _installedModuleUpdatesState.value
+        val acknowledged = current.packageNames.mapNotNull { packageName ->
+            _libraryGames.value.firstOrNull { it.packageName == packageName }
+                ?.installedModuleUpdateKey()
+        }
+        acknowledgedInstalledModuleUpdates = acknowledgedInstalledModuleUpdates + acknowledged
+        _installedModuleUpdatesState.value = current.copy(open = false)
+    }
+
+    fun reviewInstalledModuleUpdate(game: LibraryGame) {
+        dismissInstalledModuleUpdates()
+        val current = _libraryGames.value.firstOrNull { it.packageName == game.packageName } ?: return
+        openLibraryGame(current)
+        updateLibraryGame(current)
     }
 
     fun downloadAndInstallLauncherUpdate() {
@@ -2543,19 +2578,22 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun playStoreStatusesFor(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
     ): Map<String, PlayStoreVersionStatus> {
-        if (catalog.isEmpty()) return emptyMap()
+        val playStoreModules = catalog.filter { it.installSource is GameInstallSource.PlayStore }
+        if (playStoreModules.isEmpty()) return emptyMap()
         val today = currentLocalDay()
+        val now = System.currentTimeMillis() / 1_000L
         val statuses = mutableMapOf<String, PlayStoreVersionStatus>()
         val editor = playStorePreferences.edit()
         var changed = false
-        catalog.forEach { module ->
+        playStoreModules.forEach { module ->
             val packageName = module.config.packageName
             val cached = cachedPlayStoreStatus(packageName, today)
-            if (playStorePreferences.getLong(playStoreAttemptDayKey(packageName), Long.MIN_VALUE) == today) {
+            val lastAttemptAt = playStorePreferences.getLong(playStoreAttemptAtKey(packageName), 0L)
+            if (lastAttemptAt in 1..now && now - lastAttemptAt < PLAY_STORE_RETRY_SECONDS) {
                 if (cached != null) statuses[packageName] = cached
                 return@forEach
             }
-            editor.putLong(playStoreAttemptDayKey(packageName), today)
+            editor.putLong(playStoreAttemptAtKey(packageName), now)
             changed = true
             val fresh = runCatching { playStoreVersionClient.load(packageName) }
                 .onFailure {
@@ -2569,14 +2607,32 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             if (fresh != null) {
                 val status = PlayStoreVersionStatus(
                     latestVersion = fresh.version,
+                    listingUpdatedAtEpochSeconds = fresh.listingUpdatedAtEpochSeconds,
+                    updateAvailable = fresh.updateAvailable,
                     checkedAtEpochSeconds = fresh.checkedAtEpochSeconds,
                     checkedDay = today,
-                    stale = false
+                    stale = fresh.stale
                 )
                 statuses[packageName] = status
-                editor.putString(playStoreVersionKey(packageName), fresh.version)
+                if (fresh.version != null) editor.putString(playStoreVersionKey(packageName), fresh.version)
+                else editor.remove(playStoreVersionKey(packageName))
+                if (fresh.listingUpdatedAtEpochSeconds != null) {
+                    editor.putLong(
+                        playStoreListingUpdatedAtKey(packageName),
+                        fresh.listingUpdatedAtEpochSeconds
+                    )
+                } else editor.remove(playStoreListingUpdatedAtKey(packageName))
+                editor.putInt(
+                    playStoreUpdateAvailableKey(packageName),
+                    when (fresh.updateAvailable) {
+                        true -> 1
+                        false -> 0
+                        null -> -1
+                    }
+                )
                 editor.putLong(playStoreCheckedAtKey(packageName), fresh.checkedAtEpochSeconds)
                 editor.putLong(playStoreCheckedDayKey(packageName), today)
+                editor.putBoolean(playStoreStaleKey(packageName), fresh.stale)
             } else if (cached != null) {
                 statuses[packageName] = cached.copy(stale = true)
             }
@@ -2589,15 +2645,29 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val version = playStorePreferences.getString(playStoreVersionKey(packageName), null)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?: return null
+        val listingUpdatedAt = playStorePreferences
+            .getLong(playStoreListingUpdatedAtKey(packageName), 0L)
+            .takeIf { it > 0L }
+        if (version == null && listingUpdatedAt == null) return null
         val checkedAt = playStorePreferences.getLong(playStoreCheckedAtKey(packageName), 0L)
         val checkedDay = playStorePreferences.getLong(playStoreCheckedDayKey(packageName), Long.MIN_VALUE)
         if (checkedAt <= 0L || checkedDay == Long.MIN_VALUE) return null
+        val updateAvailable = when (playStorePreferences.getInt(
+            playStoreUpdateAvailableKey(packageName),
+            -1
+        )) {
+            1 -> true
+            0 -> false
+            else -> null
+        }
         return PlayStoreVersionStatus(
             latestVersion = version,
+            listingUpdatedAtEpochSeconds = listingUpdatedAt,
+            updateAvailable = updateAvailable,
             checkedAtEpochSeconds = checkedAt,
             checkedDay = checkedDay,
-            stale = checkedDay != today
+            stale = playStorePreferences.getBoolean(playStoreStaleKey(packageName), false) ||
+                checkedDay != today
         )
     }
 
@@ -2610,10 +2680,15 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         return calendar.timeInMillis / (24L * 60L * 60L * 1000L)
     }
 
-    private fun playStoreAttemptDayKey(packageName: String): String = PLAY_STORE_ATTEMPT_DAY_PREFIX + packageName
+    private fun playStoreAttemptAtKey(packageName: String): String = PLAY_STORE_ATTEMPT_AT_PREFIX + packageName
     private fun playStoreCheckedDayKey(packageName: String): String = PLAY_STORE_DAY_PREFIX + packageName
     private fun playStoreVersionKey(packageName: String): String = PLAY_STORE_VERSION_PREFIX + packageName
     private fun playStoreCheckedAtKey(packageName: String): String = PLAY_STORE_CHECKED_AT_PREFIX + packageName
+    private fun playStoreListingUpdatedAtKey(packageName: String): String =
+        PLAY_STORE_LISTING_UPDATED_AT_PREFIX + packageName
+    private fun playStoreUpdateAvailableKey(packageName: String): String =
+        PLAY_STORE_UPDATE_AVAILABLE_PREFIX + packageName
+    private fun playStoreStaleKey(packageName: String): String = PLAY_STORE_STALE_PREFIX + packageName
 
     private fun resolvePrivateAccessExpiries(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
@@ -2742,6 +2817,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 }
             _libraryGames.value = sortLibraryGames(catalogLibraryGames + localOnlyLibraryGames)
         }
+        syncInstalledModuleUpdatePrompt()
         _libraryLoading.value = false
         val refreshed = _games.value
         val selectedPackage = _selectedGame.value?.packageName
@@ -2760,6 +2836,108 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 it.catalog.config.packageName == downloadPackage
             }
         }
+    }
+
+    private fun syncInstalledModuleUpdatePrompt() {
+        if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
+            _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState(
+                open = true,
+                previewUpdates = installedModuleUpdatePreviewGames()
+            )
+            return
+        }
+        val updates = installedModuleUpdates(_libraryGames.value)
+        if (updates.isEmpty()) {
+            _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
+            return
+        }
+        val hasUnacknowledgedUpdate = updates.any { game ->
+            game.installedModuleUpdateKey() !in acknowledgedInstalledModuleUpdates
+        }
+        _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState(
+            open = _installedModuleUpdatesState.value.open || hasUnacknowledgedUpdate,
+            packageNames = updates.map(LibraryGame::packageName)
+        )
+    }
+
+    private fun LibraryGame.installedModuleUpdateKey(): String =
+        "$packageName:${listing?.catalog?.build ?: installedBuild}"
+
+    private fun installedModuleUpdatePreviewGames(): List<LibraryGame> {
+        val catalogPreviews = _availableModules.value
+            .sortedBy { it.catalog.config.title.lowercase() }
+            .take(DEBUG_MODULE_UPDATE_PREVIEW_COUNT)
+            .map { listing ->
+                val availableBuild = maxOf(2L, listing.catalog.build)
+                val installedBuild = availableBuild - 1L
+                val previewListing = listing.copy(
+                    game = null,
+                    installedBuild = installedBuild,
+                    installedComplete = true
+                )
+                LibraryGame(
+                    module = previewListing.catalog.config,
+                    game = null,
+                    listing = previewListing,
+                    installedBuild = installedBuild,
+                    installedComplete = true
+                )
+            }
+        if (catalogPreviews.size == DEBUG_MODULE_UPDATE_PREVIEW_COUNT) return catalogPreviews
+
+        val existingPackages = catalogPreviews.mapTo(mutableSetOf(), LibraryGame::packageName)
+        val fallbacks = listOf(
+            debugModuleUpdatePreviewGame("debug.preview.township", "Township", 37L, 38L, "38.1.0", 18L),
+            debugModuleUpdatePreviewGame("debug.preview.candy", "Candy Crush Saga", 62L, 64L, "1.312.0", 24L),
+            debugModuleUpdatePreviewGame("debug.preview.airforce", "Airforce 1945", 14L, 17L, "14.02", 21L)
+        )
+        return (catalogPreviews + fallbacks.filter { existingPackages.add(it.packageName) })
+            .take(DEBUG_MODULE_UPDATE_PREVIEW_COUNT)
+    }
+
+    private fun debugModuleUpdatePreviewGame(
+        packageName: String,
+        title: String,
+        installedBuild: Long,
+        availableBuild: Long,
+        version: String,
+        downloadMegabytes: Long
+    ): LibraryGame {
+        val config = com.moodtools.hub.modules.ModuleConfig(
+            packageName = packageName,
+            title = title,
+            supportedVersions = setOf(version),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null
+        )
+        val catalog = com.moodtools.hub.modules.CatalogModule(
+            config = config,
+            slug = packageName.substringAfterLast('.'),
+            build = availableBuild,
+            version = version,
+            notes = "Debug preview release",
+            icon = null,
+            installSource = GameInstallSource.PlayStore(
+                "https://play.google.com/store/apps/details?id=$packageName"
+            ),
+            downloadSizeByAbi = mapOf("arm64-v8a" to downloadMegabytes * 1024L * 1024L)
+        )
+        val listing = ModuleListing(
+            catalog = catalog,
+            game = null,
+            installedBuild = installedBuild,
+            installedComplete = true
+        )
+        return LibraryGame(
+            module = config,
+            game = null,
+            listing = listing,
+            installedBuild = installedBuild,
+            installedComplete = true
+        )
     }
 
     private fun lastLaunchKey(packageName: String): String = "last_launch_$packageName"
@@ -2803,10 +2981,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val GATE_NONCE = "nonce"
         private const val GATE_BUILD = "build"
         private const val GATE_EXPIRES = "expires"
-        private const val PLAY_STORE_ATTEMPT_DAY_PREFIX = "attempt_day_"
+        private const val PLAY_STORE_ATTEMPT_AT_PREFIX = "attempt_at_"
         private const val PLAY_STORE_DAY_PREFIX = "checked_day_"
         private const val PLAY_STORE_VERSION_PREFIX = "latest_version_"
         private const val PLAY_STORE_CHECKED_AT_PREFIX = "checked_at_"
+        private const val PLAY_STORE_LISTING_UPDATED_AT_PREFIX = "listing_updated_at_"
+        private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
+        private const val PLAY_STORE_STALE_PREFIX = "stale_"
+        private const val PLAY_STORE_RETRY_SECONDS = 30L * 60L
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_ACCESS_CHECK_GATE_MS = 2_000L
         private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L
@@ -2814,6 +2996,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS = 10_000L
         private const val GAME_INSTALLER_RECOVERY_DELAY_MS = 20_000L
         private const val DEBUG_ACCESS_DURATION_SECONDS = 24L * 60L * 60L
+        private const val DEBUG_MODULE_UPDATE_PREVIEW_COUNT = 3
         private const val MAX_RELEASE_GRANT_CHARS = 4096
         private const val LOCAL_TEST_STAGE_DIR = "jester-local-modules"
         private const val LOCAL_TEST_TOKEN_FILE = "stage-token.txt"

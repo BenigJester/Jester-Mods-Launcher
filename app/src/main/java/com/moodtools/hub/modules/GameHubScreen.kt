@@ -182,6 +182,12 @@ data class LauncherUpdateUiState(
     val changelog: List<LauncherChangelogEntry> = emptyList()
 )
 
+data class InstalledModuleUpdatesUiState(
+    val open: Boolean = false,
+    val packageNames: List<String> = emptyList(),
+    val previewUpdates: List<LibraryGame> = emptyList()
+)
+
 data class ChangelogUiState(
     val open: Boolean = false,
     val loading: Boolean = false,
@@ -294,6 +300,8 @@ private fun browseCatalogRevision(listings: List<ModuleListing>): Int {
         revision = 31 * revision + listing.installedComplete.hashCode()
         revision = 31 * revision + listing.deviceArchitectureSupported.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.latestVersion.hashCode()
+        revision = 31 * revision + listing.playStoreVersionStatus?.listingUpdatedAtEpochSeconds.hashCode()
+        revision = 31 * revision + listing.playStoreVersionStatus?.updateAvailable.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.stale.hashCode()
         revision = 31 * revision + listing.catalog.updateStatus.hashCode()
         revision = 31 * revision + listing.catalog.statusChangedAtEpochSeconds.hashCode()
@@ -320,6 +328,7 @@ fun GameHubScreen(
     gameDataResetState: StateFlow<GameDataResetUiState>,
     gameInstallState: StateFlow<GameInstallUiState>,
     launcherUpdateState: StateFlow<LauncherUpdateUiState>,
+    installedModuleUpdatesState: StateFlow<InstalledModuleUpdatesUiState>,
     changelogState: StateFlow<ChangelogUiState>,
     accountIdentityState: StateFlow<AccountIdentityUiState>,
     launchState: StateFlow<LaunchUiState>,
@@ -345,6 +354,8 @@ fun GameHubScreen(
     onOpenLauncherUpdate: () -> Unit,
     onCloseLauncherUpdate: () -> Unit,
     onInstallLauncherUpdate: () -> Unit,
+    onDismissInstalledModuleUpdates: () -> Unit,
+    onReviewInstalledModuleUpdate: (LibraryGame) -> Unit,
     onOpenChangelog: () -> Unit,
     onCloseChangelog: () -> Unit,
     onOpenAccountIdentity: () -> Unit,
@@ -365,6 +376,7 @@ fun GameHubScreen(
     val gameDataReset by gameDataResetState.collectAsStateWithLifecycle()
     val gameInstall by gameInstallState.collectAsStateWithLifecycle()
     val launcherUpdate by launcherUpdateState.collectAsStateWithLifecycle()
+    val installedModuleUpdatePrompt by installedModuleUpdatesState.collectAsStateWithLifecycle()
     val changelog by changelogState.collectAsStateWithLifecycle()
     val accountIdentity by accountIdentityState.collectAsStateWithLifecycle()
     val launch by launchState.collectAsStateWithLifecycle()
@@ -622,6 +634,24 @@ fun GameHubScreen(
                 update = launcherUpdate,
                 onDismiss = onCloseLauncherUpdate,
                 onInstall = onInstallLauncherUpdate
+            )
+        }
+        val installedUpdates = installedModuleUpdatePrompt.previewUpdates.ifEmpty {
+            installedModuleUpdatePrompt.packageNames.mapNotNull { packageName ->
+                games.firstOrNull { it.packageName == packageName }
+            }
+        }
+        if (
+            installedModuleUpdatePrompt.open &&
+            installedUpdates.isNotEmpty() &&
+            !launcherUpdate.screenOpen &&
+            !directPatchPrompt.visible
+        ) {
+            InstalledModuleUpdatesDialog(
+                screenCache = screenCache,
+                updates = installedUpdates,
+                onDismiss = onDismissInstalledModuleUpdates,
+                onReview = onReviewInstalledModuleUpdate
             )
         }
         if (directPatchPrompt.visible) {
@@ -2056,7 +2086,192 @@ private fun LauncherUpdateDialog(
 }
 
 @Composable
-private fun UpdateEmblem() {
+private fun InstalledModuleUpdatesDialog(
+    screenCache: LauncherScreenCache,
+    updates: List<LibraryGame>,
+    onDismiss: () -> Unit,
+    onReview: (LibraryGame) -> Unit
+) {
+    val count = updates.size
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 580.dp)
+                .padding(horizontal = 18.dp, vertical = 24.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.34f))
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .heightIn(max = 720.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF17252A), SurfaceRaised, Color(0xFF10141C))
+                        )
+                    ),
+                contentPadding = PaddingValues(22.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
+                    Row(verticalAlignment = Alignment.Top) {
+                        UpdateEmblem(contentDescription = "Installed add-on updates")
+                        Spacer(Modifier.width(15.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "LIBRARY UPDATES",
+                                color = Accent,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                if (count == 1) "An add-on is ready" else "$count add-ons are ready",
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (count == 1) "1 verified release" else "$count verified releases",
+                                color = AccentBlue,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            "Later",
+                            color = Muted,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onDismiss)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        if (count == 1) {
+                            "A newer release is available for one of this Library's installed add-ons. Review what changed and update when it suits this device."
+                        } else {
+                            "Newer releases are available for this Library's installed add-ons. Review each one and update when it suits this device."
+                        },
+                        color = Muted,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                items(updates, key = LibraryGame::packageName) { game ->
+                    InstalledModuleUpdateCard(
+                        screenCache = screenCache,
+                        game = game,
+                        onReview = { onReview(game) }
+                    )
+                }
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Accent.copy(alpha = 0.07f))
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(Accent))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Every package is signed and verified. Updates are installed one at a time so each download can finish safely.",
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstalledModuleUpdateCard(
+    screenCache: LauncherScreenCache,
+    game: LibraryGame,
+    onReview: () -> Unit
+) {
+    val listing = game.listing ?: return
+    val bitmap = rememberLibraryBitmap(screenCache, game, 112)
+    val downloadSize = listing.game?.abi?.let(listing.catalog.downloadSizeByAbi::get)
+        ?: listing.catalog.downloadSizeByAbi.values.distinct().singleOrNull()
+        ?: 0L
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color.White.copy(alpha = 0.045f))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+            .padding(15.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = game.title,
+                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceDark),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(game.title.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    game.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "Installed build ${game.installedBuild}  ·  Build ${listing.catalog.build}",
+                    color = AccentBlue,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    buildString {
+                        append("Add-on ${listing.catalog.version}")
+                        if (downloadSize > 0L) append("  ·  ${formatDownloadSize(downloadSize)}")
+                    },
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onReview,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(vertical = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+        ) {
+            Text("Review update", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun UpdateEmblem(contentDescription: String = "Launcher update") {
     Box(
         modifier = Modifier
             .size(58.dp)
@@ -2069,7 +2284,7 @@ private fun UpdateEmblem() {
             .border(1.dp, Accent.copy(alpha = 0.42f), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.size(28.dp).semantics { contentDescription = "Launcher update" }) {
+        Canvas(Modifier.size(28.dp).semantics { this.contentDescription = contentDescription }) {
             val centerX = size.width / 2f
             drawLine(
                 color = Accent,
@@ -2550,15 +2765,17 @@ private fun ModuleDownloadScreen(
                 InformationGroupLabel(methodPresentation.setupLabel)
                 Spacer(Modifier.height(8.dp))
                 DownloadInfoRow(methodPresentation.fieldLabel, methodPresentation.method.displayName)
-                playStoreStatus?.let { status ->
+                if (listing.catalog.installSource is GameInstallSource.PlayStore) {
                     DownloadInfoRow(
-                        "Google Play version",
-                        buildString {
-                            append(status.latestVersion)
-                            if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                            else if (playStoreOutdatedWarning) append(" · add-on update needed")
-                            if (status.stale) append(" · last saved check")
-                        }
+                        "Google Play",
+                        playStoreStatus?.let { status ->
+                            buildString {
+                                append(playStoreReleaseLabel(status))
+                                if (playStoreUpdateInProgress) append(" · add-on update in progress")
+                                else if (playStoreOutdatedWarning) append(" · add-on update needed")
+                                if (status.stale) append(" · last saved check")
+                            }
+                        } ?: "Check temporarily unavailable"
                     )
                 }
                 LauncherMethodNotice(methodPresentation)
@@ -2566,10 +2783,19 @@ private fun ModuleDownloadScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         if (playStoreUpdateInProgress) {
-                            "Google Play has a newer game version. This add-on is marked as being updated for it."
+                            if (playStoreStatus?.latestVersion != null) {
+                                "Google Play has a newer game version. This add-on is marked as being updated for it."
+                            } else {
+                                "Google Play has a newer release. This add-on is marked as being updated for it."
+                            }
                         } else {
-                            "Google Play has a newer game version than this add-on supports. " +
-                                "Wait for an add-on update before using the newest game version."
+                            if (playStoreStatus?.latestVersion != null) {
+                                "Google Play has a newer game version than this add-on supports. " +
+                                    "Wait for an add-on update before using the newest game version."
+                            } else {
+                                "Google Play has published a newer release since this add-on was verified. " +
+                                    "Wait for an add-on update before updating the game."
+                            }
                         },
                         color = if (playStoreUpdateInProgress) AccentBlue else Danger,
                         style = MaterialTheme.typography.bodySmall
@@ -2999,7 +3225,7 @@ private fun PrivateModuleAccessTimer(
         if (!compact) {
             Spacer(Modifier.height(4.dp))
             Text(
-                "Your private add-on grant is active on this device.",
+                "Private add-on access is active for this device.",
                 color = Muted,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -3044,6 +3270,16 @@ private fun PrivateModuleAccessTimer(
     }
 }
 
+private fun playStoreReleaseLabel(status: PlayStoreVersionStatus): String =
+    status.latestVersion?.let { "v$it" } ?: when (status.updateAvailable) {
+        true -> "New release detected"
+        false -> "No newer release detected"
+        null -> "Release checked · version not published"
+    }
+
+private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
+    status?.latestVersion?.let { "Google Play v$it" } ?: "a new Google Play release"
+
 @Composable
 private fun ModuleListingCard(
     screenCache: LauncherScreenCache,
@@ -3067,9 +3303,9 @@ private fun ModuleListingCard(
     )
     val statusText = when {
         listing.playStoreUpdateInProgress ->
-            "Add-on update in progress for Google Play v${listing.playStoreVersionStatus?.latestVersion}"
+            "Add-on update in progress for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
         listing.playStoreOutdatedWarning ->
-            "Add-on may need an update for Google Play v${listing.playStoreVersionStatus?.latestVersion}"
+            "Add-on update needed for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
         game == null -> "Install the original game to continue"
         !game.versionSupported -> "A compatible game version is needed"
         !game.abiSupported -> "This installed version isn't supported"
@@ -3255,10 +3491,10 @@ private fun libraryStatusLabel(entry: LibraryGame): String {
         } ?: "Local test"
     }
     if (entry.status != LibraryGameStatus.RUNNING && entry.playStoreUpdateInProgress) {
-        return "Add-on update in progress · Google Play v${entry.playStoreVersionStatus?.latestVersion}"
+        return "Add-on update in progress · ${playStoreReleaseReference(entry.playStoreVersionStatus)}"
     }
     if (entry.status != LibraryGameStatus.RUNNING && entry.playStoreOutdatedWarning) {
-        return "Add-on outdated · Google Play v${entry.playStoreVersionStatus?.latestVersion}"
+        return "Add-on outdated · ${playStoreReleaseReference(entry.playStoreVersionStatus)}"
     }
     return when (entry.status) {
         LibraryGameStatus.RUNNING -> "Running · tap to resume"
@@ -4446,16 +4682,17 @@ private fun ModuleCompatibilityCard(game: LibraryGame) {
         InformationGroupLabel(methodPresentation.setupLabel)
         Spacer(Modifier.height(6.dp))
         DownloadInfoRow(methodPresentation.fieldLabel, methodPresentation.method.displayName)
-        game.playStoreVersionStatus?.let {
+        if (game.listing?.catalog?.installSource is GameInstallSource.PlayStore) {
             DownloadInfoRow(
                 "Google Play",
-                buildString {
-                    append("v")
-                    append(it.latestVersion)
-                    if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                    else if (playStoreOutdatedWarning) append(" · update add-on first")
-                    if (it.stale) append(" · saved check")
-                }
+                game.playStoreVersionStatus?.let {
+                    buildString {
+                        append(playStoreReleaseLabel(it))
+                        if (playStoreUpdateInProgress) append(" · add-on update in progress")
+                        else if (playStoreOutdatedWarning) append(" · update add-on first")
+                        if (it.stale) append(" · saved check")
+                    }
+                } ?: "Check temporarily unavailable"
             )
         }
         LauncherMethodNotice(methodPresentation)

@@ -146,12 +146,15 @@ data class CatalogIcon(
 )
 
 data class PlayStoreVersionStatus(
-    val latestVersion: String,
+    val latestVersion: String?,
+    val listingUpdatedAtEpochSeconds: Long?,
+    val updateAvailable: Boolean?,
     val checkedAtEpochSeconds: Long,
     val checkedDay: Long,
     val stale: Boolean = false
 ) {
-    fun isSupportedBy(module: ModuleConfig): Boolean = latestVersion in module.supportedVersions
+    fun isSupportedBy(module: ModuleConfig): Boolean? =
+        updateAvailable?.not() ?: latestVersion?.let { it in module.supportedVersions }
 }
 
 sealed interface GameInstallSource {
@@ -280,7 +283,15 @@ data class LibraryGame(
             localTest -> LibraryGameStatus.READY
             listing != null && installedBuild < listing.catalog.build -> LibraryGameStatus.UPDATE_AVAILABLE
             else -> LibraryGameStatus.READY
-        }
+    }
+}
+
+internal fun installedModuleUpdates(games: List<LibraryGame>): List<LibraryGame> = games.filter { game ->
+    val availableBuild = game.listing?.catalog?.build ?: return@filter false
+    !game.localTest &&
+        game.installedComplete &&
+        game.installedBuild > 0L &&
+        availableBuild > game.installedBuild
 }
 
 internal fun sortLibraryGames(games: List<LibraryGame>): List<LibraryGame> = games.sortedWith(
