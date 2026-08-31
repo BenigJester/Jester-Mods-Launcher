@@ -962,18 +962,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             (result as? LauncherPrivateAccessResult.Approved)?.lease?.grantExpiresAt?.let { scope to it }
         }.toMap()
 
-        installedPrivateModules.forEach { (packageName, scope) ->
-            if (approvalByScope[scope] === LauncherPrivateAccessResult.Denied) {
-                runCatching { repository.removeFromLibrary(packageName) }
-                    .onFailure { error ->
-                        android.util.Log.e(
-                            "JesterMoodsPrivateModule",
-                            "A private module could not be hidden after approval ended.",
-                            error
-                        )
-                    }
-            }
-        }
         val configuredApproved = configuredScope != null &&
             (bypassPrivateApproval && BuildConfig.DEBUG ||
                 approvalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
@@ -2389,20 +2377,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val denied = result === LauncherPrivateAccessResult.Denied
         if (denied) {
             privateAccessExpiryByScope = privateAccessExpiryByScope - scope
-            runCatching { repository.removeFromLibrary(packageName) }
-                .onFailure { error ->
-                    android.util.Log.e(
-                        "JesterMoodsPrivateModule",
-                        "The denied private module could not be removed.",
-                        error
-                    )
-                }
-            scannedConfigs = null
-            if (_selectedLibraryGame.value?.packageName == packageName) {
-                _selectedLibraryGame.value = null
-                _selectedGame.value = null
-            }
-            refreshGames(forceGameScan = true)
+            refreshGames()
         } else if (result is LauncherPrivateAccessResult.Unavailable) {
             android.util.Log.e(
                 "JesterMoodsPrivateAccess",
