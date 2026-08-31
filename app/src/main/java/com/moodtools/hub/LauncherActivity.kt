@@ -58,6 +58,7 @@ import com.moodtools.hub.networking.LauncherUpdateClient
 import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
 import com.moodtools.hub.networking.ModuleDownloadAuthorizationExpired
+import com.moodtools.hub.networking.LauncherServiceException
 import com.moodtools.hub.networking.PlayStoreVersionClient
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
@@ -2481,13 +2482,30 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (error is NewSessionAccessBoundaryException) return
         android.util.Log.e("JesterMoodsDownload", "Game support $action failed", error)
         val progress = _updateState.value
+        val serviceError = generateSequence(error) { it.cause }
+            .filterIsInstance<LauncherServiceException>()
+            .firstOrNull()
+        val detail = when (serviceError?.code) {
+            "ACCESS_REQUIRED", "ACCESS_EXPIRED" ->
+                "Your launcher access has expired. Unlock the launcher again, then retry."
+            "LAUNCHER_UPDATE_REQUIRED" ->
+                "Install the latest Jester Mods Launcher update, then retry."
+            "PROOF_KEY_REQUIRED", "PROOF_REJECTED" ->
+                "The server could not verify this launcher session. Restart the launcher or unlock it again."
+            "ATTESTATION_REQUIRED" ->
+                "This device could not complete the security check required for this add-on."
+            "MODULE_UNAVAILABLE" ->
+                "This add-on is not available for your device architecture or launcher version."
+            else -> serviceError?.message
+                ?: "Check your connection and available storage, then try again."
+        }
         _updateState.value = ModuleUpdateUiState(
             headline = when (action) {
                 "update" -> "Couldn't update add-on"
                 "repair" -> "Couldn't repair add-on"
                 else -> "Couldn't download add-on"
             },
-            detail = "Check your connection and available storage, then try again.",
+            detail = detail,
             failed = true,
             downloadedBytes = progress.downloadedBytes,
             totalBytes = progress.totalBytes

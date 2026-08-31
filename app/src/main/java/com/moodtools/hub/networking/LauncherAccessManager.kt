@@ -13,6 +13,11 @@ import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 
+internal class LauncherServiceException(
+    val code: String,
+    message: String
+) : IllegalStateException(message)
+
 data class LauncherLease(val issuedAt: Long, val expiresAt: Long)
 data class LauncherAccountIdentity(
     val grantPassIdentity: String,
@@ -408,7 +413,7 @@ class LauncherAccessManager(context: Context) {
         require(digitalKey.length in 80..4096) { "Active launcher access is required" }
         val accessVersion = activeAccessVersion()
         val identity = ensureProofKeyRegistered(digitalKey)
-        ensureProofAttestationRequired(digitalKey, identity)
+        tryEnsureProofAttestation(digitalKey, identity)
         val request = accessRequest(digitalKey)
             .put("purpose", "module-authorize")
             .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
@@ -444,18 +449,16 @@ class LauncherAccessManager(context: Context) {
                 .put("bootstrap", bootstrap)
                 .put("proof", proof.toJson())
         )
-        require(response.optBoolean("ok")) {
-            response.optString("message", "The launcher could not authorize this module download")
-        }
+        requireServiceOk(response, "The launcher could not authorize this module download")
         val capability = response.getString("capability")
         val expiresAt = response.getLong("expiresAt")
         val now = System.currentTimeMillis() / 1000L
         require(capability.length in 80..4096 && capability.matches(Regex("[A-Za-z0-9_.-]+")) &&
             expiresAt > now && expiresAt <= now + MODULE_CAPABILITY_TTL_SECONDS + CLOCK_SKEW_SECONDS &&
             response.optBoolean("proofRequired") &&
-            response.optBoolean("attestationRequired") &&
             response.optInt("proofVersion") == LauncherProofKeyManager.PROOF_VERSION &&
-            response.optInt("attestationVersion") == LauncherAttestationKeyManager.ATTESTATION_VERSION &&
+            (!response.optBoolean("attestationRequired") ||
+                response.optInt("attestationVersion") == LauncherAttestationKeyManager.ATTESTATION_VERSION) &&
             response.optString("proofKeyId") == identity.keyId) {
             "The module download authorization is invalid"
         }
@@ -479,7 +482,7 @@ class LauncherAccessManager(context: Context) {
         require(digitalKey.length in 80..4096) { "Active launcher access is required" }
         val accessVersion = activeAccessVersion()
         val identity = ensureProofKeyRegistered(digitalKey)
-        ensureProofAttestationRequired(digitalKey, identity)
+        tryEnsureProofAttestation(digitalKey, identity)
         val challengeResponse = postJson(
             "$BASE_URL/api/launcher/proof/challenge",
             accessRequest(digitalKey)
@@ -682,6 +685,29 @@ class LauncherAccessManager(context: Context) {
             response.optString("chainHash") == evidence.chainHash) {
             response.optString("message", "Official launcher verification was not accepted")
         }
+    }
+
+    private fun tryEnsureProofAttestation(
+        digitalKey: String,
+        identity: LauncherProofIdentity
+    ) {
+        try {
+            ensureProofAttestationRequired(digitalKey, identity)
+        } catch (error: Exception) {
+            android.util.Log.w(
+                "JesterMoodsAttestation",
+                "Hardware-backed launcher verification is unavailable; using signed device proof.",
+                error
+            )
+        }
+    }
+
+    private fun requireServiceOk(response: JSONObject, fallbackMessage: String) {
+        if (response.optBoolean("ok")) return
+        throw LauncherServiceException(
+            code = response.optString("code", "AUTHORIZATION_FAILED"),
+            message = response.optString("message", fallbackMessage)
+        )
     }
 
     private fun createPayloadProof(
