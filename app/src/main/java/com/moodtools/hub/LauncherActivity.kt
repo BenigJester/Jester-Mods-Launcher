@@ -30,6 +30,7 @@ import com.moodtools.hub.modules.AccountIdentityUiState
 import com.moodtools.hub.modules.ChangelogUiState
 import com.moodtools.hub.modules.DeviceArchitectureGuard
 import com.moodtools.hub.modules.GameInstallSource
+import com.moodtools.hub.modules.GameInstallStage
 import com.moodtools.hub.modules.GameInstallUiState
 import com.moodtools.hub.modules.GameDataResetUiState
 import com.moodtools.hub.modules.InstalledGame
@@ -52,6 +53,7 @@ import com.moodtools.hub.modules.mergeCatalogAndLocalModuleConfigs
 import com.moodtools.hub.networking.LauncherAccessManager
 import com.moodtools.hub.networking.LauncherPrivateAccessResult
 import com.moodtools.hub.networking.GameInstallClient
+import com.moodtools.hub.networking.GameInstallCancelledException
 import com.moodtools.hub.networking.GameInstallEvents
 import com.moodtools.hub.networking.GameInstallResult
 import com.moodtools.hub.networking.LauncherRelease
@@ -77,6 +79,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -105,6 +108,10 @@ private class PendingGameInstaller(
     val versionCode: Long,
     @Volatile var sessionId: Int? = null
 )
+
+private class GameInstallCancellation {
+    @Volatile var cancelled: Boolean = false
+}
 
 private enum class InstallerPermissionTarget {
     LAUNCHER_UPDATE,
@@ -183,6 +190,8 @@ class LauncherActivity : ComponentActivity() {
                     onCloseDownload = viewModel::closeModuleDownload,
                     onInstall = viewModel::installModule,
                     onAcquireGame = ::acquireGame,
+                    onCancelGameInstall = viewModel::cancelGameInstall,
+                    onDismissGameInstall = viewModel::dismissGameInstall,
                     onOpenGameStore = ::openGameStore,
                     onOpenLauncherUpdate = viewModel::openLauncherUpdate,
                     onCloseLauncherUpdate = viewModel::closeLauncherUpdate,
@@ -773,6 +782,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var scannedConfigs: List<com.moodtools.hub.modules.ModuleConfig>? = null
     private var detectedGamesCache: List<InstalledGame> = emptyList()
     private var launcherUpdateTestChannel = false
+    @Volatile
+    private var dismissedLauncherUpdateBuild: Long? = null
     private var moduleUpdatesTestPreviewActive = false
     private var debugAccessBypassActive = false
     private var currentLauncherRelease: LauncherRelease? = null
@@ -786,6 +797,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var gameInstallerLeftLauncher = false
     @Volatile
     private var gameInstallerRecovery: Job? = null
+    @Volatile
+    private var gameInstallCancellation: GameInstallCancellation? = null
     private var privateAccessExpiryByScope: Map<String, Long> = emptyMap()
     @Volatile
     private var acknowledgedInstalledModuleUpdates: Set<String> = emptySet()
@@ -1000,8 +1013,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
             _launcherEntered.value = true
         }
-        refreshGames(refreshCatalog = true, forceGameScan = true)
+        // Publish the signed launcher-release cache concurrently before waiting on catalog
+        // refresh. Installed add-on offers were already published by hydrateCachedGames().
         checkLauncherUpdate()
+        refreshGames(refreshCatalog = true, forceGameScan = true)
         if (!isLocalTestStageLink(initialLink)) initialLink?.let(::handleDeepLink)
     }
 
@@ -1012,7 +1027,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun openLauncherUpdate() {
         if (_launcherUpdateState.value.available) {
             _changelogState.value = _changelogState.value.copy(open = false)
-            _launcherUpdateState.value = _launcherUpdateState.value.copy(screenOpen = true)
+            _launcherUpdateState.update { current ->
+                if (current.available) current.copy(screenOpen = true) else current
+            }
         }
     }
 
@@ -1152,19 +1169,25 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     )
 
     fun closeLauncherUpdate() {
-        val current = _launcherUpdateState.value
-        if (!current.inProgress && !current.installing) {
-            _launcherUpdateState.value = current.copy(screenOpen = false)
+        _launcherUpdateState.update { current ->
+            if (!current.inProgress && !current.installing) {
+                if (current.available && current.build > 0L) {
+                    dismissedLauncherUpdateBuild = current.build
+                }
+                current.copy(screenOpen = false)
+            } else {
+                current
+            }
         }
     }
 
     fun dismissInstalledModuleUpdates() {
         val current = _installedModuleUpdatesState.value
-        val acknowledged = current.packageNames.mapNotNull { packageName ->
-            _libraryGames.value.firstOrNull { it.packageName == packageName }
+        val visibleUpdates = current.packageNames.mapNotNull { packageName ->
+            (_libraryGames.value + current.previewUpdates).firstOrNull { it.packageName == packageName }
                 ?.installedModuleUpdateKey()
         }
-        acknowledgedInstalledModuleUpdates = acknowledgedInstalledModuleUpdates + acknowledged
+        acknowledgedInstalledModuleUpdates = acknowledgedInstalledModuleUpdates + visibleUpdates
         _installedModuleUpdatesState.value = current.copy(open = false)
     }
 
@@ -1306,13 +1329,25 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun checkLauncherUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
-            val releaseResult = runCatching { launcherUpdateClient.refresh(launcherUpdateTestChannel) }
-            val release = releaseResult.getOrElse { error ->
-                android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update check failed", error)
-                launcherUpdateClient.loadCached(launcherUpdateTestChannel)
+            val cachedRelease = launcherUpdateClient.loadCached(launcherUpdateTestChannel)
+            if (cachedRelease != null) {
+                publishLauncherUpdate(
+                    release = cachedRelease,
+                    history = if (launcherUpdateTestChannel) {
+                        emptyList()
+                    } else {
+                        launcherUpdateClient.loadCachedChangelog().orEmpty()
+                    }
+                )
             }
+
+            val release = runCatching { launcherUpdateClient.refresh(launcherUpdateTestChannel) }
+                .onFailure { error ->
+                    android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update check failed", error)
+                }
+                .getOrNull()
             if (release == null && launcherUpdateTestChannel && BuildConfig.DEBUG) {
-                publishLauncherUpdatePreview()
+                if (cachedRelease == null) publishLauncherUpdatePreview()
                 return@launch
             }
             release ?: return@launch
@@ -1372,19 +1407,64 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     )
                 )
             }
-        _launcherUpdateState.value = LauncherUpdateUiState(
-            available = true,
-            screenOpen = true,
-            build = release.build,
-            version = release.version,
-            notes = release.notes,
-            changelog = newEntries,
-            downloaded = downloaded,
-            headline = if (downloaded) "Update ready to install" else "A launcher update is available",
-            detail = if (downloaded) "The verified download is saved on this device." else "Download it here without leaving Jester Mods.",
-            downloadedBytes = if (downloaded) release.size else 0L,
-            totalBytes = release.size
-        )
+        val readyHeadline = if (downloaded) {
+            "Update ready to install"
+        } else {
+            "A launcher update is available"
+        }
+        val readyDetail = if (downloaded) {
+            "The verified download is saved on this device."
+        } else {
+            "Download it here without leaving Jester Mods."
+        }
+        _launcherUpdateState.update { current ->
+            val sameRelease = current.available && current.build == release.build
+            val screenOpen = LauncherUpdatePromptPolicy.shouldOpen(
+                releaseBuild = release.build,
+                dismissedBuild = dismissedLauncherUpdateBuild,
+                currentBuild = current.build,
+                currentlyOpen = current.screenOpen
+            )
+            if (sameRelease) {
+                current.copy(
+                    available = true,
+                    screenOpen = screenOpen,
+                    version = release.version,
+                    notes = release.notes,
+                    changelog = newEntries,
+                    downloaded = current.downloaded || downloaded,
+                    headline = if (current.inProgress || current.installing || current.failed) {
+                        current.headline
+                    } else {
+                        readyHeadline
+                    },
+                    detail = if (current.inProgress || current.installing || current.failed) {
+                        current.detail
+                    } else {
+                        readyDetail
+                    },
+                    downloadedBytes = maxOf(
+                        current.downloadedBytes,
+                        if (downloaded) release.size else 0L
+                    ),
+                    totalBytes = release.size
+                )
+            } else {
+                LauncherUpdateUiState(
+                    available = true,
+                    screenOpen = screenOpen,
+                    build = release.build,
+                    version = release.version,
+                    notes = release.notes,
+                    changelog = newEntries,
+                    downloaded = downloaded,
+                    headline = readyHeadline,
+                    detail = readyDetail,
+                    downloadedBytes = if (downloaded) release.size else 0L,
+                    totalBytes = release.size
+                )
+            }
+        }
     }
 
     fun openModuleBrowser() {
@@ -1451,57 +1531,150 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     fun onGameInstallPermissionDenied() {
+        val listing = _downloadListing.value
+        val source = listing?.catalog?.installSource as? GameInstallSource.DirectDownload
         _gameInstallState.value = GameInstallUiState(
+            visible = true,
+            stage = GameInstallStage.FAILED,
+            title = listing?.catalog?.config?.title.orEmpty(),
+            packageName = listing?.catalog?.config?.packageName.orEmpty(),
+            targetVersion = source?.version.orEmpty(),
+            packageFormat = source?.format?.name.orEmpty(),
             headline = "Installation permission is needed",
             detail = "Allow Jester Mods to install apps, then tap Download game again.",
-            failed = true
+            failed = true,
+            diagnostics = listOf("Android denied the unknown-app installation permission")
         )
     }
 
     fun downloadAndInstallGame(listing: ModuleListing) {
         val source = listing.catalog.installSource as? GameInstallSource.DirectDownload ?: return
-        if (_gameInstallState.value.inProgress || _gameInstallState.value.installing) return
+        if (_gameInstallState.value.inProgress || _gameInstallState.value.installing ||
+            _gameInstallState.value.cancelling) return
         if (listing.game != null && source.versionCode <= listing.game.versionCode) {
             _gameInstallState.value = GameInstallUiState(
+                visible = true,
+                stage = GameInstallStage.FAILED,
+                title = listing.catalog.config.title,
+                packageName = listing.catalog.config.packageName,
+                targetVersion = source.version,
+                packageFormat = source.format.name,
                 headline = "No newer compatible game download",
                 detail = "The available file cannot replace your installed game version.",
-                failed = true
+                failed = true,
+                diagnostics = listOf(
+                    "Installed build: ${listing.game.versionCode}",
+                    "Available build: ${source.versionCode}"
+                )
             )
             return
         }
-        val alreadyDownloaded = gameInstallClient.isDownloaded(listing.catalog)
+        val cancellation = GameInstallCancellation()
+        gameInstallCancellation = cancellation
         _gameInstallState.value = GameInstallUiState(
-            inProgress = !alreadyDownloaded,
-            downloaded = alreadyDownloaded,
-            headline = if (alreadyDownloaded) "Opening Android installer" else "Downloading original game",
-            detail = if (alreadyDownloaded) {
-                "Confirm the installation when Android asks."
-            } else {
-                "Keep Jester Mods open while the verified game downloads."
-            },
-            downloadedBytes = if (alreadyDownloaded) source.size else 0L,
-            totalBytes = source.size
+            visible = true,
+            inProgress = true,
+            stage = GameInstallStage.VERIFYING,
+            title = listing.catalog.config.title,
+            packageName = listing.catalog.config.packageName,
+            targetVersion = source.version,
+            packageFormat = source.format.name,
+            headline = "Checking saved package",
+            detail = "Looking for a verified download that can be reused before starting the transfer.",
+            totalBytes = source.size,
+            stageProgress = 0f,
+            diagnostics = listOf(
+                "Target: ${listing.catalog.config.packageName}",
+                "Version: ${source.version} (build ${source.versionCode})",
+                "Package: ${source.format.name} · ${source.size} bytes",
+                "Inspecting local download cache"
+            )
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                if (!alreadyDownloaded) {
-                    gameInstallClient.download(listing.catalog) { downloaded, total ->
-                        _gameInstallState.value = _gameInstallState.value.copy(
-                            inProgress = true,
-                            headline = "Downloading original game",
-                            detail = "The Android installer will open after the file is verified.",
-                            downloadedBytes = downloaded,
-                            totalBytes = total
+                val alreadyDownloaded = gameInstallClient.isDownloaded(
+                    game = listing.catalog,
+                    onVerificationProgress = { progress ->
+                        updateGameInstallStageProgress(
+                            cancellation = cancellation,
+                            stage = GameInstallStage.VERIFYING,
+                            progress = progress
                         )
-                    }
+                    },
+                    isCancelled = { cancellation.cancelled }
+                )
+                if (cancellation.cancelled) throw GameInstallCancelledException()
+                if (alreadyDownloaded) {
+                    _gameInstallState.value = _gameInstallState.value.copy(
+                        downloaded = true,
+                        downloadedBytes = source.size,
+                        stageProgress = 1f,
+                        stage = GameInstallStage.VERIFYING,
+                        headline = "Verified download found",
+                        detail = "Reusing the trusted package already saved on this device.",
+                        diagnostics = appendDiagnostic(
+                            _gameInstallState.value.diagnostics,
+                            "Using the previously verified download"
+                        )
+                    )
+                } else {
+                    _gameInstallState.value = _gameInstallState.value.copy(
+                        stage = GameInstallStage.DOWNLOADING,
+                        stageProgress = null,
+                        headline = "Downloading original game",
+                        detail = "Keep Jester Mods open while the verified game downloads.",
+                        diagnostics = appendDiagnostic(
+                            _gameInstallState.value.diagnostics,
+                            "Secure download started"
+                        )
+                    )
                 }
+                if (!alreadyDownloaded) {
+                    gameInstallClient.download(
+                        game = listing.catalog,
+                        onProgress = { downloaded, total ->
+                            if (gameInstallCancellation === cancellation && !cancellation.cancelled) {
+                                val verifying = downloaded >= total && total > 0L
+                                _gameInstallState.value = _gameInstallState.value.copy(
+                                    inProgress = true,
+                                    stage = if (verifying) GameInstallStage.VERIFYING else GameInstallStage.DOWNLOADING,
+                                    headline = if (verifying) "Verifying original game" else "Downloading original game",
+                                    detail = if (verifying) {
+                                        "Checking the signed package before anything is handed to Android."
+                                    } else {
+                                        "The Android installer will open after the file is verified."
+                                    },
+                                    downloadedBytes = downloaded,
+                                    totalBytes = total,
+                                    stageProgress = if (verifying) 0f else null
+                                )
+                            }
+                        },
+                        onVerificationProgress = { progress ->
+                            updateGameInstallStageProgress(
+                                cancellation = cancellation,
+                                stage = GameInstallStage.VERIFYING,
+                                progress = progress
+                            )
+                        },
+                        onDiagnostic = { message -> appendGameInstallDiagnostic(cancellation, message) },
+                        isCancelled = { cancellation.cancelled }
+                    )
+                }
+                if (cancellation.cancelled) throw GameInstallCancelledException()
                 _gameInstallState.value = _gameInstallState.value.copy(
                     inProgress = false,
                     installing = true,
+                    stage = GameInstallStage.PREPARING_INSTALLER,
                     downloaded = true,
                     failed = false,
-                    headline = "Ready to install",
-                    detail = "Confirm the original game installation in the Android prompt."
+                    headline = "Preparing Android installer",
+                    detail = "Building a trusted installation request for Android.",
+                    stageProgress = 0f,
+                    diagnostics = appendDiagnostic(
+                        _gameInstallState.value.diagnostics,
+                        "Package verification completed successfully"
+                    )
                 )
                 val pending = PendingGameInstaller(
                     packageName = listing.catalog.config.packageName,
@@ -1511,16 +1684,66 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 gameInstallerRecovery = null
                 pendingGameInstaller = pending
                 gameInstallerLeftLauncher = false
-                pending.sessionId = gameInstallClient.install(listing.catalog)
-                if (pendingGameInstaller === pending) scheduleGameInstallerRecovery(pending)
+                pending.sessionId = gameInstallClient.install(
+                    game = listing.catalog,
+                    onPreparationProgress = { progress ->
+                        updateGameInstallStageProgress(
+                            cancellation = cancellation,
+                            stage = GameInstallStage.PREPARING_INSTALLER,
+                            progress = progress
+                        )
+                    },
+                    isCancelled = { cancellation.cancelled }
+                )
+                if (pendingGameInstaller === pending && gameInstallCancellation === cancellation) {
+                    _gameInstallState.value = _gameInstallState.value.copy(
+                        stage = GameInstallStage.WAITING_FOR_ANDROID,
+                        stageProgress = null,
+                        headline = "Your move",
+                        detail = "Confirm the original game installation in Android's secure prompt.",
+                        diagnostics = appendDiagnostic(
+                            _gameInstallState.value.diagnostics,
+                            pending.sessionId?.let { "Android installer session $it opened" }
+                                ?: "Android package confirmation opened"
+                        )
+                    )
+                    scheduleGameInstallerRecovery(pending)
+                }
             }.onFailure { error ->
+                if (gameInstallCancellation !== cancellation) return@onFailure
                 clearGameInstallerWait()
+                gameInstallCancellation = null
+                if (cancellation.cancelled || error is GameInstallCancelledException) {
+                    val progress = _gameInstallState.value
+                    _gameInstallState.value = progress.copy(
+                        visible = true,
+                        inProgress = false,
+                        installing = false,
+                        cancelling = false,
+                        cancelled = true,
+                        failed = false,
+                        stage = GameInstallStage.CANCELLED,
+                        stageProgress = null,
+                        headline = "Installation cancelled",
+                        detail = "Your partial download was kept safely, so a future retry can resume faster.",
+                        diagnostics = appendDiagnostic(progress.diagnostics, "Cancelled by the user")
+                    )
+                    return@onFailure
+                }
                 android.util.Log.e("JesterMoodsGameInstall", "Game download or install failed", error)
-                val downloaded = gameInstallClient.isDownloaded(listing.catalog)
+                val downloaded = runCatching { gameInstallClient.isDownloaded(listing.catalog) }
+                    .getOrDefault(false)
                 val progress = _gameInstallState.value
-                _gameInstallState.value = GameInstallUiState(
+                _gameInstallState.value = progress.copy(
+                    visible = true,
+                    inProgress = false,
+                    installing = false,
+                    cancelling = false,
                     downloaded = downloaded,
                     failed = true,
+                    cancelled = false,
+                    stage = GameInstallStage.FAILED,
+                    stageProgress = null,
                     headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the game",
                     detail = if (downloaded) {
                         "Allow Jester Mods to install apps in Android settings, then try again."
@@ -1528,10 +1751,82 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         "Check your connection and available storage, then try again."
                     },
                     downloadedBytes = progress.downloadedBytes,
-                    totalBytes = source.size
+                    totalBytes = source.size,
+                    diagnostics = appendDiagnostic(
+                        progress.diagnostics,
+                        "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
+                    )
                 )
             }
         }
+    }
+
+    fun cancelGameInstall() {
+        val current = _gameInstallState.value
+        if (!current.inProgress && !current.installing && !current.cancelling) {
+            dismissGameInstall()
+            return
+        }
+        val cancellation = gameInstallCancellation ?: return
+        cancellation.cancelled = true
+        pendingGameInstaller?.sessionId?.let(gameInstallClient::cancelInstall)
+        if (current.stage == GameInstallStage.WAITING_FOR_ANDROID) {
+            clearGameInstallerWait()
+            gameInstallCancellation = null
+            _gameInstallState.value = current.copy(
+                inProgress = false,
+                installing = false,
+                cancelling = false,
+                cancelled = true,
+                failed = false,
+                stage = GameInstallStage.CANCELLED,
+                stageProgress = null,
+                headline = "Stopped waiting for Android",
+                detail = "If Android's confirmation is still visible, close it there. The verified download remains saved.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Installer wait cancelled by the user")
+            )
+        } else {
+            _gameInstallState.value = current.copy(
+                cancelling = true,
+                headline = "Stopping safely",
+                detail = "Finishing the current file operation without damaging the resumable download.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Cancellation requested by the user")
+            )
+        }
+    }
+
+    fun dismissGameInstall() {
+        val current = _gameInstallState.value
+        if (current.inProgress || current.installing || current.cancelling) return
+        _gameInstallState.value = GameInstallUiState()
+    }
+
+    private fun appendGameInstallDiagnostic(
+        cancellation: GameInstallCancellation,
+        message: String
+    ) {
+        if (gameInstallCancellation !== cancellation || cancellation.cancelled) return
+        val current = _gameInstallState.value
+        _gameInstallState.value = current.copy(
+            diagnostics = appendDiagnostic(current.diagnostics, message)
+        )
+    }
+
+    private fun updateGameInstallStageProgress(
+        cancellation: GameInstallCancellation,
+        stage: GameInstallStage,
+        progress: Float
+    ) {
+        if (gameInstallCancellation !== cancellation || cancellation.cancelled) return
+        val current = _gameInstallState.value
+        if (current.stage != stage) return
+        _gameInstallState.value = current.copy(stageProgress = progress.coerceIn(0f, 1f))
+    }
+
+    private fun appendDiagnostic(current: List<String>, message: String): List<String> {
+        val clean = message.trim().replace(Regex("\\s+"), " ").take(320)
+        if (clean.isBlank() || current.lastOrNull() == clean) return current
+        return (current + clean).takeLast(MAX_GAME_INSTALL_DIAGNOSTICS)
     }
 
     private fun onGameInstallResult(result: GameInstallResult) {
@@ -1543,10 +1838,16 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 finishGameInstallSuccessfully(pending)
             } else {
                 if (!clearGameInstallerWait(pending)) return@launch
+                gameInstallCancellation = null
                 val message = result.message.orEmpty()
-                _gameInstallState.value = GameInstallUiState(
+                val current = _gameInstallState.value
+                _gameInstallState.value = current.copy(
+                    visible = true,
+                    inProgress = false,
+                    installing = false,
                     downloaded = true,
                     failed = true,
+                    stage = GameInstallStage.FAILED,
                     headline = "The game wasn't installed",
                     detail = when {
                         message.contains("cancel", ignoreCase = true) ->
@@ -1555,7 +1856,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                             message.contains("open", ignoreCase = true) ->
                             "Android couldn't open its installer. The verified download is still saved; tap Try again."
                         else -> "Try the installation again. The verified download is still saved."
-                    }
+                    },
+                    diagnostics = appendDiagnostic(
+                        current.diagnostics,
+                        "Android result: ${message.take(240).ifBlank { "Installation failed without a status message" }}"
+                    )
                 )
             }
         }
@@ -1626,26 +1931,50 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         returnedFromInstaller: Boolean
     ) {
         if (!clearGameInstallerWait(pending)) return
-        _gameInstallState.value = GameInstallUiState(
+        gameInstallCancellation = null
+        val current = _gameInstallState.value
+        _gameInstallState.value = current.copy(
+            visible = true,
+            inProgress = false,
+            installing = false,
             downloaded = true,
             failed = true,
+            stage = GameInstallStage.FAILED,
+            stageProgress = null,
             headline = "Android installer closed",
             detail = if (returnedFromInstaller) {
                 "The installation wasn't completed. The verified download is still saved; tap Try again."
             } else {
                 "Android didn't open its installer in time. The verified download is still saved; tap Try again."
-            }
+            },
+            diagnostics = appendDiagnostic(
+                current.diagnostics,
+                if (returnedFromInstaller) {
+                    "Android returned without installing the target build"
+                } else {
+                    "Android installer did not report a result before the recovery timeout"
+                }
+            )
         )
     }
 
     private suspend fun finishGameInstallSuccessfully(pending: PendingGameInstaller) {
         if (!clearGameInstallerWait(pending)) return
+        gameInstallCancellation = null
         gameInstallClient.clearDownload(pending.packageName, pending.versionCode)
         refreshGames(forceGameScan = true)
-        _gameInstallState.value = GameInstallUiState(
+        val current = _gameInstallState.value
+        _gameInstallState.value = current.copy(
+            visible = true,
+            inProgress = false,
+            installing = false,
             completed = true,
+            failed = false,
+            stage = GameInstallStage.COMPLETED,
+            stageProgress = 1f,
             headline = "Original game installed",
-            detail = "You can now add it to your Jester Mods library."
+            detail = "You can now add it to your Jester Mods library.",
+            diagnostics = appendDiagnostic(current.diagnostics, "Installed build verified on this device")
         )
     }
 
@@ -2901,9 +3230,16 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun syncInstalledModuleUpdatePrompt() {
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
+            val updates = installedModuleUpdatePreviewGames()
+            val updateKeys = updates.mapTo(mutableSetOf()) { it.installedModuleUpdateKey() }
             _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState(
-                open = true,
-                previewUpdates = installedModuleUpdatePreviewGames()
+                open = InstalledModuleUpdatePromptPolicy.shouldOpen(
+                    updateKeys = updateKeys,
+                    dismissedKeys = acknowledgedInstalledModuleUpdates,
+                    currentlyOpen = _installedModuleUpdatesState.value.open
+                ),
+                packageNames = updates.map(LibraryGame::packageName),
+                previewUpdates = updates
             )
             return
         }
@@ -2912,11 +3248,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
             return
         }
-        val hasUnacknowledgedUpdate = updates.any { game ->
-            game.installedModuleUpdateKey() !in acknowledgedInstalledModuleUpdates
-        }
+        val updateKeys = updates.mapTo(mutableSetOf()) { it.installedModuleUpdateKey() }
         _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState(
-            open = _installedModuleUpdatesState.value.open || hasUnacknowledgedUpdate,
+            open = InstalledModuleUpdatePromptPolicy.shouldOpen(
+                updateKeys = updateKeys,
+                dismissedKeys = acknowledgedInstalledModuleUpdates,
+                currentlyOpen = _installedModuleUpdatesState.value.open
+            ),
             packageNames = updates.map(LibraryGame::packageName)
         )
     }
@@ -3056,6 +3394,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val GAME_INSTALLER_RECONCILE_POLL_MS = 250L
         private const val GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS = 10_000L
         private const val GAME_INSTALLER_RECOVERY_DELAY_MS = 20_000L
+        private const val MAX_GAME_INSTALL_DIAGNOSTICS = 32
         private const val DEBUG_ACCESS_DURATION_SECONDS = 24L * 60L * 60L
         private const val DEBUG_MODULE_UPDATE_PREVIEW_COUNT = 3
         private const val MAX_RELEASE_GRANT_CHARS = 4096

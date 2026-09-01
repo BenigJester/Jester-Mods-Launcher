@@ -24,12 +24,20 @@ internal object FastFileDownloader {
         expectedBytes: Long,
         openConnection: (range: LongRange?) -> HttpURLConnection,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
-        onDiagnostic: (message: String) -> Unit = {}
+        onDiagnostic: (message: String) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
     ) {
         require(expectedBytes > 0L) { "Download size must be positive" }
         destination.parentFile?.mkdirs()
         if (destination.length() > expectedBytes) destination.delete()
-        downloadSingle(destination, expectedBytes, openConnection, onProgress, onDiagnostic)
+        downloadSingle(
+            destination,
+            expectedBytes,
+            openConnection,
+            onProgress,
+            onDiagnostic,
+            isCancelled
+        )
         require(destination.length() == expectedBytes) { "Download size verification failed" }
     }
 
@@ -38,7 +46,8 @@ internal object FastFileDownloader {
         expectedBytes: Long,
         openConnection: (LongRange?) -> HttpURLConnection,
         onProgress: (Long, Long) -> Unit,
-        onDiagnostic: (String) -> Unit
+        onDiagnostic: (String) -> Unit,
+        isCancelled: () -> Boolean
     ) {
         var cursor = destination.takeIf(File::isFile)?.length() ?: 0L
         val reporter = ProgressReporter(expectedBytes, cursor, onProgress)
@@ -49,11 +58,13 @@ internal object FastFileDownloader {
         }
 
         while (cursor < expectedBytes) {
+            ensureNotCancelled(isCancelled)
             val requestedRange = if (cursor > 0L) cursor..(expectedBytes - 1L) else null
             var connection: HttpURLConnection? = null
             try {
                 connection = openConnection(requestedRange)
                 val responseCode = connection.responseCode
+                ensureNotCancelled(isCancelled)
                 if (requestedRange == null) {
                     if (isRetryableStatus(responseCode)) {
                         throw RetryableDownloadException("Temporary HTTP response $responseCode")
@@ -79,6 +90,7 @@ internal object FastFileDownloader {
                         output.seek(cursor)
                         val buffer = ByteArray(BUFFER_BYTES)
                         while (cursor < expectedBytes) {
+                            ensureNotCancelled(isCancelled)
                             val count = input.read(buffer)
                             if (count < 0) break
                             require(cursor + count <= expectedBytes) {
@@ -94,6 +106,9 @@ internal object FastFileDownloader {
                     throw RetryableDownloadException("Download stream ended early")
                 }
             } catch (error: Exception) {
+                if (error is DownloadCancelledException || isCancelled()) {
+                    throw DownloadCancelledException()
+                }
                 if (!isRetryable(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
                     throw DownloadFailureException(
                         "Single-stream download failed after $attempt attempt(s) at byte " +
@@ -116,6 +131,10 @@ internal object FastFileDownloader {
 
         RandomAccessFile(destination, "rw").use { it.fd.sync() }
         reporter.finish()
+    }
+
+    private fun ensureNotCancelled(isCancelled: () -> Boolean) {
+        if (isCancelled()) throw DownloadCancelledException()
     }
 
     private fun validateRangeResponse(
@@ -173,6 +192,8 @@ internal object FastFileDownloader {
     internal class HttpDownloadException(val status: Int) : IOException(
         "Download request failed with HTTP $status"
     )
+
+    internal class DownloadCancelledException : IOException("Download cancelled")
 
     private class RetryableDownloadException(message: String) : IOException(message)
 

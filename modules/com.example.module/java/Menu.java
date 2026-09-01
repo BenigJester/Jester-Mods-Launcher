@@ -2170,9 +2170,9 @@ public class Menu {
     private EditText createInputEditText(AlertDialog.Builder builder) {
         EditText editText = new EditText(builder.getContext());
         editText.setSingleLine(true);
-        editText.setTextColor(Color.parseColor("#FF4E5357"));
-        editText.setHintTextColor(Color.parseColor("#FF6D7276"));
-        editText.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#FF087B46")));
+        editText.setTextColor(TEXT_COLOR);
+        editText.setHintTextColor(TEXT_MUTED);
+        editText.setBackgroundTintList(ColorStateList.valueOf(ACCENT_COLOR));
         return editText;
     }
 
@@ -2184,8 +2184,8 @@ public class Menu {
         }
         dialog.show();
         window.setBackgroundDrawable(roundedBackground(
-                Color.parseColor("#FFF4F4F4"), 28, Color.TRANSPARENT, 0));
-        int actionColor = Color.parseColor("#FF087B46");
+                MENU_FEATURE_BG_COLOR, 28, ACCENT_COLOR, 1));
+        int actionColor = ACCENT_COLOR;
         Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
         Button negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
         if (positive != null) {
@@ -2212,7 +2212,7 @@ public class Menu {
             @Override
             public void onClick(View view) {
                 AlertDialog.Builder alertName = new AlertDialog.Builder(
-                        getContext, android.R.style.Theme_Material_Light_Dialog_Alert);
+                        getContext, android.R.style.Theme_Material_Dialog_Alert);
                 final EditText editText = createInputEditText(alertName);
                 if (maxValue != 0)
                     editText.setHint("Max value: " + maxValue);
@@ -2292,7 +2292,7 @@ public class Menu {
             @Override
             public void onClick(View view) {
                 AlertDialog.Builder alertName = new AlertDialog.Builder(
-                        getContext, android.R.style.Theme_Material_Light_Dialog_Alert);
+                        getContext, android.R.style.Theme_Material_Dialog_Alert);
                 final EditText editText = createInputEditText(alertName);
                 if (maxValue != 0)
                     editText.setHint("Max value: " + maxValue);
@@ -2402,7 +2402,7 @@ public class Menu {
             @Override
             public void onClick(View view) {
                 AlertDialog.Builder alertName = new AlertDialog.Builder(
-                        getContext, android.R.style.Theme_Material_Light_Dialog_Alert);
+                        getContext, android.R.style.Theme_Material_Dialog_Alert);
                 final EditText editText = createInputEditText(alertName);
                 editText.setText(formatFloatInput(Preferences.loadPrefString(featName, featNum)));
                 editText.setSelection(editText.getText().length());
@@ -2492,7 +2492,7 @@ public class Menu {
             @Override
             public void onClick(View view) {
                 AlertDialog.Builder alertName = new AlertDialog.Builder(
-                        getContext, android.R.style.Theme_Material_Light_Dialog_Alert);
+                        getContext, android.R.style.Theme_Material_Dialog_Alert);
 
                 final EditText editText = createInputEditText(alertName);
                 if (!defaultText.isEmpty())

@@ -136,6 +136,25 @@ class LibraryGameTest {
     }
 
     @Test
+    fun exactPlayStoreVersionUsesTheResolvedModuleCompatibility() {
+        val game = libraryGame("Local update")
+        val matching = PlayStoreVersionStatus(
+            latestVersion = "1.0",
+            listingUpdatedAtEpochSeconds = 1_787_911_146,
+            updateAvailable = true,
+            checkedAtEpochSeconds = 1_787_911_200,
+            checkedDay = 1
+        )
+        val unsupported = matching.copy(
+            latestVersion = "2.0",
+            updateAvailable = false
+        )
+
+        assertEquals(true, matching.isSupportedBy(game.module))
+        assertEquals(false, unsupported.isSupportedBy(game.module))
+    }
+
+    @Test
     fun librarySelectionSupportsIndividualAndFilteredBatchToggles() {
         val first = toggleLibrarySelection(emptySet(), "com.example.first")
         val twoSelected = toggleVisibleLibrarySelection(

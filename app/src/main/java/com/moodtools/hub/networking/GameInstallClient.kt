@@ -24,19 +24,36 @@ class GameInstallClient(private val context: Context) {
     private val downloadDirectory = File(context.filesDir, "game-downloads")
     private val storage = SmartStorageManager(context.filesDir, context.cacheDir)
 
-    fun isDownloaded(game: CatalogModule): Boolean {
+    fun isDownloaded(
+        game: CatalogModule,
+        onVerificationProgress: (Float) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): Boolean {
         val source = game.installSource as? GameInstallSource.DirectDownload ?: return false
         storage.onGameReleaseDetected(game.config.packageName, source.versionCode)
         val packageFile = downloadedFile(game)
-        return packageFile.isFile && packageFile.length() == source.size &&
-            sha256(packageFile) == source.sha256 &&
-            runCatching { validatePackage(packageFile, game, source) }.isSuccess
+        if (!packageFile.isFile || packageFile.length() != source.size) return false
+        onVerificationProgress(0.04f)
+        if (sha256(packageFile, isCancelled) { completed, total ->
+                onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
+            } != source.sha256
+        ) return false
+        onVerificationProgress(0.82f)
+        val valid = runCatching { validatePackage(packageFile, game, source, isCancelled) }.isSuccess
+        if (valid) onVerificationProgress(1f)
+        return valid
     }
 
-    fun download(game: CatalogModule, onProgress: (Long, Long) -> Unit): File {
+    fun download(
+        game: CatalogModule,
+        onProgress: (Long, Long) -> Unit,
+        onVerificationProgress: (Float) -> Unit = {},
+        onDiagnostic: (String) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): File {
         val source = game.installSource as? GameInstallSource.DirectDownload
             ?: error("This game is installed through the Play Store")
-        if (isDownloaded(game)) {
+        if (isDownloaded(game, isCancelled = isCancelled)) {
             onProgress(source.size, source.size)
             return downloadedFile(game)
         }
@@ -57,12 +74,27 @@ class GameInstallClient(private val context: Context) {
                     }
                 },
                 onProgress = onProgress,
-                onDiagnostic = { message -> Log.w("JesterMoodsGameInstall", message) }
+                onDiagnostic = { message ->
+                    Log.w("JesterMoodsGameInstall", message)
+                    onDiagnostic(message)
+                },
+                isCancelled = isCancelled
             )
-            require(sha256(temporary) == source.sha256) { "Game download verification failed" }
-            validatePackage(temporary, game, source)
+            ensureNotCancelled(isCancelled)
+            onDiagnostic("Verifying the signed SHA-256 digest")
+            onVerificationProgress(0.04f)
+            require(sha256(temporary, isCancelled) { completed, total ->
+                onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
+            } == source.sha256) { "Game download verification failed" }
+            ensureNotCancelled(isCancelled)
+            onDiagnostic("Checking package identity, version, and signing certificate")
+            onVerificationProgress(0.82f)
+            validatePackage(temporary, game, source, isCancelled)
+            ensureNotCancelled(isCancelled)
+            onVerificationProgress(0.96f)
             if (target.exists()) require(target.delete()) { "Could not replace the previous game download" }
             require(temporary.renameTo(target)) { "Could not save the game download" }
+            onVerificationProgress(1f)
             return target
         } catch (error: Throwable) {
             if (temporary.length() == source.size) temporary.delete()
@@ -70,24 +102,37 @@ class GameInstallClient(private val context: Context) {
         }
     }
 
-    fun install(game: CatalogModule): Int? {
+    fun install(
+        game: CatalogModule,
+        onPreparationProgress: (Float) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): Int? {
         val source = game.installSource as? GameInstallSource.DirectDownload
             ?: error("This game is installed through the Play Store")
         val packageFile = downloadedFile(game)
+        onPreparationProgress(0.04f)
         require(packageFile.isFile && packageFile.length() == source.size &&
-            sha256(packageFile) == source.sha256) { "Download the verified game first" }
-        val installApks = validatePackage(packageFile, game, source)
+            sha256(packageFile, isCancelled) { completed, total ->
+                onPreparationProgress(progressBetween(0.04f, 0.48f, completed, total))
+            } == source.sha256) { "Download the verified game first" }
+        ensureNotCancelled(isCancelled)
+        onPreparationProgress(0.52f)
+        val installApks = validatePackage(packageFile, game, source, isCancelled)
+        ensureNotCancelled(isCancelled)
+        onPreparationProgress(0.68f)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(context.packageManager.canRequestPackageInstalls()) {
                 "Allow Jester Mods to install games in Android settings"
             }
         }
+        onPreparationProgress(0.74f)
 
         // A verified standalone APK can be handed directly to Android from the foreground
         // user action. This avoids the PackageInstaller broadcast-to-activity hop that is
         // slow or occasionally suppressed on low-memory/OEM Android builds. Split packages
         // still need a PackageInstaller session so Android can receive every APK atomically.
         if (source.format == GamePackageFormat.APK) {
+            ensureNotCancelled(isCancelled)
             val apkUri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.launcher-updates",
@@ -100,6 +145,7 @@ class GameInstallClient(private val context: Context) {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
             )
+            onPreparationProgress(1f)
             return null
         }
 
@@ -114,21 +160,37 @@ class GameInstallClient(private val context: Context) {
         val sessionId = installer.createSession(params)
         try {
             installer.openSession(sessionId).use { session ->
+                val totalInstallBytes = installApks.sumOf { it.size }.coerceAtLeast(1L)
+                var preparedBytes = 0L
+                var lastPreparedPercent = -1
+                val reportPreparedBytes: (Int) -> Unit = { count ->
+                    preparedBytes += count
+                    val preparedPercent = ((preparedBytes * 100L) / totalInstallBytes).toInt()
+                    if (preparedPercent != lastPreparedPercent || preparedBytes >= totalInstallBytes) {
+                        lastPreparedPercent = preparedPercent
+                        onPreparationProgress(
+                            progressBetween(0.74f, 0.96f, preparedBytes, totalInstallBytes)
+                        )
+                    }
+                }
                 if (source.format == GamePackageFormat.APK) {
                     packageFile.inputStream().use { input ->
-                        writeApk(session, installApks.single(), input)
+                        writeApk(session, installApks.single(), input, isCancelled, reportPreparedBytes)
                     }
                 } else {
                     ZipFile(packageFile).use { archive ->
                         installApks.forEach { installApk ->
+                            ensureNotCancelled(isCancelled)
                             val entry = archive.getEntry(installApk.archiveEntry)
                                 ?: error("The verified APK set changed before installation")
                             archive.getInputStream(entry).use { input ->
-                                writeApk(session, installApk, input)
+                                writeApk(session, installApk, input, isCancelled, reportPreparedBytes)
                             }
                         }
                     }
                 }
+                ensureNotCancelled(isCancelled)
+                onPreparationProgress(0.98f)
                 val callback = Intent(context, GameInstallReceiver::class.java)
                     .setAction(GameInstallReceiver.ACTION_INSTALL_RESULT)
                     .putExtra(GameInstallReceiver.EXTRA_PACKAGE, game.config.packageName)
@@ -141,6 +203,7 @@ class GameInstallClient(private val context: Context) {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 ).intentSender
                 session.commit(sender)
+                onPreparationProgress(1f)
             }
         } catch (error: Throwable) {
             runCatching { installer.abandonSession(sessionId) }
@@ -168,6 +231,14 @@ class GameInstallClient(private val context: Context) {
         storage.onGameInstallSucceeded(packageName, versionCode)
     }
 
+    fun cancelInstall(sessionId: Int) {
+        if (sessionId < 0) return
+        runCatching { context.packageManager.packageInstaller.abandonSession(sessionId) }
+            .onFailure { error ->
+                Log.w("JesterMoodsGameInstall", "Could not abandon installer session $sessionId", error)
+            }
+    }
+
     private fun downloadedFile(game: CatalogModule): File {
         val source = game.installSource as GameInstallSource.DirectDownload
         return File(
@@ -179,23 +250,27 @@ class GameInstallClient(private val context: Context) {
     private fun validatePackage(
         packageFile: File,
         game: CatalogModule,
-        source: GameInstallSource.DirectDownload
+        source: GameInstallSource.DirectDownload,
+        isCancelled: () -> Boolean = { false }
     ): List<InstallApk> = when (source.format) {
         GamePackageFormat.APK -> {
+            ensureNotCancelled(isCancelled)
             validateApk(packageFile, game, source)
             listOf(InstallApk(archiveEntry = null, sessionName = "base.apk", size = packageFile.length()))
         }
-        GamePackageFormat.APKS -> validateApkSet(packageFile, game, source)
+        GamePackageFormat.APKS -> validateApkSet(packageFile, game, source, isCancelled)
     }
 
     private fun validateApkSet(
         packageFile: File,
         game: CatalogModule,
-        source: GameInstallSource.DirectDownload
+        source: GameInstallSource.DirectDownload,
+        isCancelled: () -> Boolean
     ): List<InstallApk> {
         val validationDirectory = File(context.cacheDir, "game-apk-validation").apply { mkdirs() }
         return try {
             ZipFile(packageFile).use { archive ->
+                ensureNotCancelled(isCancelled)
                 val entries = archive.entries().asSequence()
                     .filter { !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true) }
                     .toList()
@@ -222,12 +297,21 @@ class GameInstallClient(private val context: Context) {
                 val extractedBase = File.createTempFile("base-", ".apk", validationDirectory)
                 try {
                     archive.getInputStream(baseEntry).use { input ->
-                        extractedBase.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+                        extractedBase.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                ensureNotCancelled(isCancelled)
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                            }
+                        }
                     }
                     require(extractedBase.length() == baseEntry.size) {
                         "The APK set base package could not be extracted safely"
                     }
                     validateApk(extractedBase, game, source)
+                    ensureNotCancelled(isCancelled)
                 } finally {
                     extractedBase.delete()
                 }
@@ -278,12 +362,25 @@ class GameInstallClient(private val context: Context) {
     private fun writeApk(
         session: PackageInstaller.Session,
         installApk: InstallApk,
-        input: InputStream
+        input: InputStream,
+        isCancelled: () -> Boolean,
+        onBytesWritten: (Int) -> Unit = {}
     ) {
         session.openWrite(installApk.sessionName, 0L, installApk.size).use { output ->
-            input.copyTo(output, 64 * 1024)
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                ensureNotCancelled(isCancelled)
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                onBytesWritten(count)
+            }
             session.fsync(output)
         }
+    }
+
+    private fun ensureNotCancelled(isCancelled: () -> Boolean) {
+        if (isCancelled()) throw GameInstallCancelledException()
     }
 
     private fun safeSessionName(splitName: String): String = splitName
@@ -303,17 +400,45 @@ class GameInstallClient(private val context: Context) {
         }
     }
 
-    private fun sha256(file: File): String {
+    private fun sha256(
+        file: File,
+        isCancelled: () -> Boolean = { false },
+        onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        val total = file.length().coerceAtLeast(1L)
+        var completed = 0L
+        var lastReportedPercent = -1
         file.inputStream().use { input ->
             val buffer = ByteArray(64 * 1024)
             while (true) {
+                ensureNotCancelled(isCancelled)
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)
+                completed += count
+                val completedPercent = ((completed * 100L) / total).toInt()
+                if (completedPercent != lastReportedPercent || completed >= total) {
+                    lastReportedPercent = completedPercent
+                    onProgress(completed, total)
+                }
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun progressBetween(
+        start: Float,
+        end: Float,
+        completed: Long,
+        total: Long
+    ): Float {
+        val fraction = if (total > 0L) {
+            completed.toFloat().div(total.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        return start + ((end - start) * fraction)
     }
 
     private fun open(address: String, capability: String?): HttpURLConnection {
@@ -345,3 +470,5 @@ class GameInstallClient(private val context: Context) {
         val size: Long
     )
 }
+
+internal class GameInstallCancelledException : java.io.IOException("Game installation cancelled")

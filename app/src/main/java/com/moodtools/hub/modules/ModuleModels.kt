@@ -153,8 +153,10 @@ data class PlayStoreVersionStatus(
     val checkedDay: Long,
     val stale: Boolean = false
 ) {
+    // The server hint is based on the published catalog, which can lag a locally staged module.
+    // Re-evaluate an exact Google Play version against the module the launcher actually resolved.
     fun isSupportedBy(module: ModuleConfig): Boolean? =
-        updateAvailable?.not() ?: latestVersion?.let { it in module.supportedVersions }
+        latestVersion?.let { it in module.supportedVersions } ?: updateAvailable?.not()
 }
 
 sealed interface GameInstallSource {

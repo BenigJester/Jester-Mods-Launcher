@@ -259,6 +259,35 @@ class FastFileDownloaderTest {
         }
     }
 
+    @Test
+    fun cancellationStopsTheStreamAndKeepsResumableProgress() {
+        val payload = deterministicBytes(4 * 1024 * 1024 + 17)
+        val destination = temporaryFile()
+        var cancelled = false
+        try {
+            assertThrows(FastFileDownloader.DownloadCancelledException::class.java) {
+                FastFileDownloader.download(
+                    destination = destination,
+                    expectedBytes = payload.size.toLong(),
+                    openConnection = { range -> FakeDownloadConnection(payload, range) },
+                    onProgress = { downloaded, _ ->
+                        if (downloaded >= 512L * 1024L) cancelled = true
+                    },
+                    isCancelled = { cancelled }
+                )
+            }
+
+            assertTrue(destination.length() >= 512L * 1024L)
+            assertTrue(destination.length() < payload.size.toLong())
+            assertArrayEquals(
+                payload.copyOf(destination.length().toInt()),
+                destination.readBytes()
+            )
+        } finally {
+            destination.delete()
+        }
+    }
+
     private fun deterministicBytes(size: Int) = ByteArray(size) { index ->
         ((index * 31 + index / 251) and 0xff).toByte()
     }

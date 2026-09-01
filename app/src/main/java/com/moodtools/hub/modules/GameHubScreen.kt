@@ -3,6 +3,7 @@ package com.moodtools.hub.modules
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -15,7 +16,12 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -82,6 +88,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -154,16 +161,37 @@ data class GameDataResetUiState(
 )
 
 data class GameInstallUiState(
+    val visible: Boolean = false,
     val inProgress: Boolean = false,
     val installing: Boolean = false,
+    val cancelling: Boolean = false,
     val downloaded: Boolean = false,
     val completed: Boolean = false,
     val failed: Boolean = false,
+    val cancelled: Boolean = false,
+    val stage: GameInstallStage = GameInstallStage.IDLE,
+    val title: String = "",
+    val packageName: String = "",
+    val targetVersion: String = "",
+    val packageFormat: String = "",
     val headline: String? = null,
     val detail: String? = null,
     val downloadedBytes: Long = 0L,
-    val totalBytes: Long = 0L
+    val totalBytes: Long = 0L,
+    val stageProgress: Float? = null,
+    val diagnostics: List<String> = emptyList()
 )
+
+enum class GameInstallStage {
+    IDLE,
+    DOWNLOADING,
+    VERIFYING,
+    PREPARING_INSTALLER,
+    WAITING_FOR_ANDROID,
+    COMPLETED,
+    FAILED,
+    CANCELLED
+}
 
 data class LauncherUpdateUiState(
     val available: Boolean = false,
@@ -351,6 +379,8 @@ fun GameHubScreen(
     onCloseDownload: () -> Unit,
     onInstall: (ModuleListing) -> Unit,
     onAcquireGame: (ModuleListing) -> Unit,
+    onCancelGameInstall: () -> Unit,
+    onDismissGameInstall: () -> Unit,
     onOpenGameStore: (ModuleListing) -> Unit,
     onOpenLauncherUpdate: () -> Unit,
     onCloseLauncherUpdate: () -> Unit,
@@ -640,6 +670,19 @@ fun GameHubScreen(
                 onInstall = onInstallLauncherUpdate
             )
         }
+        if (
+            gameInstall.visible &&
+            !launcherUpdate.screenOpen &&
+            !directPatchPrompt.visible
+        ) {
+            GameInstallDialog(
+                state = gameInstall,
+                canRetry = pendingDownload != null,
+                onRetry = { pendingDownload?.let(onAcquireGame) },
+                onCancel = onCancelGameInstall,
+                onDismiss = onDismissGameInstall
+            )
+        }
         val installedUpdates = installedModuleUpdatePrompt.previewUpdates.ifEmpty {
             installedModuleUpdatePrompt.packageNames.mapNotNull { packageName ->
                 games.firstOrNull { it.packageName == packageName }
@@ -649,7 +692,8 @@ fun GameHubScreen(
             installedModuleUpdatePrompt.open &&
             installedUpdates.isNotEmpty() &&
             !launcherUpdate.screenOpen &&
-            !directPatchPrompt.visible
+            !directPatchPrompt.visible &&
+            !gameInstall.visible
         ) {
             InstalledModuleUpdatesDialog(
                 screenCache = screenCache,
@@ -2094,6 +2138,569 @@ private fun LauncherUpdateDialog(
 }
 
 @Composable
+private fun GameInstallDialog(
+    state: GameInstallUiState,
+    canRetry: Boolean,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val busy = state.inProgress || state.installing || state.cancelling
+    var diagnosticsExpanded by rememberSaveable(state.packageName) { mutableStateOf(false) }
+    val report = remember(state) {
+        buildString {
+            appendLine("Jester Mods game installer diagnostics")
+            appendLine("Stage: ${gameInstallStageLabel(state.stage)}")
+            if (state.title.isNotBlank()) appendLine("Game: ${state.title}")
+            if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
+            if (state.targetVersion.isNotBlank()) appendLine("Target version: ${state.targetVersion}")
+            if (state.packageFormat.isNotBlank()) appendLine("Artifact: ${state.packageFormat}")
+            appendLine("Progress: ${state.downloadedBytes.coerceAtLeast(0L)} / ${state.totalBytes.coerceAtLeast(0L)} bytes")
+            state.stageProgress?.let { appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%") }
+            appendLine("Launcher: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            appendLine("Mode: ${if (BuildConfig.IS_ROOT_MODE) "Root" else "Non-root"}")
+            appendLine("Android API: ${Build.VERSION.SDK_INT}")
+            if (state.diagnostics.isNotEmpty()) {
+                appendLine()
+                appendLine("Event trail:")
+                state.diagnostics.forEachIndexed { index, entry ->
+                    appendLine("${index + 1}. $entry")
+                }
+            }
+        }.trim()
+    }
+
+    Dialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        properties = DialogProperties(
+            dismissOnBackPress = !busy,
+            dismissOnClickOutside = !busy,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 600.dp)
+                .padding(horizontal = 16.dp, vertical = 22.dp),
+            shape = RoundedCornerShape(34.dp),
+            color = Color.Transparent,
+            border = BorderStroke(
+                1.dp,
+                (if (state.failed) Danger else AccentBlue).copy(alpha = 0.42f)
+            )
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .heightIn(max = 760.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF172633), SurfaceRaised, Color(0xFF0C1118))
+                        )
+                    ),
+                contentPadding = PaddingValues(22.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        GameInstallEmblem(state)
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "SECURE GAME INSTALLATION",
+                                color = AccentBlue,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                state.title.ifBlank { "Game installer" },
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (state.targetVersion.isNotBlank()) {
+                                Text(
+                                    "Version ${state.targetVersion}  ·  ${state.packageFormat}",
+                                    color = Muted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item { GameInstallJourney(state) }
+
+                if (state.stage in setOf(
+                        GameInstallStage.DOWNLOADING,
+                        GameInstallStage.VERIFYING,
+                        GameInstallStage.PREPARING_INSTALLER,
+                        GameInstallStage.WAITING_FOR_ANDROID
+                    )
+                ) {
+                    item {
+                        GameInstallProgressPanel(state)
+                    }
+                }
+
+                item {
+                    val statusColor = when {
+                        state.failed -> Danger
+                        state.cancelled -> PrivateGold
+                        state.completed -> Accent
+                        else -> AccentBlue
+                    }
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(statusColor.copy(alpha = 0.09f))
+                            .border(1.dp, statusColor.copy(alpha = 0.22f), RoundedCornerShape(20.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            state.headline ?: gameInstallStageLabel(state.stage),
+                            color = if (state.failed) Danger else Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        state.detail?.let { detail ->
+                            Spacer(Modifier.height(5.dp))
+                            Text(detail, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        if (state.stage == GameInstallStage.WAITING_FOR_ANDROID) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "Jester Mods will verify the installed build when you return.",
+                                color = Accent.copy(alpha = 0.9f),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .animateContentSize()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.Black.copy(alpha = 0.2f))
+                            .border(1.dp, Hairline, RoundedCornerShape(20.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { diagnosticsExpanded = !diagnosticsExpanded }
+                                .padding(15.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("DIAGNOSTICS", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "${state.diagnostics.size} installer events captured",
+                                    color = Muted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Text(
+                                if (diagnosticsExpanded) "Hide" else "Inspect",
+                                color = AccentBlue,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (diagnosticsExpanded) {
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
+                            Text(
+                                report,
+                                modifier = Modifier.padding(15.dp),
+                                color = Color(0xFFC9D4E2),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Jester Mods installer diagnostics", report))
+                                    android.widget.Toast.makeText(context, "Diagnostics copied", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, bottom = 15.dp),
+                                border = BorderStroke(1.dp, Accent.copy(alpha = 0.45f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                            ) {
+                                Text("Copy diagnostics")
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    when {
+                        busy -> Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { diagnosticsExpanded = !diagnosticsExpanded },
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Hairline),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                            ) {
+                                Text("Diagnostics")
+                            }
+                            OutlinedButton(
+                                onClick = onCancel,
+                                enabled = !state.cancelling,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
+                            ) {
+                                Text(if (state.cancelling) "Stopping…" else "Cancel")
+                            }
+                        }
+                        state.completed -> Button(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+                        ) {
+                            Text("Done", fontWeight = FontWeight.Bold)
+                        }
+                        else -> Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Hairline),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
+                            ) {
+                                Text("Close")
+                            }
+                            Button(
+                                onClick = onRetry,
+                                enabled = canRetry,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
+                            ) {
+                                Text("Try again", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GameInstallEmblem(state: GameInstallUiState) {
+    val progress = if (state.totalBytes > 0L) {
+        (state.downloadedBytes.toFloat() / state.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val label = when {
+        state.completed -> "OK"
+        state.failed -> "!"
+        state.cancelled -> "X"
+        state.stage == GameInstallStage.DOWNLOADING -> "${(progress * 100).toInt()}%"
+        state.stage == GameInstallStage.VERIFYING ||
+            state.stage == GameInstallStage.PREPARING_INSTALLER ->
+            "${((state.stageProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()}%"
+        state.stage == GameInstallStage.WAITING_FOR_ANDROID -> ""
+        else -> "APK"
+    }
+    Box(
+        modifier = Modifier
+            .size(70.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    listOf(AccentBlue.copy(alpha = 0.34f), Accent.copy(alpha = 0.12f), SurfaceDark)
+                )
+            )
+            .border(1.dp, AccentBlue.copy(alpha = 0.55f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        if (state.stage == GameInstallStage.WAITING_FOR_ANDROID) {
+            InstallerOrbitAnimation()
+        } else {
+            Text(
+                label,
+                color = when {
+                    state.failed -> Danger
+                    state.completed -> Accent
+                    else -> Color.White
+                },
+                style = if (label.length > 2) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black
+            )
+        }
+    }
+}
+
+@Composable
+private fun GameInstallProgressPanel(state: GameInstallUiState) {
+    val phaseProgress by animateFloatAsState(
+        targetValue = (state.stageProgress ?: 0f).coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 320),
+        label = "installer-phase-progress"
+    )
+    val accent = when (state.stage) {
+        GameInstallStage.VERIFYING -> Accent
+        GameInstallStage.PREPARING_INSTALLER -> PrivateViolet
+        GameInstallStage.WAITING_FOR_ANDROID -> AccentBlue
+        else -> AccentBlue
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(accent.copy(alpha = 0.12f), Color.White.copy(alpha = 0.035f))
+                )
+            )
+            .border(1.dp, accent.copy(alpha = 0.24f), RoundedCornerShape(22.dp))
+            .padding(16.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when (state.stage) {
+                        GameInstallStage.DOWNLOADING -> "DOWNLOADING"
+                        GameInstallStage.VERIFYING -> "VERIFYING"
+                        GameInstallStage.PREPARING_INSTALLER -> "PREPARING"
+                        GameInstallStage.WAITING_FOR_ANDROID -> "INSTALLING"
+                        else -> "INSTALLER"
+                    },
+                    color = accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    when (state.stage) {
+                        GameInstallStage.DOWNLOADING -> "Receiving the secure package"
+                        GameInstallStage.VERIFYING -> "Proving integrity and identity"
+                        GameInstallStage.PREPARING_INSTALLER -> "Building Android's install request"
+                        GameInstallStage.WAITING_FOR_ANDROID -> "Android installer is active"
+                        else -> gameInstallStageLabel(state.stage)
+                    },
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                when (state.stage) {
+                    GameInstallStage.DOWNLOADING -> if (state.totalBytes > 0L) {
+                        formatDownloadSize(state.totalBytes)
+                    } else "SECURE"
+                    GameInstallStage.VERIFYING,
+                    GameInstallStage.PREPARING_INSTALLER -> "${(phaseProgress * 100).toInt()}%"
+                    GameInstallStage.WAITING_FOR_ANDROID -> "ACTIVE"
+                    else -> ""
+                },
+                color = accent,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        when (state.stage) {
+            GameInstallStage.DOWNLOADING -> DownloadProgressBar(
+                downloadedBytes = state.downloadedBytes,
+                totalBytes = state.totalBytes,
+                waiting = !state.cancelling,
+                color = accent
+            )
+            GameInstallStage.VERIFYING,
+            GameInstallStage.PREPARING_INSTALLER -> InstallerDeterminateProgress(
+                progress = phaseProgress,
+                color = accent,
+                label = if (state.stage == GameInstallStage.VERIFYING) {
+                    when {
+                        phaseProgress < 0.8f -> "Reading and hashing package"
+                        phaseProgress < 0.96f -> "Checking app identity and signature"
+                        else -> "Finalizing verification"
+                    }
+                } else {
+                    when {
+                        phaseProgress < 0.52f -> "Rechecking trusted package"
+                        phaseProgress < 0.74f -> "Validating installer contents"
+                        phaseProgress < 0.98f -> "Writing secure install session"
+                        else -> "Opening Android installer"
+                    }
+                }
+            )
+            GameInstallStage.WAITING_FOR_ANDROID -> InstallerIndeterminateProgress(accent)
+            else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun InstallerDeterminateProgress(
+    progress: Float,
+    color: Color,
+    label: String
+) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(7.dp)
+            .clip(CircleShape)
+            .background(Hairline)
+            .semantics { contentDescription = "$label ${(progress * 100).toInt()} percent complete" }
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .height(7.dp)
+                .clip(CircleShape)
+                .background(Brush.horizontalGradient(listOf(color.copy(alpha = 0.72f), color)))
+        )
+    }
+    Spacer(Modifier.height(9.dp))
+    Text(label, color = Muted, style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun InstallerIndeterminateProgress(color: Color) {
+    LinearProgressIndicator(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(7.dp)
+            .clip(CircleShape)
+            .semantics { contentDescription = "Android installation in progress" },
+        color = color,
+        trackColor = Hairline
+    )
+    Spacer(Modifier.height(9.dp))
+    Text(
+        "Complete Android's secure prompt. Jester Mods will verify the result when you return.",
+        color = Muted,
+        style = MaterialTheme.typography.bodySmall
+    )
+}
+
+@Composable
+private fun InstallerOrbitAnimation() {
+    val transition = rememberInfiniteTransition(label = "installer-orbit")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1_250, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "installer-orbit-rotation"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.58f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 720),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "installer-orbit-pulse"
+    )
+    Box(contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(42.dp).rotate(rotation)) {
+            val stroke = 3.dp.toPx()
+            drawArc(
+                color = AccentBlue,
+                startAngle = 8f,
+                sweepAngle = 218f,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = Accent.copy(alpha = 0.82f),
+                startAngle = 246f,
+                sweepAngle = 68f,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = StrokeCap.Round)
+            )
+        }
+        Box(
+            Modifier
+                .size(11.dp)
+                .scale(pulse)
+                .clip(CircleShape)
+                .background(Accent)
+        )
+    }
+}
+
+@Composable
+private fun GameInstallJourney(state: GameInstallUiState) {
+    val activeStep = when (state.stage) {
+        GameInstallStage.DOWNLOADING -> 0
+        GameInstallStage.VERIFYING -> 1
+        GameInstallStage.PREPARING_INSTALLER -> 2
+        GameInstallStage.WAITING_FOR_ANDROID -> 3
+        GameInstallStage.COMPLETED -> 4
+        GameInstallStage.FAILED, GameInstallStage.CANCELLED -> if (state.downloaded) 2 else 0
+        GameInstallStage.IDLE -> 0
+    }
+    val labels = listOf("Download", "Verify", "Prepare", "Install")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(SurfaceDark.copy(alpha = 0.72f))
+            .padding(horizontal = 10.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        labels.forEachIndexed { index, label ->
+            val reached = index <= activeStep
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier
+                        .size(if (index == activeStep && activeStep < 4) 13.dp else 10.dp)
+                        .clip(CircleShape)
+                        .background(if (reached) AccentBlue else Hairline)
+                        .border(
+                            1.dp,
+                            if (index == activeStep && activeStep < 4) Accent else Color.Transparent,
+                            CircleShape
+                        )
+                )
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    label,
+                    color = if (reached) Color.White else Muted.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (index == activeStep) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+private fun gameInstallStageLabel(stage: GameInstallStage): String = when (stage) {
+    GameInstallStage.IDLE -> "Ready"
+    GameInstallStage.DOWNLOADING -> "Downloading package"
+    GameInstallStage.VERIFYING -> "Verifying package"
+    GameInstallStage.PREPARING_INSTALLER -> "Preparing installer"
+    GameInstallStage.WAITING_FOR_ANDROID -> "Waiting for Android"
+    GameInstallStage.COMPLETED -> "Installation complete"
+    GameInstallStage.FAILED -> "Installation failed"
+    GameInstallStage.CANCELLED -> "Installation cancelled"
+}
+
+@Composable
 private fun InstalledModuleUpdatesDialog(
     screenCache: LauncherScreenCache,
     updates: List<LibraryGame>,
@@ -2687,7 +3294,7 @@ private fun ModuleDownloadScreen(
         addOnSize?.let { source.size + it }
     } else null
     val directUpdateIsNewer = game == null || directSource == null || directSource.versionCode > game.versionCode
-    val busy = update.inProgress || gameInstall.inProgress || gameInstall.installing
+    val busy = update.inProgress || gameInstall.inProgress || gameInstall.installing || gameInstall.cancelling
 
     RefreshableScreen(
         refreshing = refreshing,
