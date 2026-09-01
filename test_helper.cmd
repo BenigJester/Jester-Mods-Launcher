@@ -586,7 +586,7 @@ echo [GRADLE] Using Gradle !GRADLE_VERSION!: !GRADLE_CMD!
 
 rem ---- Select an authorized ADB target --------------------------------------
 "%ADB_EXE%" start-server >nul 2>nul
-set "DEVICE_SERIAL=%ADB_SERIAL%"
+set "DEVICE_SERIAL=!ADB_SERIAL!"
 set "DEVICE_STATE="
 set "ADB_LAST_STATE="
 set /a ADB_DETECT_TRY=0
@@ -600,13 +600,17 @@ if defined DEVICE_SERIAL (
     for /f "usebackq delims=" %%S in (`"%ADB_EXE%" -s "!DEVICE_SERIAL!" get-state 2^>nul`) do set "DEVICE_STATE=%%S"
     if /I "!DEVICE_STATE!"=="device" goto adb_device_ready
 ) else (
-    for /f "tokens=1,2" %%A in ('"%ADB_EXE%" devices 2^>nul') do (
-        if /I "%%B"=="device" if not defined DEVICE_SERIAL (
-            set "DEVICE_SERIAL=%%A"
+    for /f "usebackq delims=" %%L in (`"%ADB_EXE%" devices 2^>nul`) do (
+        set "ADB_DEVICE_LINE=%%L"
+        rem ADB separates the serial and state with a tab. Parse the state from
+        rem the end so mDNS serials containing spaces, such as "name (2)._adb...",
+        rem remain intact instead of shifting the state out of column two.
+        if /I "!ADB_DEVICE_LINE:~-7!"=="	device" if not defined DEVICE_SERIAL (
+            set "DEVICE_SERIAL=!ADB_DEVICE_LINE:~0,-7!"
             set "DEVICE_STATE=device"
         )
-        if /I "%%B"=="unauthorized" set "ADB_LAST_STATE=unauthorized"
-        if /I "%%B"=="offline" if not defined ADB_LAST_STATE set "ADB_LAST_STATE=offline"
+        if /I "!ADB_DEVICE_LINE:~-13!"=="	unauthorized" set "ADB_LAST_STATE=unauthorized"
+        if /I "!ADB_DEVICE_LINE:~-8!"=="	offline" if not defined ADB_LAST_STATE set "ADB_LAST_STATE=offline"
     )
     if defined DEVICE_SERIAL goto adb_device_ready
 )

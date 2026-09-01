@@ -194,6 +194,7 @@ data class ChangelogUiState(
     val launcherEntries: List<LauncherChangelogEntry> = emptyList(),
     val moduleHistories: List<ModuleChangelog> = emptyList(),
     val selectedModuleHistory: ModuleChangelog? = null,
+    val selectedModulePackage: String? = null,
     val moduleHistoryLoadingPackage: String? = null,
     val moduleHistoryError: String? = null,
     val error: String? = null
@@ -403,7 +404,7 @@ fun GameHubScreen(
     ) {
         when {
             launcherUpdate.screenOpen -> onCloseLauncherUpdate()
-            changelog.open && (changelog.selectedModuleHistory != null || changelog.moduleHistoryLoadingPackage != null) ->
+            changelog.open && changelog.selectedModulePackage != null ->
                 onCloseModuleChangelog()
             changelog.open -> onCloseChangelog()
             accountIdentity.open -> onCloseAccountIdentity()
@@ -477,6 +478,7 @@ fun GameHubScreen(
                             DeferredScreenContent(
                                 screenCache = screenCache,
                                 contentKey = visiblePage.key,
+                                contentReady = listings.isNotEmpty(),
                                 placeholder = {
                                     ScreenTransitionPlaceholder(
                                         backLabel = "Library",
@@ -572,6 +574,8 @@ fun GameHubScreen(
                             DeferredScreenContent(
                                 screenCache = screenCache,
                                 contentKey = visiblePage.key,
+                                contentReady = changelog.launcherEntries.isNotEmpty() ||
+                                    changelog.moduleHistories.isNotEmpty(),
                                 placeholder = {
                                     ScreenTransitionPlaceholder(
                                         backLabel = "Library",
@@ -827,12 +831,16 @@ private fun rememberMinimumVisibleState(
 private fun DeferredScreenContent(
     screenCache: LauncherScreenCache,
     contentKey: String,
+    contentReady: Boolean = false,
     placeholder: @Composable () -> Unit,
     content: @Composable () -> Unit
 ) {
-    var ready by remember(contentKey) { mutableStateOf(screenCache.warmedPages[contentKey] == true) }
-    LaunchedEffect(contentKey) {
-        if (screenCache.warmedPages[contentKey] == true) {
+    var ready by remember(contentKey) {
+        mutableStateOf(screenCache.warmedPages[contentKey] == true || contentReady)
+    }
+    LaunchedEffect(contentKey, contentReady) {
+        if (screenCache.warmedPages[contentKey] == true || contentReady) {
+            screenCache.warmedPages[contentKey] = true
             ready = true
             return@LaunchedEffect
         }
@@ -1293,13 +1301,13 @@ private fun ChangelogScreen(
     val installedBuild = com.moodtools.hub.BuildConfig.VERSION_CODE.toLong()
     var launcherHistoryOpen by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = launcherHistoryOpen) { launcherHistoryOpen = false }
-    if (state.selectedModuleHistory != null || state.moduleHistoryLoadingPackage != null) {
+    if (state.selectedModuleHistory != null || state.selectedModulePackage != null) {
         ModuleChangelogDetailScreen(
             history = state.selectedModuleHistory,
             loading = state.moduleHistoryLoadingPackage != null,
             error = state.moduleHistoryError,
             onBack = onCloseModuleChangelog,
-            onRetry = { state.moduleHistoryLoadingPackage?.let(onOpenModuleChangelog) }
+            onRetry = { state.selectedModulePackage?.let(onOpenModuleChangelog) }
         )
         return
     }

@@ -991,6 +991,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     )
                 }
         }
+        // Hydrate every launcher screen from verified disk/local state before exposing the
+        // Library. Network-backed catalog, Play Store, and changelog checks continue below.
+        // This keeps an existing library visible immediately on every process start.
+        hydrateCachedGames()
+        primeChangelogFromCache()
         markLauncherReady(launcherExpiresAt)
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
             _launcherEntered.value = true
@@ -1012,6 +1017,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     fun openChangelog() {
+        primeChangelogFromCache()
         _changelogState.value = _changelogState.value.copy(open = true)
         refreshChangelog()
     }
@@ -1020,6 +1026,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _changelogState.value = _changelogState.value.copy(
             open = false,
             selectedModuleHistory = null,
+            selectedModulePackage = null,
             moduleHistoryLoadingPackage = null,
             moduleHistoryError = null
         )
@@ -1055,17 +1062,20 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val listing = _availableModules.value.firstOrNull {
             it.catalog.config.packageName == packageName
         } ?: return
+        val cachedHistory = moduleChangelogClient.loadCached(listing.catalog)
         _changelogState.value = _changelogState.value.copy(
-            selectedModuleHistory = null,
+            selectedModuleHistory = cachedHistory,
+            selectedModulePackage = packageName,
             moduleHistoryLoadingPackage = packageName,
             moduleHistoryError = null
         )
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { moduleChangelogClient.load(listing.catalog) }
+            runCatching { moduleChangelogClient.refresh(listing.catalog) }
                 .onSuccess { history ->
                     if (_changelogState.value.moduleHistoryLoadingPackage == packageName) {
                         _changelogState.value = _changelogState.value.copy(
                             selectedModuleHistory = history,
+                            selectedModulePackage = packageName,
                             moduleHistoryLoadingPackage = null,
                             moduleHistoryError = null
                         )
@@ -1075,7 +1085,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     if (_changelogState.value.moduleHistoryLoadingPackage == packageName) {
                         _changelogState.value = _changelogState.value.copy(
                             moduleHistoryLoadingPackage = null,
-                            moduleHistoryError = "This add-on's verified history is unavailable. Try again when you're online."
+                            moduleHistoryError = if (cachedHistory == null) {
+                                "This add-on's verified history is unavailable. Try again when you're online."
+                            } else {
+                                "Showing saved history. Try again when you're online to check for updates."
+                            }
                         )
                     }
                 }
@@ -1085,6 +1099,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun closeModuleChangelog() {
         _changelogState.value = _changelogState.value.copy(
             selectedModuleHistory = null,
+            selectedModulePackage = null,
             moduleHistoryLoadingPackage = null,
             moduleHistoryError = null
         )
@@ -1092,27 +1107,20 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun refreshChangelog() {
         if (_changelogState.value.loading) return
-        val cachedLauncher = launcherUpdateClient.loadCachedChangelog().orEmpty()
+        primeChangelogFromCache()
         _changelogState.value = _changelogState.value.copy(
             loading = true,
-            launcherEntries = cachedLauncher.ifEmpty { _changelogState.value.launcherEntries },
             error = null
         )
         viewModelScope.launch(Dispatchers.IO) {
-            refreshGames(refreshCatalog = true, forceGameScan = true)
+            refreshGames(refreshCatalog = true)
             val launcherResult = runCatching { launcherUpdateClient.refreshChangelog() }
             val launcherEntries = launcherResult.getOrElse {
                 launcherUpdateClient.loadCachedChangelog().orEmpty()
             }
             // Keep the global feed cheap even with thousands of modules. Full signed history is
             // loaded only when a user opens an actual update offer for that module.
-            val moduleHistories = _availableModules.value.map { listing ->
-                moduleChangelogClient.summary(listing.catalog)
-            }.sortedWith(
-                compareBy<com.moodtools.hub.networking.ModuleChangelog, String>(String.CASE_INSENSITIVE_ORDER) {
-                    it.title
-                }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.packageName }
-            )
+            val moduleHistories = moduleChangelogSummaries()
             _changelogState.value = _changelogState.value.copy(
                 loading = false,
                 launcherEntries = launcherEntries,
@@ -1123,6 +1131,25 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             )
         }
     }
+
+    /** Publishes verified launcher and catalog summaries without doing network work. */
+    private fun primeChangelogFromCache() {
+        val current = _changelogState.value
+        val cachedLauncher = launcherUpdateClient.loadCachedChangelog().orEmpty()
+        val cachedModules = moduleChangelogSummaries()
+        _changelogState.value = current.copy(
+            launcherEntries = cachedLauncher.ifEmpty { current.launcherEntries },
+            moduleHistories = cachedModules.ifEmpty { current.moduleHistories }
+        )
+    }
+
+    private fun moduleChangelogSummaries() = _availableModules.value.map { listing ->
+        moduleChangelogClient.summary(listing.catalog)
+    }.sortedWith(
+        compareBy<com.moodtools.hub.networking.ModuleChangelog, String>(String.CASE_INSENSITIVE_ORDER) {
+            it.title
+        }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.packageName }
+    )
 
     fun closeLauncherUpdate() {
         val current = _launcherUpdateState.value
@@ -2575,6 +2602,18 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         publishGames(emptyList(), forceGameScan)
     }
 
+    /**
+     * Builds the first frame only from verified files and Android package state. This method must
+     * stay network-free: it runs before the launcher Library becomes visible.
+     */
+    private fun hydrateCachedGames() {
+        publishGames(
+            catalog = catalogClient.loadCached().orEmpty(),
+            forceGameScan = true,
+            refreshRemoteMetadata = false
+        )
+    }
+
     private fun playStoreStatusesFor(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
     ): Map<String, PlayStoreVersionStatus> {
@@ -2671,6 +2710,20 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         )
     }
 
+    private fun cachedPlayStoreStatusesFor(
+        catalog: List<com.moodtools.hub.modules.CatalogModule>
+    ): Map<String, PlayStoreVersionStatus> {
+        val today = currentLocalDay()
+        return catalog.asSequence()
+            .filter { it.installSource is GameInstallSource.PlayStore }
+            .mapNotNull { module ->
+                cachedPlayStoreStatus(module.config.packageName, today)?.let { status ->
+                    module.config.packageName to status
+                }
+            }
+            .toMap()
+    }
+
     private fun currentLocalDay(): Long {
         val calendar = Calendar.getInstance()
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -2714,9 +2767,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         privateAccessExpiryByScope = resolved
     }
 
-    private fun publishGames(catalog: List<com.moodtools.hub.modules.CatalogModule>, forceGameScan: Boolean) {
+    private fun publishGames(
+        catalog: List<com.moodtools.hub.modules.CatalogModule>,
+        forceGameScan: Boolean,
+        refreshRemoteMetadata: Boolean = true
+    ) {
         val application = getApplication<android.app.Application>()
-        resolvePrivateAccessExpiries(catalog)
+        if (refreshRemoteMetadata) resolvePrivateAccessExpiries(catalog)
         if (catalog.isEmpty()) {
             val localConfigs = repository.loadModules().filter { repository.isInLibrary(it.packageName) }
             val local = scanGames(localConfigs, forceGameScan)
@@ -2750,7 +2807,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 catalog.map { it.config },
                 localConfigs
             )
-            val playStoreStatuses = playStoreStatusesFor(catalog)
+            val playStoreStatuses = if (refreshRemoteMetadata) {
+                playStoreStatusesFor(catalog)
+            } else {
+                cachedPlayStoreStatusesFor(catalog)
+            }
             val detected = scanGames(scanConfigs, forceGameScan)
             val detectedByPackage = detected.associateBy { it.packageName }
             val listings = catalog.map { item ->

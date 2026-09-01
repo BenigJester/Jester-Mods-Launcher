@@ -32,7 +32,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
         }
     }
 
-    private fun refresh(module: CatalogModule): ModuleChangelog {
+    fun refresh(module: CatalogModule): ModuleChangelog {
         val connection = open(
             "$BASE_URL/api/launcher-module-changelog/${module.slug}/${module.build}",
             module.privateCatalogCapability
@@ -53,7 +53,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
         }
     }
 
-    private fun loadCached(module: CatalogModule): ModuleChangelog? {
+    fun loadCached(module: CatalogModule): ModuleChangelog? {
         val file = cacheFile(module)
         if (!file.isFile) return null
         return runCatching { parse(module, JSONObject(file.readText())) }.getOrNull()
