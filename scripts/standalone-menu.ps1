@@ -112,22 +112,88 @@ function Get-ModuleNames {
         } | Sort-Object Name | Select-Object -ExpandProperty Name)
 }
 
-function Select-Module {
-    $modules = @(Get-ModuleNames)
-    if ($modules.Count -eq 0) { throw 'No buildable modules were found.' }
-    Write-Host ''
-    for ($index = 0; $index -lt $modules.Count; $index++) {
-        Write-Host "  $($index + 1). $($modules[$index])"
+function Split-DroppedFolderPaths([string]$Value) {
+    $trimmed = $Value.Trim()
+    if (-not $trimmed) { throw 'Choose at least one module folder.' }
+
+    # A single unquoted path can contain spaces. Explorer quotes every path when
+    # several folders are dropped into a console prompt.
+    if (Test-Path -LiteralPath $trimmed -PathType Container) {
+        return @($trimmed)
     }
-    Write-Host '  B. Back'
-    while ($true) {
-        $choice = (Read-Host 'Module').Trim()
-        if ($choice -match '^[bB]$') { return $null }
-        $selected = 0
-        if ([int]::TryParse($choice, [ref]$selected) -and $selected -ge 1 -and $selected -le $modules.Count) {
-            return $modules[$selected - 1]
+
+    $paths = [System.Collections.Generic.List[string]]::new()
+    $position = 0
+    $pattern = [regex]'\G\s*(?:"([^"]+)"|''([^'']+)''|(\S+))'
+    while ($position -lt $trimmed.Length) {
+        $match = $pattern.Match($trimmed, $position)
+        if (-not $match.Success) {
+            throw "Could not read the dropped module folders near: $($trimmed.Substring($position))"
         }
-        Write-Host 'Choose a listed module number.' -ForegroundColor Yellow
+        $path = if ($match.Groups[1].Success) {
+            $match.Groups[1].Value
+        } elseif ($match.Groups[2].Success) {
+            $match.Groups[2].Value
+        } else {
+            $match.Groups[3].Value
+        }
+        if ($path) { $paths.Add($path) }
+        $position = $match.Index + $match.Length
+    }
+    return @($paths)
+}
+
+function Select-Modules {
+    $availableModules = @(Get-ModuleNames)
+    if ($availableModules.Count -eq 0) { throw 'No buildable modules were found.' }
+
+    $modulesRoot = (Get-Item -LiteralPath (Join-Path $ProjectRoot 'modules')).FullName.TrimEnd('\', '/')
+    Write-Host ''
+    Write-Host 'Drag/drop one or more module source folders together, then press Enter.' -ForegroundColor Gray
+    Write-Host 'You can also drop the main modules folder to select all buildable modules.' -ForegroundColor DarkGray
+    Write-Host 'Enter B to go back.' -ForegroundColor DarkGray
+
+    while ($true) {
+        $inputValue = (Read-Host 'Module folder(s)').Trim()
+        if ($inputValue -match '^[bB]$') { return @() }
+
+        try {
+            $selectedNames = [System.Collections.Generic.List[string]]::new()
+            $seenNames = [System.Collections.Generic.HashSet[string]]::new(
+                [System.StringComparer]::OrdinalIgnoreCase
+            )
+
+            foreach ($path in @(Split-DroppedFolderPaths $inputValue)) {
+                $item = Get-Item -LiteralPath $path -ErrorAction Stop
+                if (-not $item.PSIsContainer) { throw "Module path must be a folder: $path" }
+
+                $itemPath = $item.FullName.TrimEnd('\', '/')
+                $candidateNames = if ($itemPath -eq $modulesRoot) {
+                    $availableModules
+                } elseif ($item.Parent.FullName.TrimEnd('\', '/') -eq $modulesRoot) {
+                    @($item.Name)
+                } else {
+                    throw "Module folder must be inside ${modulesRoot}: $itemPath"
+                }
+
+                foreach ($name in $candidateNames) {
+                    if ($name -notin $availableModules) {
+                        throw "Module folder is missing config.json or features.json: $(Join-Path $modulesRoot $name)"
+                    }
+                    if ($seenNames.Add($name)) { $selectedNames.Add($name) }
+                }
+            }
+
+            if ($selectedNames.Count -eq 0) { throw 'Choose at least one buildable module folder.' }
+            if ($selectedNames.Count -gt 100) { throw 'At most 100 modules can be built at once.' }
+
+            Write-Host ''
+            Write-Host "Selected $($selectedNames.Count) module(s):" -ForegroundColor Magenta
+            $selectedNames | ForEach-Object { Write-Host "  - $_" }
+            return @($selectedNames)
+        } catch {
+            Write-Host $_.Exception.Message -ForegroundColor Yellow
+        }
     }
 }
 
@@ -142,14 +208,14 @@ function Show-ModuleMenu {
         Write-Header 'Build module packages'
         Write-Host '  1. Build all modules (debug)'
         Write-Host '  2. Build all modules (release)'
-        Write-Host '  3. Build one module (debug)'
-        Write-Host '  4. Build one module (release)'
+        Write-Host '  3. Build selected modules (debug)'
+        Write-Host '  4. Build selected modules (release)'
         Write-Host '  B. Back'
         switch (Read-Choice 'Select an action' @('1','2','3','4','b')) {
             '1' { Invoke-ModuleBuild 'debug'; Wait-ForUser }
             '2' { Invoke-ModuleBuild 'release'; Wait-ForUser }
-            '3' { $module = Select-Module; if ($module) { Invoke-ModuleBuild 'debug' $module; Wait-ForUser } }
-            '4' { $module = Select-Module; if ($module) { Invoke-ModuleBuild 'release' $module; Wait-ForUser } }
+            '3' { $modules = @(Select-Modules); if ($modules.Count -gt 0) { Invoke-ModuleBuild 'debug' ($modules -join ','); Wait-ForUser } }
+            '4' { $modules = @(Select-Modules); if ($modules.Count -gt 0) { Invoke-ModuleBuild 'release' ($modules -join ','); Wait-ForUser } }
             'b' { return }
         }
     }

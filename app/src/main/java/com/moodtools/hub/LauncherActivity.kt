@@ -288,7 +288,11 @@ class LauncherActivity : ComponentActivity() {
             PackageReplacementInstallEvents.results.collect { result ->
                 if (result.packageName != pendingPackageReplacement?.packageName) return@collect
                 if (result.successful) {
-                    finishPackageReplacementSuccessfully()
+                    // PackageInstaller can report success just before PackageManager exposes the
+                    // replacement application's metadata. Keep the setup pending until the exact
+                    // shell/patch identity is observable, otherwise the Library can immediately
+                    // rescan the stale original package and leave its action on "Create & install".
+                    schedulePackageReplacementReconciliation(installerReportedSuccess = true)
                 } else {
                     finishPackageReplacementWithFailure(
                         result.message?.takeIf { it.isNotBlank() }
@@ -819,13 +823,15 @@ class LauncherActivity : ComponentActivity() {
         }
     }
 
-    private fun schedulePackageReplacementReconciliation() {
+    private fun schedulePackageReplacementReconciliation(installerReportedSuccess: Boolean = false) {
         val request = pendingPackageReplacement ?: return
         if (packageReplacementPhase != PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT) return
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = lifecycleScope.launch {
             delay(
-                if (packageReplacementLeftLauncher) {
+                if (installerReportedSuccess) {
+                    0L
+                } else if (packageReplacementLeftLauncher) {
                     PACKAGE_REPLACEMENT_RETURN_RECONCILE_DELAY_MS
                 } else {
                     PACKAGE_REPLACEMENT_INSTALLER_OPEN_TIMEOUT_MS
@@ -833,11 +839,13 @@ class LauncherActivity : ComponentActivity() {
             )
             if (pendingPackageReplacement !== request ||
                 packageReplacementPhase != PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT ||
-                !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@launch
+                (!installerReportedSuccess &&
+                    !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) return@launch
             val deadline = SystemClock.elapsedRealtime() + PACKAGE_REPLACEMENT_INSTALL_RECONCILE_TIMEOUT_MS
             while (pendingPackageReplacement === request &&
                 packageReplacementPhase == PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT &&
-                lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                (installerReportedSuccess ||
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) {
                 val installed = withContext(Dispatchers.IO) {
                     ExecutionModeLaunchBridge.isPackageReplacementInstalled(applicationContext, request)
                 }
@@ -850,9 +858,14 @@ class LauncherActivity : ComponentActivity() {
             }
             if (pendingPackageReplacement === request &&
                 packageReplacementPhase == PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT &&
-                lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                (installerReportedSuccess ||
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) {
                 finishPackageReplacementWithFailure(
-                    "The Android installation was cancelled or could not be confirmed. The prepared package is still available."
+                    if (installerReportedSuccess) {
+                        "Android installed the package, but its verified package identity was not ready in time. Return to the Library and refresh before retrying."
+                    } else {
+                        "The Android installation was cancelled or could not be confirmed. The prepared package is still available."
+                    }
                 )
             }
         }

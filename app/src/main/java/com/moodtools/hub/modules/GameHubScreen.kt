@@ -2204,7 +2204,9 @@ private fun UnifiedInstallerDialog(
                 .widthIn(max = maxWidth)
                 .padding(horizontal = 16.dp, vertical = 22.dp),
             shape = RoundedCornerShape(34.dp),
-            color = Color.Transparent,
+            // The shared transfer windows contain deliberately soft accent gradients. Give them
+            // an opaque foundation so text from the Library/details page cannot bleed through.
+            color = SurfaceDark,
             border = BorderStroke(1.dp, (if (failed) Danger else accent).copy(alpha = 0.42f))
         ) {
             content()
@@ -2516,7 +2518,7 @@ private fun LauncherUpdateDialog(
                                 border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
                             ) {
-                                Text(if (update.cancelling) "Stoppingâ€¦" else "Cancel")
+                                Text(if (update.cancelling) "Stopping…" else "Cancel")
                             }
                         }
                     } else Button(
@@ -2749,8 +2751,8 @@ private fun ModuleTransferDialog(
                         ) {
                             Text(
                                 when {
-                                    state.cancelling -> "Stoppingâ€¦"
-                                    state.stage == SecureTransferStage.ACTIVATING -> "Finishingâ€¦"
+                                    state.cancelling -> "Stopping…"
+                                    state.stage == SecureTransferStage.ACTIVATING -> "Finishing…"
                                     else -> "Cancel"
                                 }
                             )
@@ -3743,7 +3745,7 @@ private fun InstalledModuleUpdatesDialog(
                                 modifier = Modifier.weight(1f),
                                 border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
-                            ) { Text(if (state.cancelling) "Stoppingâ€¦" else "Cancel") }
+                            ) { Text(if (state.cancelling) "Stopping…" else "Cancel") }
                         }
                     }
                 }
@@ -3969,7 +3971,7 @@ private fun SecureTransferEmblem(
         SecureTransferStage.PREPARING,
         SecureTransferStage.VERIFYING -> stageProgress?.takeIf { it > 0.01f }
             ?.let { "${(it.coerceIn(0f, 1f) * 100).toInt()}%" }
-            ?: "â€¦"
+            ?: "…"
         SecureTransferStage.ACTIVATING,
         SecureTransferStage.WAITING_FOR_ANDROID -> ""
         SecureTransferStage.READY -> ""
