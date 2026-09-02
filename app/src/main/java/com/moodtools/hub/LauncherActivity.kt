@@ -1280,9 +1280,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private suspend fun checkLauncherAccess(initialLink: Uri? = null) {
         _startupState.value = LauncherStartupState.CheckingAccess
-        val gateStartedAt = SystemClock.elapsedRealtime()
+        val transitionStartedAt = SystemClock.elapsedRealtime()
         val result = runCatching { accessManager.currentLease() }
-        awaitMinimumAccessCheckGate(gateStartedAt)
+        awaitMinimumInternetTransition(transitionStartedAt)
         result
             .onSuccess { lease ->
                 if (lease == null) {
@@ -1301,9 +1301,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
     }
 
-    private suspend fun awaitMinimumAccessCheckGate(startedAt: Long) {
+    private suspend fun awaitMinimumInternetTransition(startedAt: Long) {
         val elapsed = SystemClock.elapsedRealtime() - startedAt
-        val remaining = MINIMUM_ACCESS_CHECK_GATE_MS - elapsed
+        val remaining = MINIMUM_INTERNET_TRANSITION_MS - elapsed
         if (remaining > 0L) delay(remaining)
     }
 
@@ -4286,18 +4286,31 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val statuses = mutableMapOf<String, PlayStoreVersionStatus>()
         val editor = playStorePreferences.edit()
         var changed = false
-        catalog.distinctBy { it.config.packageName }.forEach { module ->
+        val modules = catalog.distinctBy { it.config.packageName }
+        val cachedByPackage = modules.associate { module ->
             val packageName = module.config.packageName
-            val cached = cachedPlayStoreStatus(packageName, today)
-            val fresh = runCatching { playStoreVersionClient.load(packageName) }
+            packageName to cachedPlayStoreStatus(packageName, today)
+        }
+        val packagesToRefresh = cachedByPackage
+            .filterValues { cached -> cached == null || cached.stale }
+            .keys
+        val freshByPackage = if (packagesToRefresh.isEmpty()) {
+            emptyMap()
+        } else {
+            runCatching { playStoreVersionClient.load(packagesToRefresh) }
                 .onFailure {
                     android.util.Log.w(
                         "JesterMoodsPlayStore",
-                        "Could not check Play Store version for $packageName",
+                        "Could not refresh Play Store versions",
                         it
                     )
                 }
-                .getOrNull()
+                .getOrDefault(emptyMap())
+        }
+        modules.forEach { module ->
+            val packageName = module.config.packageName
+            val cached = cachedByPackage[packageName]
+            val fresh = freshByPackage[packageName]
             if (fresh != null) {
                 val received = PlayStoreVersionStatus(
                     latestVersion = fresh.version,
@@ -4330,7 +4343,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 editor.putBoolean(playStoreStaleKey(packageName), status.stale)
                 changed = true
             } else if (cached != null) {
-                statuses[packageName] = cached.copy(stale = true)
+                statuses[packageName] = cached
             }
         }
         if (changed) editor.apply()
@@ -4725,9 +4738,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private suspend fun redeemLauncherAccess(uri: Uri) {
         _startupState.value = LauncherStartupState.CheckingAccess
-        val gateStartedAt = SystemClock.elapsedRealtime()
+        val transitionStartedAt = SystemClock.elapsedRealtime()
         val result = runCatching { accessManager.redeem(uri) }
-        awaitMinimumAccessCheckGate(gateStartedAt)
+        awaitMinimumInternetTransition(transitionStartedAt)
         result
             .onSuccess { lease ->
                 completeAuthorizedStartup(lease.expiresAt)
@@ -4755,7 +4768,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
-        private const val MINIMUM_ACCESS_CHECK_GATE_MS = 2_000L
+        private const val MINIMUM_INTERNET_TRANSITION_MS = 2_000L
         private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L
         private const val GAME_INSTALLER_RECONCILE_POLL_MS = 250L
         private const val GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS = 10_000L

@@ -1,5 +1,6 @@
 package com.moodtools.hub.networking
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -14,6 +15,31 @@ data class PlayStoreVersionResult(
 )
 
 class PlayStoreVersionClient {
+    fun load(packageNames: Set<String>): Map<String, PlayStoreVersionResult> {
+        require(packageNames.size <= MAX_BATCH_PACKAGES && packageNames.all(PACKAGE_PATTERN::matches)) {
+            "Invalid Play Store package names"
+        }
+        if (packageNames.isEmpty()) return emptyMap()
+        val connection = open("${ModuleCatalogClient.BASE_URL}/api/launcher-play-store-versions").apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        return try {
+            val request = JSONObject().put("packageNames", JSONArray(packageNames.sorted()))
+            connection.outputStream.use { output ->
+                output.write(request.toString().toByteArray(Charsets.UTF_8))
+            }
+            require(connection.responseCode in 200..299) {
+                "Play Store batch request failed: ${connection.responseCode}"
+            }
+            val body = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            parsePlayStoreVersionResults(packageNames, body)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun load(packageName: String): PlayStoreVersionResult? {
         if (!PACKAGE_PATTERN.matches(packageName)) return null
         val connection = open("${ModuleCatalogClient.BASE_URL}/api/launcher-play-store-version/$packageName")
@@ -40,7 +66,27 @@ class PlayStoreVersionClient {
 
     companion object {
         private const val HOST = "jester.moodtools.workers.dev"
+        private const val MAX_BATCH_PACKAGES = 2_000
         private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_.]{3,200}$")
+    }
+}
+
+internal fun parsePlayStoreVersionResults(
+    expectedPackageNames: Set<String>,
+    body: JSONObject
+): Map<String, PlayStoreVersionResult> {
+    require(body.optBoolean("ok", false) && body.optInt("schema") == 1) {
+        "Invalid Play Store batch response"
+    }
+    val results = body.getJSONArray("results")
+    require(results.length() <= expectedPackageNames.size)
+    return buildMap {
+        for (index in 0 until results.length()) {
+            val item = results.getJSONObject(index)
+            val packageName = item.optString("packageName")
+            require(packageName in expectedPackageNames && !containsKey(packageName))
+            put(packageName, requireNotNull(parsePlayStoreVersionResult(packageName, item)))
+        }
     }
 }
 
