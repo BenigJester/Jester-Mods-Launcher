@@ -17,7 +17,8 @@ data class ModuleConfig(
 
 enum class NonRootMethod(val jsonValue: String, val displayName: String) {
     INJECTION("injection", "Injection"),
-    DIRECT_PATCH("direct_patch", "Patch");
+    DIRECT_PATCH("direct_patch", "Patch"),
+    IDENTITY_SHELL("identity_shell", "Identity shell");
 
     companion object {
         fun fromJson(value: String?, packageName: String? = null): NonRootMethod {
@@ -79,13 +80,34 @@ internal fun launcherMethodPresentation(
         explanation = "Jester Mods builds a verified game package with the add-on embedded, then Android installs it " +
             "in place of the Play-signed app. The first replacement erases local game data; later patch updates preserve it."
     )
+    NonRootMethod.IDENTITY_SHELL -> LauncherMethodPresentation(
+        method = NonRootMethod.IDENTITY_SHELL,
+        badgeLabel = "SHELL",
+        setupLabel = "NON-ROOT SETUP",
+        fieldLabel = "Non-root method",
+        badgeDescription = "Non-root method: Exact-package shell",
+        explanationTitle = "How exact-package shell works",
+        explanation = "Jester Mods preserves the original game APK bytes as a private payload, then installs a small " +
+            "game-branded shell with the exact package identity required by protected games."
+    )
 }
 
 /** The action the primary Library button will perform for the current installation. */
 enum class LibraryLaunchAction {
     PLAY,
     PATCH_AND_INSTALL,
-    UPDATE_PATCHED_INSTALL
+    UPDATE_PATCHED_INSTALL,
+    RESTORE_OFFICIAL_FOR_SHELL,
+    SHELL_AND_INSTALL
+}
+
+internal fun identityShellLaunchAction(
+    installedIdentityShell: Boolean,
+    installedDirectPatch: Boolean
+): LibraryLaunchAction = when {
+    installedIdentityShell -> LibraryLaunchAction.PLAY
+    installedDirectPatch -> LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL
+    else -> LibraryLaunchAction.SHELL_AND_INSTALL
 }
 
 data class CatalogModule(
@@ -208,8 +230,20 @@ data class ModuleListing(
     val playStoreVersionStatus: PlayStoreVersionStatus? = null,
     val privateAccessExpiresAtEpochSeconds: Long? = null
 ) {
+    val privateAccessProtected: Boolean
+        get() = catalog.privateScope != null
+
     val playStoreVersionSupported: Boolean?
         get() = playStoreVersionStatus?.isSupportedBy(catalog.config)
+
+    val playStoreListingDetected: Boolean
+        get() = playStoreVersionStatus != null
+
+    val configuredGameSourceAvailable: Boolean
+        get() = when (catalog.installSource) {
+            is GameInstallSource.DirectDownload -> true
+            is GameInstallSource.PlayStore -> playStoreListingDetected
+        }
 
     val playStoreUpdateInProgress: Boolean
         get() = playStoreVersionSupported == false &&
@@ -261,6 +295,9 @@ data class LibraryGame(
     val privateScope: String? = listing?.catalog?.privateScope,
     val privateAccessExpiresAtEpochSeconds: Long? = listing?.privateAccessExpiresAtEpochSeconds
 ) {
+    val privateAccessProtected: Boolean
+        get() = privateScope != null
+
     val packageName: String
         get() = module.packageName
 

@@ -2,11 +2,13 @@ package com.moodtools.hub.discovery
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.ModuleConfig
 import java.io.File
 import java.util.zip.ZipFile
+import org.json.JSONObject
 
 class GameScanner(private val context: Context) {
     private val packageManager = context.packageManager
@@ -14,20 +16,24 @@ class GameScanner(private val context: Context) {
     fun scan(modules: List<ModuleConfig>): List<InstalledGame> {
         return modules.mapNotNull { module ->
             runCatching {
-                val info = packageManager.getApplicationInfo(module.packageName, 0)
+                val info = packageManager.getApplicationInfo(
+                    module.packageName,
+                    PackageManager.GET_META_DATA
+                )
                 val packageInfo = packageManager.getPackageInfo(module.packageName, 0)
-                val versionName = packageInfo.versionName ?: "unknown"
-                val abi = detectInstalledAbi(info)
+                val shellIdentity = identityShellIdentity(module.packageName, info)
+                val versionName = shellIdentity?.versionName ?: packageInfo.versionName ?: "unknown"
+                val abi = shellIdentity?.abi ?: detectInstalledAbi(info)
                 InstalledGame(
                     packageName = module.packageName,
                     versionName = versionName,
-                    versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    versionCode = shellIdentity?.versionCode ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         packageInfo.longVersionCode
                     } else {
                         @Suppress("DEPRECATION")
                         packageInfo.versionCode.toLong()
                     },
-                    label = packageManager.getApplicationLabel(info).toString(),
+                    label = shellIdentity?.label ?: packageManager.getApplicationLabel(info).toString(),
                     icon = packageManager.getApplicationIcon(info),
                     module = module,
                     versionSupported = module.supportedVersions.contains(versionName),
@@ -36,6 +42,21 @@ class GameScanner(private val context: Context) {
                 )
             }.getOrNull()
         }
+    }
+
+    private fun identityShellIdentity(packageName: String, info: ApplicationInfo): ShellIdentity? {
+        if (info.metaData?.getBoolean(IDENTITY_SHELL_METADATA, false) != true) return null
+        return runCatching {
+            val metadata = File(context.filesDir, "identity-shells/$packageName/metadata.json")
+            val json = JSONObject(metadata.readText(Charsets.UTF_8))
+            require(json.getInt("schema") == 1 && json.getString("package") == packageName)
+            ShellIdentity(
+                label = json.getString("label"),
+                versionName = json.getString("versionName"),
+                versionCode = json.getLong("versionCode"),
+                abi = json.getString("abi")
+            )
+        }.getOrNull()
     }
 
     private fun detectInstalledAbi(info: ApplicationInfo): String {
@@ -83,5 +104,13 @@ class GameScanner(private val context: Context) {
     companion object {
         const val ABI_UNKNOWN = "unknown"
         private val KNOWN_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        private const val IDENTITY_SHELL_METADATA = "com.moodtools.identity_shell"
     }
+
+    private data class ShellIdentity(
+        val label: String,
+        val versionName: String,
+        val versionCode: Long,
+        val abi: String
+    )
 }

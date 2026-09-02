@@ -312,6 +312,14 @@ function Start-DeviceTest {
         default { 'release' }
     }
 
+    $launcherSource = 'installed'
+    if (-not $moduleOnly) {
+        Write-Host ''
+        $flavorLabel = if ($mode -eq 'both') { 'Root and Non-root' } elseif ($mode -eq 'root') { 'Root' } else { 'Non-root' }
+        Write-Host "Selected output: $flavorLabel $build APK" -ForegroundColor Gray
+        $launcherSource = if (Read-YesNo 'Use the existing built APK without rebuilding?' $true) { 'existing' } else { 'build' }
+    }
+
     $setup = 'launcher-only'
     $skipModuleBuild = ''
     if ($moduleSelection -ne 'launcher') {
@@ -333,6 +341,7 @@ function Start-DeviceTest {
     $previousBuild = $env:JESTER_LAUNCHER_BUILD
     $previousSetup = $env:JESTER_MODULE_SETUP
     $previousSkipBuild = $env:JESTER_SKIP_MODULE_BUILD
+    $previousLauncherSource = $env:JESTER_LAUNCHER_SOURCE
     $previousModuleOnly = $env:JESTER_MODULE_ONLY_TEST
     $previousNoErrorPause = $env:JESTER_NO_ERROR_PAUSE
     try {
@@ -341,6 +350,7 @@ function Start-DeviceTest {
         if ($moduleFolder) { $env:JESTER_MODULE_DIR = $moduleFolder }
         else { Remove-Item Env:\JESTER_MODULE_DIR -ErrorAction SilentlyContinue }
         $env:JESTER_LAUNCHER_BUILD = $build
+        $env:JESTER_LAUNCHER_SOURCE = $launcherSource
         $env:JESTER_MODULE_SETUP = $setup
         $env:JESTER_NO_ERROR_PAUSE = '1'
         if ($skipModuleBuild) { $env:JESTER_SKIP_MODULE_BUILD = $skipModuleBuild }
@@ -369,6 +379,7 @@ function Start-DeviceTest {
         if ($null -eq $previousBuild) { Remove-Item Env:\JESTER_LAUNCHER_BUILD -ErrorAction SilentlyContinue } else { $env:JESTER_LAUNCHER_BUILD = $previousBuild }
         if ($null -eq $previousSetup) { Remove-Item Env:\JESTER_MODULE_SETUP -ErrorAction SilentlyContinue } else { $env:JESTER_MODULE_SETUP = $previousSetup }
         if ($null -eq $previousSkipBuild) { Remove-Item Env:\JESTER_SKIP_MODULE_BUILD -ErrorAction SilentlyContinue } else { $env:JESTER_SKIP_MODULE_BUILD = $previousSkipBuild }
+        if ($null -eq $previousLauncherSource) { Remove-Item Env:\JESTER_LAUNCHER_SOURCE -ErrorAction SilentlyContinue } else { $env:JESTER_LAUNCHER_SOURCE = $previousLauncherSource }
         if ($null -eq $previousModuleOnly) { Remove-Item Env:\JESTER_MODULE_ONLY_TEST -ErrorAction SilentlyContinue } else { $env:JESTER_MODULE_ONLY_TEST = $previousModuleOnly }
         if ($null -eq $previousNoErrorPause) { Remove-Item Env:\JESTER_NO_ERROR_PAUSE -ErrorAction SilentlyContinue } else { $env:JESTER_NO_ERROR_PAUSE = $previousNoErrorPause }
     }

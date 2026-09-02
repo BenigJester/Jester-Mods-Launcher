@@ -1,6 +1,7 @@
 package com.moodtools.hub.modules
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryGameTest {
@@ -69,6 +70,29 @@ class LibraryGameTest {
     }
 
     @Test
+    fun completedShellSetupKeepsTheFirstPlayAction() {
+        assertEquals(
+            "Play",
+            libraryPrimaryActionLabel(
+                status = LibraryGameStatus.READY,
+                launchAction = LibraryLaunchAction.PLAY,
+                launch = LaunchUiState(
+                    headline = "Example shell installed",
+                    detail = "The game-branded shell is ready."
+                )
+            )
+        )
+        assertEquals(
+            "Play again",
+            libraryPrimaryActionLabel(
+                status = LibraryGameStatus.READY,
+                launchAction = LibraryLaunchAction.PLAY,
+                launch = LaunchUiState(gameLaunched = true)
+            )
+        )
+    }
+
+    @Test
     fun libraryCarriesPrivateGrantIdentityAndExpiryFromItsListing() {
         val scope = "private.township"
         val expiry = 1_900_000_000L
@@ -87,6 +111,26 @@ class LibraryGameTest {
 
         assertEquals(scope, privateGame.privateScope)
         assertEquals(expiry, privateGame.privateAccessExpiresAtEpochSeconds)
+    }
+
+    @Test
+    fun privatePresentationDoesNotWaitForAccessExpiryRefresh() {
+        val regular = libraryGame("Private cache")
+        val listing = regular.listing!!.copy(
+            catalog = regular.listing.catalog.copy(privateScope = "private.cached"),
+            privateAccessExpiresAtEpochSeconds = null
+        )
+        val privateGame = LibraryGame(
+            module = regular.module,
+            game = regular.game,
+            listing = listing,
+            installedBuild = regular.installedBuild,
+            installedComplete = regular.installedComplete
+        )
+
+        assertTrue(listing.privateAccessProtected)
+        assertTrue(privateGame.privateAccessProtected)
+        assertEquals(null, privateGame.privateAccessExpiresAtEpochSeconds)
     }
 
     @Test

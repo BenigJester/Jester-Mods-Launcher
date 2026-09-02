@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = 'Standalone Menu'
 include ':app'
+include ':identity-shell-template'
 include ':black-reflection', ':compiler', ':Bcore'
 
 project(':black-reflection').projectDir = file('third_party/BlackBox/black-reflection')

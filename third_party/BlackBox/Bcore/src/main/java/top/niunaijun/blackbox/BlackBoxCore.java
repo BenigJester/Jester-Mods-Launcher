@@ -1142,7 +1142,7 @@ public class BlackBoxCore extends ClientConfiguration {
     public InstallResult installPackageAsUser(String packageName, int userId) {
         try {
             
-            if (packageName.equals(getHostPkg())) {
+            if (packageName.equals(getHostPkg()) && !isHostPackageVirtualizationEnabled()) {
                 return new InstallResult().installError("Cannot clone BlackBox app from within BlackBox. This would create infinite recursion and is not allowed for security reasons.");
             }
             
@@ -1160,7 +1160,7 @@ public class BlackBoxCore extends ClientConfiguration {
             PackageInfo packageInfo = getPackageManager().getPackageArchiveInfo(apk.getAbsolutePath(), 0);
             if (packageInfo != null) {
                 String packageName = packageInfo.packageName;
-                if (packageName.equals(getHostPkg())) {
+                if (packageName.equals(getHostPkg()) && !isHostPackageVirtualizationEnabled()) {
                     return new InstallResult().installError("Cannot clone BlackBox app from within BlackBox. This would create infinite recursion and is not allowed for security reasons.");
                 }
             }
@@ -1899,6 +1899,11 @@ public class BlackBoxCore extends ClientConfiguration {
             return false;
         }
         return packageName.equals(getHostPkg());
+    }
+
+    public boolean isHostPackageVirtualizationEnabled() {
+        return mClientConfiguration != null
+                && mClientConfiguration.isHostPackageVirtualizationEnabled();
     }
     
     

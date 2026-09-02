@@ -13,6 +13,24 @@ internal object BinaryXmlStringPool {
     private const val SORTED_FLAG = 0x00000001
 
     fun replaceExact(document: ByteArray, expected: String, replacement: String): ByteArray {
+        return replaceStrings(document, expected, requireExactlyOne = true) { value ->
+            if (value == expected) replacement else value
+        }
+    }
+
+    /** Rewrites the manifest package and every authority derived from it. */
+    fun replaceSubstring(document: ByteArray, expected: String, replacement: String): ByteArray {
+        return replaceStrings(document, expected, requireExactlyOne = false) { value ->
+            value.replace(expected, replacement)
+        }
+    }
+
+    private fun replaceStrings(
+        document: ByteArray,
+        expected: String,
+        requireExactlyOne: Boolean,
+        transform: (String) -> String
+    ): ByteArray {
         require(document.size >= 8 && u16(document, 0) == XML_TYPE) {
             "AndroidManifest.xml is not binary XML"
         }
@@ -34,7 +52,8 @@ internal object BinaryXmlStringPool {
                 val rebuilt = rebuildStringPool(
                     document.copyOfRange(cursor, cursor + chunkSize),
                     expected,
-                    replacement
+                    requireExactlyOne,
+                    transform
                 )
                 val output = ByteArray(document.size - chunkSize + rebuilt.size)
                 document.copyInto(output, 0, 0, cursor)
@@ -48,7 +67,12 @@ internal object BinaryXmlStringPool {
         error("AndroidManifest.xml has no string pool")
     }
 
-    private fun rebuildStringPool(chunk: ByteArray, expected: String, replacement: String): ByteArray {
+    private fun rebuildStringPool(
+        chunk: ByteArray,
+        expected: String,
+        requireExactlyOne: Boolean,
+        transform: (String) -> String
+    ): ByteArray {
         require(chunk.size >= 28 && u16(chunk, 0) == STRING_POOL_TYPE) {
             "AndroidManifest.xml string pool is invalid"
         }
@@ -83,15 +107,16 @@ internal object BinaryXmlStringPool {
             } else {
                 decodeUtf16(chunk, stringsStart + relativeOffset, stringDataEnd)
             }
-            if (value == expected) {
-                strings += replacement
-                replacements++
-            } else {
-                strings += value
-            }
+            val rewritten = transform(value)
+            strings += rewritten
+            if (rewritten != value) replacements++
         }
-        require(replacements == 1) {
-            "Expected one $expected declaration in AndroidManifest.xml; found $replacements"
+        require(if (requireExactlyOne) replacements == 1 else replacements > 0) {
+            if (requireExactlyOne) {
+                "Expected one $expected declaration in AndroidManifest.xml; found $replacements"
+            } else {
+                "Expected at least one $expected declaration in AndroidManifest.xml"
+            }
         }
 
         val encodedStrings = ByteArrayOutputStream()

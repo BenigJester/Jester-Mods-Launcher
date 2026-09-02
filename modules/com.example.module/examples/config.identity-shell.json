@@ -1,0 +1,14 @@
+{
+  "package_name": "com.example.game",
+  "title": "Identity Shell Module Template",
+  "supported_versions": [
+    "1.0.0"
+  ],
+  "supported_abis": [
+    "arm64-v8a"
+  ],
+  "nonroot_method": "identity_shell",
+  "entry_point": "com.android.support.Main",
+  "dex_file": "classes.dex",
+  "native_file": "libmenu_native.so"
+}

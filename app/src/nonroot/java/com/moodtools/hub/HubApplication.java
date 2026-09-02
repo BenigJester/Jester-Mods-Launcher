@@ -30,10 +30,12 @@ public final class HubApplication extends Application {
             new WeakHashMap<>();
     private final Map<Application, Boolean> directLifecycleApplications =
             new WeakHashMap<>();
+    private boolean identityShell;
 
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
+        identityShell = isIdentityShellApplication(base);
         BlackBoxCore.get().doAttachBaseContext(base, new ClientConfiguration() {
             @Override
             public String getHostPackageName() {
@@ -45,6 +47,11 @@ public final class HubApplication extends Application {
                 // The standalone launcher owns the BlackBox lifetime. A daemon would keep the
                 // virtual runtime alive after the user removes the launcher task from Recents.
                 return false;
+            }
+
+            @Override
+            public boolean isHostPackageVirtualizationEnabled() {
+                return identityShell;
             }
 
             @Override
@@ -68,7 +75,7 @@ public final class HubApplication extends Application {
                                                 Context context, int userId) {
                 android.util.Log.i("NonRootBlackBox", "beforeCreateApplication package=" + packageName
                         + " process=" + processName + " user=" + userId);
-                if (userId != 0 || packageName == null || packageName.equals(getPackageName())) {
+                if (userId != 0 || packageName == null || !isModuleTarget(packageName)) {
                     return;
                 }
                 ensureModuleLoaded(packageName, userId);
@@ -78,7 +85,7 @@ public final class HubApplication extends Application {
             public void beforeApplicationOnCreate(String packageName, String processName,
                                                   android.app.Application application, int userId) {
                 if (application == null || userId != 0 || packageName == null ||
-                        packageName.equals(getPackageName())) {
+                        !isModuleTarget(packageName)) {
                     return;
                 }
                 // RootBootstrap is reserved for the root injector. Installing it here used to
@@ -268,9 +275,8 @@ public final class HubApplication extends Application {
                         || (android.os.Build.VERSION.SDK_INT >= 17 && activity.isDestroyed())) {
                     return false;
                 }
-                if (activity instanceof FacebookCallbackActivity) {
-                    return false;
-                }
+                if ("com.moodtools.hub.FacebookCallbackActivity".equals(
+                        activity.getClass().getName())) return false;
                 return !activity.getClass().getName().startsWith(FACEBOOK_ACTIVITY_PREFIX);
             }
 
@@ -322,7 +328,7 @@ public final class HubApplication extends Application {
     }
 
     private synchronized boolean ensureModuleLoaded(String packageName, int userId) {
-        if (packageName == null || packageName.equals(getPackageName()) || userId != 0) return false;
+        if (packageName == null || !isModuleTarget(packageName) || userId != 0) return false;
         if (moduleLoaders.containsKey(packageName)) return true;
 
         File moduleDirectory = BEnvironment.getDataFilesDir(packageName, userId);
@@ -369,5 +375,21 @@ public final class HubApplication extends Application {
     private static String readText(File file) throws Exception {
         return new String(java.nio.file.Files.readAllBytes(file.toPath()),
                 java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private boolean isModuleTarget(String packageName) {
+        return packageName != null && (!packageName.equals(getPackageName()) || identityShell);
+    }
+
+    private static boolean isIdentityShellApplication(Context context) {
+        try {
+            android.os.Bundle metadata = context.getPackageManager()
+                    .getApplicationInfo(context.getPackageName(),
+                            android.content.pm.PackageManager.GET_META_DATA).metaData;
+            return metadata != null && metadata.getBoolean(
+                    "com.moodtools.identity_shell", false);
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 }

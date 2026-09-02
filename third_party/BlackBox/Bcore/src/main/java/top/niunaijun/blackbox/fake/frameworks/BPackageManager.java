@@ -524,7 +524,8 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
                         if (packageInfo != null) {
                             String packageName = packageInfo.packageName;
                             String hostPackageName = BlackBoxCore.getHostPkg();
-                            if (packageName.equals(hostPackageName)) {
+                            if (packageName.equals(hostPackageName)
+                                    && !BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
                                 Log.w(TAG, "Attempt to install BlackBox app detected and blocked: " + packageName);
                                 return new InstallResult().installError("Cannot clone BlackBox app from within BlackBox. This would create infinite recursion and is not allowed for security reasons.");
                             }

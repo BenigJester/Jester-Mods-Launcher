@@ -20,9 +20,11 @@ int get_api_sdk(JNIEnv *env);
 void CheckOverlayPermission(JNIEnv *env, jclass thiz, jobject ctx);
 
 // Starts the native observer exactly once after Java identifies how this payload was loaded.
-// 1 = launcher injection (root or BlackBox), 2 = authorized direct-patch APK.
+// 1 = launcher injection/root, 2 = authorized direct-patch APK,
+// 3 = authorized exact-package identity shell, 4 = external identity-shell compatibility only.
 bool StartNativeRuntime(int method);
 
-bool IsDirectPatchRuntime();
+bool RequiresPackageIdentityBypass();
+bool IsIdentityShellCompatibilityOnlyRuntime();
 
 #endif //ANDROID_MOD_MENU_JNI_HPP

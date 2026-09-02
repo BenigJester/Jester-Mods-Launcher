@@ -262,8 +262,8 @@ foreach ($moduleDir in $moduleDirectories) {
     } catch {
         throw "Invalid JSON in ${config}: $($_.Exception.Message)"
     }
-    if ($moduleConfig.nonroot_method -notin @('injection', 'direct_patch')) {
-        throw "Module ${name} must declare nonroot_method as 'injection' or 'direct_patch'."
+    if ($moduleConfig.nonroot_method -notin @('injection', 'direct_patch', 'identity_shell')) {
+        throw "Module ${name} must declare nonroot_method as 'injection', 'direct_patch', or 'identity_shell'."
     }
     if ($moduleConfig.nonroot_method -eq 'direct_patch') {
         $launchGuard = Join-Path $java "DirectLaunchGuard.java"
@@ -483,11 +483,11 @@ if ($Mode -eq "release") {
     $launcherApk = Join-Path $root "app\build\outputs\apk\nonroot\debug\app-nonroot-debug.apk"
     & adb install -r -d $launcherApk
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & adb shell run-as com.moodtools.hub.nonroot mkdir -p files/menus
+    & adb shell run-as com.moodtools.hub.nonroot.debug mkdir -p files/menus
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     foreach ($moduleStage in Get-ChildItem -LiteralPath $output -Directory) {
         $remoteModule = "files/menus/$($moduleStage.Name)"
-        & adb shell run-as com.moodtools.hub.nonroot mkdir -p $remoteModule
+        & adb shell run-as com.moodtools.hub.nonroot.debug mkdir -p $remoteModule
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
         foreach ($file in Get-ChildItem -LiteralPath $moduleStage.FullName -Recurse -File) {
@@ -499,9 +499,9 @@ if ($Mode -eq "release") {
 
             & adb push $file.FullName $remoteTemporary | Out-Null
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & adb shell run-as com.moodtools.hub.nonroot mkdir -p $remoteParent
+            & adb shell run-as com.moodtools.hub.nonroot.debug mkdir -p $remoteParent
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & adb shell run-as com.moodtools.hub.nonroot cp $remoteTemporary $remoteDestination
+            & adb shell run-as com.moodtools.hub.nonroot.debug cp $remoteTemporary $remoteDestination
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             & adb shell rm -f $remoteTemporary
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

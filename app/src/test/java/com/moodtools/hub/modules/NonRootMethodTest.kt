@@ -25,6 +25,7 @@ class NonRootMethodTest {
             NonRootMethod.fromJson("injection", "com.ChillyRoom.DungeonShooter")
         )
         assertEquals(NonRootMethod.DIRECT_PATCH, NonRootMethod.fromJson("direct_patch"))
+        assertEquals(NonRootMethod.IDENTITY_SHELL, NonRootMethod.fromJson("identity_shell"))
         assertThrows(IllegalArgumentException::class.java) {
             NonRootMethod.fromJson("virtual_magic")
         }
@@ -56,5 +57,39 @@ class NonRootMethodTest {
         assertEquals("NON-ROOT SETUP", presentation.setupLabel)
         assertEquals("Non-root method", presentation.fieldLabel)
         assertEquals("How patched install works", presentation.explanationTitle)
+    }
+
+    @Test
+    fun identityShellPresentationUsesItsUniversalWireValue() {
+        val presentation = launcherMethodPresentation(NonRootMethod.IDENTITY_SHELL, rootMode = false)
+
+        assertEquals("identity_shell", NonRootMethod.IDENTITY_SHELL.jsonValue)
+        assertEquals("SHELL", presentation.badgeLabel)
+        assertEquals("How exact-package shell works", presentation.explanationTitle)
+    }
+
+    @Test
+    fun identityShellRequiresOfficialRestoreWhenALegacyPatchIsInstalled() {
+        assertEquals(
+            LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL,
+            identityShellLaunchAction(
+                installedIdentityShell = false,
+                installedDirectPatch = true
+            )
+        )
+        assertEquals(
+            LibraryLaunchAction.SHELL_AND_INSTALL,
+            identityShellLaunchAction(
+                installedIdentityShell = false,
+                installedDirectPatch = false
+            )
+        )
+        assertEquals(
+            LibraryLaunchAction.PLAY,
+            identityShellLaunchAction(
+                installedIdentityShell = true,
+                installedDirectPatch = true
+            )
+        )
     }
 }

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <package android:name="com.moodtools.hub.nonroot" />
+    </queries>
+
+    <application
+        android:name=".IdentityShellApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/identity_shell_icon"
+        android:label="__IDENTITY_SHELL_LABEL__"
+        android:roundIcon="@mipmap/identity_shell_icon_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.IdentityShell"
+        tools:replace="android:allowBackup,android:fullBackupContent,android:icon,android:label,android:roundIcon,android:theme">
+
+        <meta-data
+            android:name="com.moodtools.identity_shell"
+            android:value="true" />
+
+        <activity
+            android:name=".IdentityShellActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.game"
+            android:theme="@style/Theme.IdentityShell">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

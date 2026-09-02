@@ -90,6 +90,53 @@ class LauncherAccessManager(context: Context) {
         )
     }
 
+    /** Returns a verified private lease from device storage without contacting the server. */
+    internal fun cachedPrivateAccess(scope: String): LauncherPrivateAccessResult {
+        require(scope.matches(PRIVATE_SCOPE_PATTERN)) { "Invalid private module scope" }
+        return try {
+            val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
+            if (digitalKey.isEmpty()) {
+                return LauncherPrivateAccessResult.Unavailable(
+                    IllegalStateException("Active launcher access is required")
+                )
+            }
+            val cachedText = preferences.getString("$PRIVATE_LEASE_PREFIX$scope", null).orEmpty()
+            if (cachedText.isEmpty()) {
+                return LauncherPrivateAccessResult.Unavailable(
+                    IllegalStateException("No cached private approval is available")
+                )
+            }
+            val proofIdentity = proofKeys.identity()
+            val lease = LauncherPrivateLeaseVerifier.verify(
+                envelope = JSONObject(cachedText),
+                expectedScope = scope,
+                expectedDeviceId = deviceId,
+                expectedRecoveryId = recoveryId,
+                expectedFlavor = BuildConfig.FLAVOR,
+                expectedProofKeyId = proofIdentity.keyId
+            )
+            val now = System.currentTimeMillis() / 1_000L
+            when (LauncherOfflineLeaseVerifier.clockStatus(
+                issuedAt = lease.issuedAt,
+                expiresAt = lease.expiresAt,
+                now = now,
+                lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
+                elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
+            )) {
+                LauncherLeaseClockStatus.VALID -> LauncherPrivateAccessResult.Approved(lease)
+                LauncherLeaseClockStatus.EXPIRED -> LauncherPrivateAccessResult.Unavailable(
+                    IllegalStateException("The cached private approval has expired")
+                )
+                LauncherLeaseClockStatus.ROLLED_BACK -> LauncherPrivateAccessResult.Unavailable(
+                    IllegalStateException("The device clock cannot verify cached private approval")
+                )
+            }
+        } catch (error: Throwable) {
+            LauncherPrivateAccessResult.Unavailable(error)
+        }
+    }
+
     /** Refreshes a private scope and distinguishes authoritative denial from temporary unavailability. */
     internal fun checkPrivateAccess(scope: String): LauncherPrivateAccessResult {
         require(scope.matches(PRIVATE_SCOPE_PATTERN)) { "Invalid private module scope" }
@@ -102,26 +149,7 @@ class LauncherAccessManager(context: Context) {
                 )
             }
             val proofIdentity = proofKeys.identity()
-            val cachedText = preferences.getString("$PRIVATE_LEASE_PREFIX$scope", null).orEmpty()
-            val cached = runCatching {
-                LauncherPrivateLeaseVerifier.verify(
-                    envelope = JSONObject(cachedText),
-                    expectedScope = scope,
-                    expectedDeviceId = deviceId,
-                    expectedRecoveryId = recoveryId,
-                    expectedFlavor = BuildConfig.FLAVOR,
-                    expectedProofKeyId = proofIdentity.keyId
-                )
-            }.getOrNull()?.takeIf { lease ->
-                LauncherOfflineLeaseVerifier.clockStatus(
-                    issuedAt = lease.issuedAt,
-                    expiresAt = lease.expiresAt,
-                    now = now,
-                    lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
-                    elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                    lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
-                ) == LauncherLeaseClockStatus.VALID
-            }
+            val cached = (cachedPrivateAccess(scope) as? LauncherPrivateAccessResult.Approved)?.lease
             try {
                 val response = postJson(
                     "$BASE_URL/api/launcher/private-access",

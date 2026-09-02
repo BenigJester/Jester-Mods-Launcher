@@ -101,6 +101,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -108,6 +109,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moodtools.hub.BuildConfig
+import com.moodtools.hub.PackageReplacementKind
 import com.moodtools.hub.formatRemainingAccessPrimary
 import com.moodtools.hub.networking.CatalogIconClient
 import com.moodtools.hub.networking.LauncherChangelogEntry
@@ -140,7 +142,16 @@ private val PrivateViolet = Color(0xFFC7B4FF)
 
 /** Launcher-owned update state. The module itself no longer needs to own an updater screen. */
 data class ModuleUpdateUiState(
+    val visible: Boolean = false,
     val inProgress: Boolean = false,
+    val cancelling: Boolean = false,
+    val cancelled: Boolean = false,
+    val stage: SecureTransferStage = SecureTransferStage.READY,
+    val stageProgress: Float? = null,
+    val title: String = "",
+    val packageName: String = "",
+    val targetVersion: String = "",
+    val actionLabel: String = "Add-on",
     val headline: String? = null,
     val detail: String? = null,
     val updateAvailable: Boolean = false,
@@ -149,8 +160,21 @@ data class ModuleUpdateUiState(
     val verificationUrl: String? = null,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
-    val changelog: List<ModuleChangelogEntry> = emptyList()
+    val changelog: List<ModuleChangelogEntry> = emptyList(),
+    val diagnostics: List<String> = emptyList()
 )
+
+enum class SecureTransferStage {
+    READY,
+    PREPARING,
+    DOWNLOADING,
+    VERIFYING,
+    ACTIVATING,
+    WAITING_FOR_ANDROID,
+    COMPLETED,
+    FAILED,
+    CANCELLED
+}
 
 data class GameDataResetUiState(
     val inProgress: Boolean = false,
@@ -198,6 +222,10 @@ data class LauncherUpdateUiState(
     val screenOpen: Boolean = false,
     val inProgress: Boolean = false,
     val installing: Boolean = false,
+    val cancelling: Boolean = false,
+    val cancelled: Boolean = false,
+    val stage: SecureTransferStage = SecureTransferStage.READY,
+    val stageProgress: Float? = null,
     val downloaded: Boolean = false,
     val failed: Boolean = false,
     val build: Long = 0L,
@@ -207,13 +235,37 @@ data class LauncherUpdateUiState(
     val detail: String? = null,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
-    val changelog: List<LauncherChangelogEntry> = emptyList()
+    val changelog: List<LauncherChangelogEntry> = emptyList(),
+    val diagnostics: List<String> = emptyList()
 )
 
 data class InstalledModuleUpdatesUiState(
     val open: Boolean = false,
     val packageNames: List<String> = emptyList(),
-    val previewUpdates: List<LibraryGame> = emptyList()
+    val previewUpdates: List<LibraryGame> = emptyList(),
+    val inProgress: Boolean = false,
+    val cancelling: Boolean = false,
+    val cancelled: Boolean = false,
+    val updatingAll: Boolean = false,
+    val itemStates: Map<String, InstalledModuleUpdateItemUiState> = emptyMap()
+)
+
+enum class InstalledModuleUpdateItemStatus {
+    AVAILABLE,
+    QUEUED,
+    DOWNLOADING,
+    INSTALLED,
+    FAILED
+}
+
+data class InstalledModuleUpdateItemUiState(
+    val status: InstalledModuleUpdateItemStatus = InstalledModuleUpdateItemStatus.AVAILABLE,
+    val stage: SecureTransferStage = SecureTransferStage.READY,
+    val stageProgress: Float? = null,
+    val detail: String? = null,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val diagnostics: List<String> = emptyList()
 )
 
 data class ChangelogUiState(
@@ -245,18 +297,61 @@ data class LaunchUiState(
     val inProgress: Boolean = false,
     val headline: String? = null,
     val detail: String? = null,
-    val completed: Boolean = false,
+    val gameLaunched: Boolean = false,
     val failed: Boolean = false
 )
+
+/** Visible progress for direct-patch and exact-package shell preparation/install. */
+data class PackageSetupUiState(
+    val visible: Boolean = false,
+    val inProgress: Boolean = false,
+    val cancelling: Boolean = false,
+    val cancelled: Boolean = false,
+    val completed: Boolean = false,
+    val failed: Boolean = false,
+    val stage: SecureTransferStage = SecureTransferStage.READY,
+    val stageProgress: Float? = null,
+    val title: String = "",
+    val packageName: String = "",
+    val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH,
+    val headline: String? = null,
+    val detail: String? = null,
+    val diagnostics: List<String> = emptyList()
+)
+
+internal fun libraryPrimaryActionLabel(
+    status: LibraryGameStatus,
+    launchAction: LibraryLaunchAction,
+    launch: LaunchUiState
+): String = when {
+    launch.inProgress && launchAction == LibraryLaunchAction.SHELL_AND_INSTALL -> "Preparing shell…"
+    launch.inProgress && launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "Checking migration…"
+    launch.inProgress && launchAction != LibraryLaunchAction.PLAY -> "Preparing patch…"
+    status == LibraryGameStatus.RUNNING -> "Resume"
+    status !in setOf(
+        LibraryGameStatus.READY,
+        LibraryGameStatus.UPDATE_AVAILABLE
+    ) -> "View requirements"
+    launch.inProgress -> "Launching…"
+    launchAction == LibraryLaunchAction.PATCH_AND_INSTALL -> "Patch & install"
+    launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL -> "Update patched game"
+    launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "Restore official game"
+    launchAction == LibraryLaunchAction.SHELL_AND_INSTALL -> "Create & install shell"
+    launch.gameLaunched -> "Play again"
+    else -> "Play"
+}
 
 data class DirectPatchPromptUiState(
     val visible: Boolean = false,
     val title: String = "",
-    val replacesOriginal: Boolean = false
+    val replacesOriginal: Boolean = false,
+    val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH,
+    val restoresOfficialGame: Boolean = false
 )
 
 private const val SCREEN_TRANSITION_MS = 220
 private const val SCREEN_TRANSITION_DEFER_MS = 280L
+private const val ADD_ON_DETAILS_MIN_VISIBLE_MS = 1_500L
 private const val LOADING_STATE_MIN_VISIBLE_MS = 360L
 private const val ICON_BITMAP_DEFER_MS = 40L
 private const val BROWSE_RESULT_CACHE_LIMIT = 36
@@ -270,6 +365,37 @@ private sealed class LauncherPage(val key: String, val rank: Int) {
     object LauncherUpdate : LauncherPage("launcher-update", 4)
     object Changelog : LauncherPage("changelog", 5)
     object AccountIdentity : LauncherPage("account-identity", 6)
+}
+
+internal enum class LauncherOverlay {
+    LAUNCHER_UPDATE,
+    DIRECT_PATCH,
+    INSTALLED_ADD_ON_UPDATES,
+    ADD_ON_TRANSFER,
+    GAME_COMPANION_INSTALL,
+    PACKAGE_SETUP
+}
+
+/**
+ * Keeps independent background operations from stacking competing windows. Update experiences
+ * retain their own surfaces; the companion installer waits behind them and resumes visibly once
+ * the higher-priority window has closed.
+ */
+internal fun selectLauncherOverlay(
+    launcherUpdateOpen: Boolean,
+    directPatchOpen: Boolean,
+    installedAddOnUpdatesOpen: Boolean,
+    addOnTransferOpen: Boolean,
+    gameCompanionInstallOpen: Boolean,
+    packageSetupOpen: Boolean
+): LauncherOverlay? = when {
+    launcherUpdateOpen -> LauncherOverlay.LAUNCHER_UPDATE
+    installedAddOnUpdatesOpen -> LauncherOverlay.INSTALLED_ADD_ON_UPDATES
+    addOnTransferOpen -> LauncherOverlay.ADD_ON_TRANSFER
+    gameCompanionInstallOpen -> LauncherOverlay.GAME_COMPANION_INSTALL
+    directPatchOpen -> LauncherOverlay.DIRECT_PATCH
+    packageSetupOpen -> LauncherOverlay.PACKAGE_SETUP
+    else -> null
 }
 
 private class LauncherScreenCache {
@@ -361,6 +487,7 @@ fun GameHubScreen(
     changelogState: StateFlow<ChangelogUiState>,
     accountIdentityState: StateFlow<AccountIdentityUiState>,
     launchState: StateFlow<LaunchUiState>,
+    packageSetupState: StateFlow<PackageSetupUiState>,
     directPatchPromptState: StateFlow<DirectPatchPromptUiState>,
     onOpenGame: (LibraryGame) -> Unit,
     onBack: () -> Unit,
@@ -369,6 +496,9 @@ fun GameHubScreen(
     onLaunch: (LibraryGame) -> Unit,
     onConfirmDirectPatch: () -> Unit,
     onDismissDirectPatch: () -> Unit,
+    onCancelPackageSetup: () -> Unit,
+    onDismissPackageSetup: () -> Unit,
+    onRetryPackageSetup: () -> Unit,
     onRemoveFromLibrary: (LibraryGame) -> Unit,
     onClearGameData: (LibraryGame) -> Unit,
     onRemoveMultipleFromLibrary: (List<LibraryGame>) -> Unit,
@@ -385,8 +515,14 @@ fun GameHubScreen(
     onOpenLauncherUpdate: () -> Unit,
     onCloseLauncherUpdate: () -> Unit,
     onInstallLauncherUpdate: () -> Unit,
+    onCancelLauncherUpdate: () -> Unit,
+    onCancelModuleTransfer: () -> Unit,
+    onDismissModuleTransfer: () -> Unit,
     onDismissInstalledModuleUpdates: () -> Unit,
+    onCancelInstalledModuleUpdates: () -> Unit,
     onReviewInstalledModuleUpdate: (LibraryGame) -> Unit,
+    onUpdateInstalledModule: (LibraryGame) -> Unit,
+    onUpdateAllInstalledModules: () -> Unit,
     onOpenChangelog: () -> Unit,
     onCloseChangelog: () -> Unit,
     onOpenAccountIdentity: () -> Unit,
@@ -411,6 +547,7 @@ fun GameHubScreen(
     val changelog by changelogState.collectAsStateWithLifecycle()
     val accountIdentity by accountIdentityState.collectAsStateWithLifecycle()
     val launch by launchState.collectAsStateWithLifecycle()
+    val packageSetup by packageSetupState.collectAsStateWithLifecycle()
     val directPatchPrompt by directPatchPromptState.collectAsStateWithLifecycle()
     var browseQuery by rememberSaveable { mutableStateOf("") }
     var browseFilter by rememberSaveable { mutableStateOf(BrowseFilter.ALL.name) }
@@ -484,6 +621,7 @@ fun GameHubScreen(
                             DeferredScreenContent(
                                 screenCache = screenCache,
                                 contentKey = visiblePage.key,
+                                minimumPlaceholderMillis = ADD_ON_DETAILS_MIN_VISIBLE_MS,
                                 placeholder = { ModuleScreenPlaceholder(visiblePage.game) }
                             ) {
                                 ModuleScreen(
@@ -558,6 +696,7 @@ fun GameHubScreen(
                             DeferredScreenContent(
                                 screenCache = screenCache,
                                 contentKey = visiblePage.key,
+                                minimumPlaceholderMillis = ADD_ON_DETAILS_MIN_VISIBLE_MS,
                                 placeholder = {
                                     ScreenTransitionPlaceholder(
                                         backLabel = "Browse add-ons",
@@ -663,51 +802,65 @@ fun GameHubScreen(
                 }
             }
         }
-        if (launcherUpdate.screenOpen) {
-            LauncherUpdateDialog(
+        val installedUpdates = installedModuleUpdatePrompt.previewUpdates.ifEmpty {
+            installedModuleUpdatePrompt.packageNames.mapNotNull { packageName ->
+                games.firstOrNull { it.packageName == packageName }
+            }
+        }
+        val activeOverlay = selectLauncherOverlay(
+            launcherUpdateOpen = launcherUpdate.screenOpen,
+            directPatchOpen = directPatchPrompt.visible,
+            installedAddOnUpdatesOpen = installedModuleUpdatePrompt.open && installedUpdates.isNotEmpty(),
+            addOnTransferOpen = update.visible,
+            gameCompanionInstallOpen = gameInstall.visible,
+            packageSetupOpen = packageSetup.visible
+        )
+        when (activeOverlay) {
+            LauncherOverlay.LAUNCHER_UPDATE -> LauncherUpdateDialog(
                 update = launcherUpdate,
                 onDismiss = onCloseLauncherUpdate,
-                onInstall = onInstallLauncherUpdate
+                onInstall = onInstallLauncherUpdate,
+                onCancel = onCancelLauncherUpdate
             )
-        }
-        if (
-            gameInstall.visible &&
-            !launcherUpdate.screenOpen &&
-            !directPatchPrompt.visible
-        ) {
-            GameInstallDialog(
+            LauncherOverlay.DIRECT_PATCH -> DirectPatchInstallDialog(
+                state = directPatchPrompt,
+                onConfirm = onConfirmDirectPatch,
+                onDismiss = onDismissDirectPatch
+            )
+            LauncherOverlay.INSTALLED_ADD_ON_UPDATES -> InstalledModuleUpdatesDialog(
+                screenCache = screenCache,
+                updates = installedUpdates,
+                state = installedModuleUpdatePrompt,
+                onDismiss = onDismissInstalledModuleUpdates,
+                onCancel = onCancelInstalledModuleUpdates,
+                onReview = onReviewInstalledModuleUpdate,
+                onUpdate = onUpdateInstalledModule,
+                onUpdateAll = onUpdateAllInstalledModules
+            )
+            LauncherOverlay.ADD_ON_TRANSFER -> ModuleTransferDialog(
+                state = update,
+                canRetry = pendingDownload?.game != null || selected?.listing?.game != null,
+                onRetry = {
+                    (pendingDownload ?: selected?.listing)?.let(onInstall)
+                },
+                onCancel = onCancelModuleTransfer,
+                onDismiss = onDismissModuleTransfer
+            )
+            LauncherOverlay.GAME_COMPANION_INSTALL -> GameInstallDialog(
                 state = gameInstall,
                 canRetry = pendingDownload != null,
                 onRetry = { pendingDownload?.let(onAcquireGame) },
                 onCancel = onCancelGameInstall,
                 onDismiss = onDismissGameInstall
             )
-        }
-        val installedUpdates = installedModuleUpdatePrompt.previewUpdates.ifEmpty {
-            installedModuleUpdatePrompt.packageNames.mapNotNull { packageName ->
-                games.firstOrNull { it.packageName == packageName }
-            }
-        }
-        if (
-            installedModuleUpdatePrompt.open &&
-            installedUpdates.isNotEmpty() &&
-            !launcherUpdate.screenOpen &&
-            !directPatchPrompt.visible &&
-            !gameInstall.visible
-        ) {
-            InstalledModuleUpdatesDialog(
-                screenCache = screenCache,
-                updates = installedUpdates,
-                onDismiss = onDismissInstalledModuleUpdates,
-                onReview = onReviewInstalledModuleUpdate
+            LauncherOverlay.PACKAGE_SETUP -> PackageSetupDialog(
+                state = packageSetup,
+                canRetry = selected?.game != null,
+                onRetry = onRetryPackageSetup,
+                onCancel = onCancelPackageSetup,
+                onDismiss = onDismissPackageSetup
             )
-        }
-        if (directPatchPrompt.visible) {
-            DirectPatchInstallDialog(
-                state = directPatchPrompt,
-                onConfirm = onConfirmDirectPatch,
-                onDismiss = onDismissDirectPatch
-            )
+            null -> Unit
         }
     }
 }
@@ -719,6 +872,11 @@ private fun DirectPatchInstallDialog(
     onDismiss: () -> Unit
 ) {
     val title = state.title.ifBlank { "game" }
+    val identityShell = state.kind == PackageReplacementKind.IDENTITY_SHELL
+    if (state.restoresOfficialGame) {
+        LegacyPatchMigrationDialog(title, onConfirm, onDismiss)
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
@@ -728,12 +886,20 @@ private fun DirectPatchInstallDialog(
         title = {
             Column {
                 Text(
-                    if (state.replacesOriginal) "Install patched $title" else "Update patched $title",
+                    when {
+                        identityShell -> "Install $title compatibility shell"
+                        state.replacesOriginal -> "Install patched $title"
+                        else -> "Update patched $title"
+                    },
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    if (state.replacesOriginal) "Two Android confirmations are required" else "Your patched game is ready to update",
+                    when {
+                        identityShell -> "The original game has been preserved unchanged"
+                        state.replacesOriginal -> "Two Android confirmations are required"
+                        else -> "Your patched game is ready to update"
+                    },
                     color = AccentBlue,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
@@ -746,13 +912,21 @@ private fun DirectPatchInstallDialog(
                     DirectPatchDialogStep(
                         number = "1",
                         headline = "Remove the current installation",
-                        detail = "Android will uninstall the Play-signed game. This permanently erases its local app data, so back up anything you need before continuing.",
+                        detail = if (identityShell) {
+                            "Android will uninstall the Play-signed game after Jester Mods preserves its untouched APK set. Local game data is still erased, so back up anything you need."
+                        } else {
+                            "Android will uninstall the Play-signed game. This permanently erases its local app data, so back up anything you need before continuing."
+                        },
                         warning = true
                     )
                     DirectPatchDialogStep(
                         number = "2",
-                        headline = "Install the verified patched game",
-                        detail = "Jester Mods will open Android's installer automatically after the uninstall finishes."
+                        headline = if (identityShell) "Install the game-branded shell" else "Install the verified patched game",
+                        detail = if (identityShell) {
+                            "The home-screen name and icon come from the original game. Opening it starts the preserved game payload directly."
+                        } else {
+                            "Jester Mods will open Android's installer automatically after the uninstall finishes."
+                        }
                     )
                 } else {
                     DirectPatchDialogStep(
@@ -762,7 +936,11 @@ private fun DirectPatchInstallDialog(
                     )
                 }
                 Text(
-                    "The prepared APK set and embedded add-on have already passed verification.",
+                    if (identityShell) {
+                        "The shell, original game backup, branding, and add-on have already passed verification."
+                    } else {
+                        "The prepared APK set and embedded add-on have already passed verification."
+                    },
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -777,6 +955,74 @@ private fun DirectPatchInstallDialog(
                     if (state.replacesOriginal) "Continue to uninstall" else "Continue to install",
                     fontWeight = FontWeight.Bold
                 )
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                border = BorderStroke(1.dp, Hairline),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+            ) { Text("Not now") }
+        }
+    )
+}
+
+@Composable
+private fun LegacyPatchMigrationDialog(
+    title: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        containerColor = SurfaceRaised,
+        titleContentColor = Color.White,
+        textContentColor = Muted,
+        title = {
+            Column {
+                Text("Restore the official $title", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    "A previous Jester-patched installation was detected",
+                    color = PrivateGold,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DirectPatchDialogStep(
+                    number = "1",
+                    headline = "Back up anything important",
+                    detail = "Android must remove the previous patched installation before an original game package can be restored. Its local app data will be erased.",
+                    warning = true
+                )
+                DirectPatchDialogStep(
+                    number = "2",
+                    headline = "Remove the legacy patch",
+                    detail = "Jester Mods will open Android's uninstall confirmation. The add-on stays safely in your Library."
+                )
+                DirectPatchDialogStep(
+                    number = "3",
+                    headline = "Choose the original game source",
+                    detail = "After uninstalling, this add-on's Browse requirements will open. Download its companion game when offered, or choose Google Play."
+                )
+                Text(
+                    "The patched APK will never be stored inside the new shell as an original game payload.",
+                    color = Accent,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = PrivateGold, contentColor = Ink)
+            ) {
+                Text("Restore official game", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -876,13 +1122,24 @@ private fun DeferredScreenContent(
     screenCache: LauncherScreenCache,
     contentKey: String,
     contentReady: Boolean = false,
+    minimumPlaceholderMillis: Long = 0L,
     placeholder: @Composable () -> Unit,
     content: @Composable () -> Unit
 ) {
     var ready by remember(contentKey) {
-        mutableStateOf(screenCache.warmedPages[contentKey] == true || contentReady)
+        mutableStateOf(
+            minimumPlaceholderMillis <= 0L &&
+                (screenCache.warmedPages[contentKey] == true || contentReady)
+        )
     }
-    LaunchedEffect(contentKey, contentReady) {
+    LaunchedEffect(contentKey, contentReady, minimumPlaceholderMillis) {
+        if (minimumPlaceholderMillis > 0L) {
+            ready = false
+            delay(minimumPlaceholderMillis)
+            screenCache.warmedPages[contentKey] = true
+            ready = true
+            return@LaunchedEffect
+        }
         if (screenCache.warmedPages[contentKey] == true || contentReady) {
             screenCache.warmedPages[contentKey] = true
             ready = true
@@ -912,131 +1169,94 @@ private fun ScreenTransitionPlaceholder(
     title: String,
     detail: String
 ) {
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.2f))
             .windowInsetsPadding(WindowInsets.safeDrawing),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentAlignment = Alignment.Center
     ) {
-        item {
-            Text(
-                "‹  $backLabel",
-                color = Accent.copy(alpha = 0.78f),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
-            )
-        }
-        item {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .padding(horizontal = 18.dp, vertical = 24.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.34f))
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(SurfaceRaised.copy(alpha = 0.74f))
-                    .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(28.dp))
-                    .padding(20.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF172633), SurfaceRaised, Color(0xFF0C1118))
+                        )
+                    )
+                    .padding(22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                Text(detail, color = Muted, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(18.dp))
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                    color = Accent,
-                    trackColor = Hairline
-                )
-            }
-        }
-        items(3) {
-            PlaceholderBlock()
-        }
-    }
-}
-
-@Composable
-private fun ModuleScreenPlaceholder(game: LibraryGame) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Text(
-                "‹  Library",
-                color = Accent.copy(alpha = 0.78f),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
-            )
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(76.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(SurfaceRaised)
-                )
-                Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        game.title,
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text("Opening details…", color = Muted)
+                        .size(70.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(AccentBlue.copy(alpha = 0.3f), Accent.copy(alpha = 0.1f), SurfaceDark)
+                            )
+                        )
+                        .border(1.dp, AccentBlue.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    InstallerOrbitAnimation()
                 }
-            }
-        }
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(SurfaceRaised.copy(alpha = 0.74f))
-                    .border(BorderStroke(1.dp, Accent.copy(alpha = 0.24f)), RoundedCornerShape(24.dp))
-                    .padding(18.dp)
-            ) {
-                Text("COMPATIBILITY", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                Text("Checking screen details", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text("The launcher is preparing the add-on view without blocking the transition.", color = Muted)
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "PREPARING YOUR EXPERIENCE",
+                    color = AccentBlue,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    detail,
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
                 LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                    color = Accent,
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                    color = AccentBlue,
                     trackColor = Hairline
                 )
+                Spacer(Modifier.height(11.dp))
+                Text(
+                    "Opening from $backLabel",
+                    color = Accent.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
-        }
-        items(2) {
-            PlaceholderBlock()
         }
     }
 }
 
 @Composable
-private fun PlaceholderBlock() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(SurfaceDark.copy(alpha = 0.78f))
-            .padding(18.dp)
-    ) {
-        Box(Modifier.fillMaxWidth(0.42f).height(10.dp).clip(RoundedCornerShape(50)).background(Hairline))
-        Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxWidth(0.86f).height(12.dp).clip(RoundedCornerShape(50)).background(Hairline.copy(alpha = 0.78f)))
-        Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth(0.64f).height(12.dp).clip(RoundedCornerShape(50)).background(Hairline.copy(alpha = 0.62f)))
-    }
-}
+private fun ModuleScreenPlaceholder(game: LibraryGame) = ScreenTransitionPlaceholder(
+    backLabel = "Library",
+    title = game.title,
+    detail = "Preparing add-on controls, compatibility, and launch status…"
+)
 
 @Composable
 private fun AccountIdentityIconButton(
@@ -1742,7 +1962,7 @@ private fun ChangelogEntryCard(title: String, meta: String, notes: String, highl
         Spacer(Modifier.height(3.dp))
         Text(meta, color = if (highlighted) Accent else AccentBlue, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(10.dp))
-        Text(notes, color = Muted, style = MaterialTheme.typography.bodyMedium)
+        ChangelogRundown(notes, fallback = "Maintenance and reliability improvements.")
     }
 }
 
@@ -1776,11 +1996,7 @@ private fun LauncherChangelogCompactCard(entry: LauncherChangelogEntry, installe
         }
         if (expanded) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                entry.notes.ifBlank { "Maintenance and reliability improvements." },
-                color = Muted,
-                style = MaterialTheme.typography.bodyMedium
-            )
+            ChangelogRundown(entry.notes, fallback = "Maintenance and reliability improvements.")
         }
     }
 }
@@ -1816,11 +2032,36 @@ private fun ModuleChangelogCompactCard(entry: ModuleChangelogEntry, highlighted:
         }
         if (expanded) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                entry.notes.ifBlank { "Add-on maintenance update." },
-                color = Muted,
-                style = MaterialTheme.typography.bodyMedium
-            )
+            ChangelogRundown(entry.notes, fallback = "Add-on maintenance update.")
+        }
+    }
+}
+
+@Composable
+private fun ChangelogRundown(notes: String, fallback: String) {
+    val groups = remember(notes, fallback) { changelogRundown(notes, fallback) }
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        groups.forEach { group ->
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "${group.category.label}:",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                group.items.forEach { item ->
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text("•", color = Accent, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            item,
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1888,9 +2129,9 @@ private fun LauncherUpdateScreen(
                     }
                     Text("${entry.version} · Build ${entry.build}", color = Color.White, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        entry.notes.ifBlank { "Includes launcher improvements and reliability fixes." },
-                        color = Muted
+                    ChangelogRundown(
+                        entry.notes,
+                        fallback = "Includes launcher improvements and reliability fixes."
                     )
                 }
                 if (update.totalBytes > 0L) {
@@ -1941,12 +2182,14 @@ private fun LauncherUpdateScreen(
 }
 
 @Composable
-private fun LauncherUpdateDialog(
-    update: LauncherUpdateUiState,
+private fun UnifiedInstallerDialog(
+    busy: Boolean,
+    failed: Boolean,
+    accent: Color,
     onDismiss: () -> Unit,
-    onInstall: () -> Unit
+    maxWidth: androidx.compose.ui.unit.Dp = 600.dp,
+    content: @Composable () -> Unit
 ) {
-    val busy = update.inProgress || update.installing
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(
@@ -1958,12 +2201,125 @@ private fun LauncherUpdateDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 560.dp)
-                .padding(horizontal = 18.dp, vertical = 24.dp),
-            shape = RoundedCornerShape(32.dp),
+                .widthIn(max = maxWidth)
+                .padding(horizontal = 16.dp, vertical = 22.dp),
+            shape = RoundedCornerShape(34.dp),
             color = Color.Transparent,
-            border = BorderStroke(1.dp, Accent.copy(alpha = 0.28f))
+            border = BorderStroke(1.dp, (if (failed) Danger else accent).copy(alpha = 0.42f))
         ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun InstallerDiagnosticsPanel(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
+    report: String,
+    clipboardLabel: String,
+    accent: Color = Accent
+) {
+    val context = LocalContext.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.2f))
+            .border(1.dp, Hairline, RoundedCornerShape(20.dp))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(15.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "DIAGNOSTICS",
+                    color = accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(summary, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                if (expanded) "Hide" else "Inspect",
+                color = AccentBlue,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (expanded) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
+            Text(
+                report,
+                modifier = Modifier.padding(15.dp),
+                color = Color(0xFFC9D4E2),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace
+            )
+            OutlinedButton(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText(clipboardLabel, report))
+                    android.widget.Toast.makeText(context, "Diagnostics copied", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 15.dp, end = 15.dp, bottom = 15.dp),
+                border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = accent)
+            ) {
+                Text("Copy diagnostics")
+            }
+        }
+    }
+}
+
+private fun commonInstallerDiagnostics(): String = buildString {
+    appendLine("Launcher: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+    appendLine("Mode: ${if (BuildConfig.IS_ROOT_MODE) "Root" else "Non-root"}")
+    append("Android API: ${Build.VERSION.SDK_INT}")
+}
+
+@Composable
+private fun LauncherUpdateDialog(
+    update: LauncherUpdateUiState,
+    onDismiss: () -> Unit,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val busy = update.inProgress || update.installing || update.cancelling
+    var diagnosticsExpanded by rememberSaveable(update.build) { mutableStateOf(false) }
+    val report = remember(update) {
+        buildString {
+            appendLine("Jester Mods launcher update diagnostics")
+            appendLine("Stage: ${launcherUpdateStageLabel(update)}")
+            appendLine("Target: ${update.version ?: "Unknown"} (${update.build})")
+            appendLine("Downloaded: ${update.downloaded}")
+            appendLine("Progress: ${update.downloadedBytes.coerceAtLeast(0L)} / ${update.totalBytes.coerceAtLeast(0L)} bytes")
+            update.stageProgress?.let { appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%") }
+            update.headline?.let { appendLine("Status: $it") }
+            update.detail?.let { appendLine("Detail: $it") }
+            append(commonInstallerDiagnostics())
+            if (update.diagnostics.isNotEmpty()) {
+                appendLine()
+                appendLine("Event trail:")
+                update.diagnostics.forEachIndexed { index, entry -> appendLine("${index + 1}. $entry") }
+            }
+        }.trim()
+    }
+    UnifiedInstallerDialog(
+        busy = busy,
+        failed = update.failed,
+        accent = Accent,
+        onDismiss = onDismiss,
+        maxWidth = 560.dp
+    ) {
             LazyColumn(
                 modifier = Modifier
                     .heightIn(max = 720.dp)
@@ -1976,28 +2332,41 @@ private fun LauncherUpdateDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Row(verticalAlignment = Alignment.Top) {
-                        UpdateEmblem()
-                        Spacer(Modifier.width(15.dp))
-                        Column(Modifier.weight(1f)) {
+                    Box(Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            SecureTransferEmblem(
+                                stage = update.stage,
+                                downloadedBytes = update.downloadedBytes,
+                                totalBytes = update.totalBytes,
+                                stageProgress = update.stageProgress,
+                                contentDescription = "Launcher update",
+                                accent = Accent
+                            )
+                            Spacer(Modifier.height(12.dp))
                             Text(
                                 "A NEW ERA AWAITS",
                                 color = Accent,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 "Launcher update",
                                 color = Color.White,
                                 style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                             Text(
                                 "Version ${update.version ?: "new"}  ·  Build ${update.build}",
                                 color = AccentBlue,
                                 style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
                         Text(
@@ -2008,6 +2377,7 @@ private fun LauncherUpdateDialog(
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable(enabled = !busy, onClick = onDismiss)
                                 .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .align(Alignment.TopEnd)
                         )
                     }
                 }
@@ -2016,6 +2386,13 @@ private fun LauncherUpdateDialog(
                         "The next chapter of Jester Mods is ready. Update securely without leaving the launcher.",
                         color = Muted,
                         style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                item {
+                    SecureTransferJourney(
+                        stage = update.stage,
+                        labels = listOf("Ready", "Download", "Verify", "Install"),
+                        accent = Accent
                     )
                 }
                 item {
@@ -2052,10 +2429,9 @@ private fun LauncherUpdateDialog(
                             }
                             Text(entry.version, color = Color.White, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(3.dp))
-                            Text(
-                                entry.notes.ifBlank { "Includes launcher improvements and reliability fixes." },
-                                color = Muted,
-                                style = MaterialTheme.typography.bodySmall
+                            ChangelogRundown(
+                                entry.notes,
+                                fallback = "Includes launcher improvements and reliability fixes."
                             )
                         }
                     }
@@ -2076,13 +2452,21 @@ private fun LauncherUpdateDialog(
                         }
                     }
                 }
-                if (update.inProgress || update.installing || update.downloaded || update.downloadedBytes > 0L) {
+                if (update.stage in setOf(
+                        SecureTransferStage.PREPARING,
+                        SecureTransferStage.DOWNLOADING,
+                        SecureTransferStage.VERIFYING,
+                        SecureTransferStage.WAITING_FOR_ANDROID
+                    )) {
                     item {
-                        DownloadProgressBar(
+                        SecureTransferProgressPanel(
+                            stage = update.stage,
                             downloadedBytes = update.downloadedBytes,
                             totalBytes = update.totalBytes,
-                            waiting = update.inProgress,
-                            color = Accent
+                            stageProgress = update.stageProgress,
+                            accent = Accent,
+                            subject = "launcher update",
+                            finalAction = "Android installer"
                         )
                     }
                 }
@@ -2106,7 +2490,36 @@ private fun LauncherUpdateDialog(
                     }
                 }
                 item {
-                    Button(
+                    InstallerDiagnosticsPanel(
+                        expanded = diagnosticsExpanded,
+                        onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
+                        summary = "Live launcher update report",
+                        report = report,
+                        clipboardLabel = "Jester Mods launcher update diagnostics"
+                    )
+                }
+                item {
+                    if (busy) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = { diagnosticsExpanded = !diagnosticsExpanded },
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Hairline),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                            ) {
+                                Text("Diagnostics")
+                            }
+                            OutlinedButton(
+                                onClick = onCancel,
+                                enabled = !update.cancelling,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
+                            ) {
+                                Text(if (update.cancelling) "Stoppingâ€¦" else "Cancel")
+                            }
+                        }
+                    } else Button(
                         onClick = onInstall,
                         enabled = !busy,
                         modifier = Modifier.fillMaxWidth(),
@@ -2119,7 +2532,7 @@ private fun LauncherUpdateDialog(
                                 update.inProgress -> "Downloading…"
                                 update.installing -> "Waiting for Android…"
                                 update.downloaded -> "Install update"
-                                update.failed -> "Try again"
+                                update.failed || update.cancelled -> "Try again"
                                 else -> "Begin the update"
                             },
                             fontWeight = FontWeight.Bold
@@ -2131,6 +2544,240 @@ private fun LauncherUpdateDialog(
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall
                     )
+                }
+            }
+    }
+}
+
+private fun launcherUpdateStageLabel(update: LauncherUpdateUiState): String = when {
+    update.cancelled -> "Update paused"
+    update.failed -> "Update failed"
+    update.stage == SecureTransferStage.PREPARING -> "Preparing secure update"
+    update.stage == SecureTransferStage.DOWNLOADING -> "Downloading update"
+    update.stage == SecureTransferStage.VERIFYING -> "Verifying package"
+    update.stage == SecureTransferStage.WAITING_FOR_ANDROID -> "Waiting for Android installer"
+    update.downloaded -> "Verified package ready"
+    else -> "Update available"
+}
+
+@Composable
+private fun ModuleTransferDialog(
+    state: ModuleUpdateUiState,
+    canRetry: Boolean,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val busy = state.inProgress || state.cancelling
+    var diagnosticsExpanded by rememberSaveable(state.packageName) { mutableStateOf(false) }
+    val report = remember(state) {
+        buildString {
+            appendLine("Jester Mods add-on transfer diagnostics")
+            appendLine("Stage: ${secureTransferStageLabel(state.stage)}")
+            if (state.title.isNotBlank()) appendLine("Add-on: ${state.title}")
+            if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
+            if (state.targetVersion.isNotBlank()) appendLine("Target version: ${state.targetVersion}")
+            appendLine("Action: ${state.actionLabel}")
+            appendLine("Progress: ${state.downloadedBytes.coerceAtLeast(0L)} / ${state.totalBytes.coerceAtLeast(0L)} bytes")
+            state.stageProgress?.let { appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%") }
+            state.headline?.let { appendLine("Status: $it") }
+            state.detail?.let { appendLine("Detail: $it") }
+            append(commonInstallerDiagnostics())
+            if (state.diagnostics.isNotEmpty()) {
+                appendLine()
+                appendLine("Event trail:")
+                state.diagnostics.forEachIndexed { index, entry -> appendLine("${index + 1}. $entry") }
+            }
+        }.trim()
+    }
+    UnifiedInstallerDialog(
+        busy = busy,
+        failed = state.failed,
+        accent = AccentBlue,
+        onDismiss = onDismiss,
+        maxWidth = 580.dp
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .heightIn(max = 760.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF172633), SurfaceRaised, Color(0xFF0C1118))
+                    )
+                ),
+            contentPadding = PaddingValues(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Box(Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        SecureTransferEmblem(
+                            stage = state.stage,
+                            downloadedBytes = state.downloadedBytes,
+                            totalBytes = state.totalBytes,
+                            stageProgress = state.stageProgress,
+                            contentDescription = state.actionLabel,
+                            accent = AccentBlue
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "SECURE ${state.actionLabel.uppercase()}",
+                            color = AccentBlue,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            state.title.ifBlank { "Jester Mods add-on" },
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (state.targetVersion.isNotBlank()) {
+                            Text(
+                                "Version ${state.targetVersion}",
+                                color = Muted,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    if (!busy) {
+                        Text(
+                            if (state.completed) "Done" else "Close",
+                            color = Muted,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onDismiss)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .align(Alignment.TopEnd)
+                        )
+                    }
+                }
+            }
+            item {
+                SecureTransferJourney(
+                    stage = state.stage,
+                    labels = listOf("Prepare", "Download", "Verify", "Activate"),
+                    accent = AccentBlue
+                )
+            }
+            if (state.stage in setOf(
+                    SecureTransferStage.PREPARING,
+                    SecureTransferStage.DOWNLOADING,
+                    SecureTransferStage.VERIFYING,
+                    SecureTransferStage.ACTIVATING
+                )) {
+                item {
+                    SecureTransferProgressPanel(
+                        stage = state.stage,
+                        downloadedBytes = state.downloadedBytes,
+                        totalBytes = state.totalBytes,
+                        stageProgress = state.stageProgress,
+                        accent = AccentBlue,
+                        subject = "add-on package",
+                        finalAction = "safe activation"
+                    )
+                }
+            }
+            item {
+                val statusColor = when {
+                    state.failed -> Danger
+                    state.cancelled -> PrivateGold
+                    state.completed -> Accent
+                    else -> AccentBlue
+                }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(statusColor.copy(alpha = 0.09f))
+                        .border(1.dp, statusColor.copy(alpha = 0.22f), RoundedCornerShape(20.dp))
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        state.headline ?: secureTransferStageLabel(state.stage),
+                        color = if (state.failed) Danger else Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    state.detail?.let {
+                        Spacer(Modifier.height(5.dp))
+                        Text(it, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            if (state.changelog.isNotEmpty()) {
+                item { ModuleUpdateChangelog(state.changelog) }
+            }
+            item {
+                InstallerDiagnosticsPanel(
+                    expanded = diagnosticsExpanded,
+                    onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
+                    summary = "Live add-on transfer report",
+                    report = report,
+                    clipboardLabel = "Jester Mods add-on transfer diagnostics",
+                    accent = AccentBlue
+                )
+            }
+            item {
+                when {
+                    busy -> Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { diagnosticsExpanded = !diagnosticsExpanded },
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Hairline),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                        ) { Text("Diagnostics") }
+                        OutlinedButton(
+                            onClick = onCancel,
+                            enabled = !state.cancelling && state.stage != SecureTransferStage.ACTIVATING,
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
+                        ) {
+                            Text(
+                                when {
+                                    state.cancelling -> "Stoppingâ€¦"
+                                    state.stage == SecureTransferStage.ACTIVATING -> "Finishingâ€¦"
+                                    else -> "Cancel"
+                                }
+                            )
+                        }
+                    }
+                    state.completed -> Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+                    ) { Text("Done", fontWeight = FontWeight.Bold) }
+                    else -> Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Hairline),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
+                        ) { Text("Close") }
+                        Button(
+                            onClick = onRetry,
+                            enabled = canRetry,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
+                        ) { Text("Try again", fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
         }
@@ -2145,12 +2792,11 @@ private fun GameInstallDialog(
     onCancel: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
     val busy = state.inProgress || state.installing || state.cancelling
     var diagnosticsExpanded by rememberSaveable(state.packageName) { mutableStateOf(false) }
     val report = remember(state) {
         buildString {
-            appendLine("Jester Mods game installer diagnostics")
+            appendLine("Jester Mods game companion installer diagnostics")
             appendLine("Stage: ${gameInstallStageLabel(state.stage)}")
             if (state.title.isNotBlank()) appendLine("Game: ${state.title}")
             if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
@@ -2158,9 +2804,7 @@ private fun GameInstallDialog(
             if (state.packageFormat.isNotBlank()) appendLine("Artifact: ${state.packageFormat}")
             appendLine("Progress: ${state.downloadedBytes.coerceAtLeast(0L)} / ${state.totalBytes.coerceAtLeast(0L)} bytes")
             state.stageProgress?.let { appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%") }
-            appendLine("Launcher: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-            appendLine("Mode: ${if (BuildConfig.IS_ROOT_MODE) "Root" else "Non-root"}")
-            appendLine("Android API: ${Build.VERSION.SDK_INT}")
+            appendLine(commonInstallerDiagnostics())
             if (state.diagnostics.isNotEmpty()) {
                 appendLine()
                 appendLine("Event trail:")
@@ -2171,26 +2815,12 @@ private fun GameInstallDialog(
         }.trim()
     }
 
-    Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        properties = DialogProperties(
-            dismissOnBackPress = !busy,
-            dismissOnClickOutside = !busy,
-            usePlatformDefaultWidth = false
-        )
+    UnifiedInstallerDialog(
+        busy = busy,
+        failed = state.failed,
+        accent = AccentBlue,
+        onDismiss = onDismiss
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 600.dp)
-                .padding(horizontal = 16.dp, vertical = 22.dp),
-            shape = RoundedCornerShape(34.dp),
-            color = Color.Transparent,
-            border = BorderStroke(
-                1.dp,
-                (if (state.failed) Danger else AccentBlue).copy(alpha = 0.42f)
-            )
-        ) {
             LazyColumn(
                 modifier = Modifier
                     .heightIn(max = 760.dp)
@@ -2208,7 +2838,7 @@ private fun GameInstallDialog(
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "SECURE GAME INSTALLATION",
+                                "SECURE GAME COMPANION",
                                 color = AccentBlue,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold
@@ -2284,59 +2914,13 @@ private fun GameInstallDialog(
                 }
 
                 item {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .animateContentSize()
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color.Black.copy(alpha = 0.2f))
-                            .border(1.dp, Hairline, RoundedCornerShape(20.dp))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { diagnosticsExpanded = !diagnosticsExpanded }
-                                .padding(15.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("DIAGNOSTICS", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                Text(
-                                    "${state.diagnostics.size} installer events captured",
-                                    color = Muted,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            Text(
-                                if (diagnosticsExpanded) "Hide" else "Inspect",
-                                color = AccentBlue,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        if (diagnosticsExpanded) {
-                            Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
-                            Text(
-                                report,
-                                modifier = Modifier.padding(15.dp),
-                                color = Color(0xFFC9D4E2),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Jester Mods installer diagnostics", report))
-                                    android.widget.Toast.makeText(context, "Diagnostics copied", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, bottom = 15.dp),
-                                border = BorderStroke(1.dp, Accent.copy(alpha = 0.45f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
-                            ) {
-                                Text("Copy diagnostics")
-                            }
-                        }
-                    }
+                    InstallerDiagnosticsPanel(
+                        expanded = diagnosticsExpanded,
+                        onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
+                        summary = "${state.diagnostics.size} installer events captured",
+                        report = report,
+                        clipboardLabel = "Jester Mods companion installer diagnostics"
+                    )
                 }
 
                 item {
@@ -2391,6 +2975,237 @@ private fun GameInstallDialog(
                                 Text("Try again", fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
+                }
+            }
+    }
+}
+
+@Composable
+private fun PackageSetupDialog(
+    state: PackageSetupUiState,
+    canRetry: Boolean,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val busy = state.inProgress || state.cancelling
+    val identityShell = state.kind == PackageReplacementKind.IDENTITY_SHELL
+    val accent = if (identityShell) PrivateViolet else AccentBlue
+    val packageLabel = if (identityShell) "exact-package shell" else "direct patch"
+    val canCancel = busy && state.stage !in setOf(
+        SecureTransferStage.ACTIVATING,
+        SecureTransferStage.WAITING_FOR_ANDROID
+    )
+    var diagnosticsExpanded by rememberSaveable(state.packageName) { mutableStateOf(false) }
+    val report = remember(state) {
+        buildString {
+            appendLine("Jester Mods $packageLabel setup diagnostics")
+            appendLine("Stage: ${secureTransferStageLabel(state.stage)}")
+            if (state.title.isNotBlank()) appendLine("Game: ${state.title}")
+            if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
+            appendLine("Method: ${if (identityShell) "Exact-package shell" else "Direct patch"}")
+            state.stageProgress?.let {
+                appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%")
+            }
+            state.headline?.let { appendLine("Status: $it") }
+            state.detail?.let { appendLine("Detail: $it") }
+            append(commonInstallerDiagnostics())
+            if (state.diagnostics.isNotEmpty()) {
+                appendLine()
+                appendLine("Event trail:")
+                state.diagnostics.forEachIndexed { index, entry ->
+                    appendLine("${index + 1}. $entry")
+                }
+            }
+        }.trim()
+    }
+
+    UnifiedInstallerDialog(
+        busy = busy,
+        failed = state.failed,
+        accent = accent,
+        onDismiss = onDismiss,
+        maxWidth = 580.dp
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .heightIn(max = 760.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            accent.copy(alpha = 0.16f),
+                            SurfaceRaised,
+                            Color(0xFF0C1118)
+                        )
+                    )
+                ),
+            contentPadding = PaddingValues(22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SecureTransferEmblem(
+                        stage = state.stage,
+                        downloadedBytes = 0L,
+                        totalBytes = 0L,
+                        stageProgress = state.stageProgress,
+                        contentDescription = "$packageLabel setup",
+                        accent = accent
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (identityShell) "EXACT-PACKAGE SHELL" else "VERIFIED DIRECT PATCH",
+                            color = accent,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            state.title.ifBlank { "Game setup" },
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            if (identityShell) {
+                                "Preserving the original game inside its branded shell"
+                            } else {
+                                "Preparing a locally verified patched installation"
+                            },
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            item {
+                SecureTransferJourney(
+                    stage = state.stage,
+                    labels = listOf("Prepare", "Build", "Verify", "Install"),
+                    accent = accent
+                )
+            }
+
+            if (state.stage in setOf(
+                    SecureTransferStage.PREPARING,
+                    SecureTransferStage.VERIFYING,
+                    SecureTransferStage.ACTIVATING,
+                    SecureTransferStage.WAITING_FOR_ANDROID
+                )) {
+                item {
+                    SecureTransferProgressPanel(
+                        stage = state.stage,
+                        downloadedBytes = 0L,
+                        totalBytes = 0L,
+                        stageProgress = state.stageProgress,
+                        accent = accent,
+                        subject = packageLabel,
+                        finalAction = "Android installer"
+                    )
+                }
+            }
+
+            item {
+                val statusColor = when {
+                    state.failed -> Danger
+                    state.cancelled -> PrivateGold
+                    state.completed -> Accent
+                    else -> accent
+                }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(statusColor.copy(alpha = 0.09f))
+                        .border(1.dp, statusColor.copy(alpha = 0.24f), RoundedCornerShape(20.dp))
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        state.headline ?: secureTransferStageLabel(state.stage),
+                        color = if (state.failed) Danger else Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    state.detail?.let { detail ->
+                        Spacer(Modifier.height(5.dp))
+                        Text(detail, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (state.stage == SecureTransferStage.WAITING_FOR_ANDROID) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Android owns the current confirmation. Jester Mods will verify the result when you return.",
+                            color = Accent.copy(alpha = 0.9f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            item {
+                InstallerDiagnosticsPanel(
+                    expanded = diagnosticsExpanded,
+                    onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
+                    summary = "${state.diagnostics.size} setup events captured",
+                    report = report,
+                    clipboardLabel = "Jester Mods $packageLabel setup diagnostics",
+                    accent = accent
+                )
+            }
+
+            item {
+                when {
+                    busy -> Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { diagnosticsExpanded = !diagnosticsExpanded },
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Hairline),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                        ) { Text("Diagnostics") }
+                        OutlinedButton(
+                            onClick = onCancel,
+                            enabled = canCancel && !state.cancelling,
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
+                        ) {
+                            Text(
+                                when {
+                                    state.cancelling -> "Stopping..."
+                                    !canCancel -> "Finishing..."
+                                    else -> "Cancel"
+                                }
+                            )
+                        }
+                    }
+                    state.completed -> Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+                    ) { Text("Done", fontWeight = FontWeight.Bold) }
+                    else -> Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            border = BorderStroke(1.dp, Hairline),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
+                        ) { Text("Close") }
+                        Button(
+                            onClick = onRetry,
+                            enabled = canRetry,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Ink)
+                        ) { Text("Try again", fontWeight = FontWeight.Bold) }
                     }
                 }
             }
@@ -2575,19 +3390,23 @@ private fun InstallerDeterminateProgress(
 }
 
 @Composable
-private fun InstallerIndeterminateProgress(color: Color) {
+private fun InstallerIndeterminateProgress(
+    color: Color,
+    message: String = "Complete Android's secure prompt. Jester Mods will verify the result when you return.",
+    contentDescription: String = "Android installation in progress"
+) {
     LinearProgressIndicator(
         modifier = Modifier
             .fillMaxWidth()
             .height(7.dp)
             .clip(CircleShape)
-            .semantics { contentDescription = "Android installation in progress" },
+            .semantics { this.contentDescription = contentDescription },
         color = color,
         trackColor = Hairline
     )
     Spacer(Modifier.height(9.dp))
     Text(
-        "Complete Android's secure prompt. Jester Mods will verify the result when you return.",
+        message,
         color = Muted,
         style = MaterialTheme.typography.bodySmall
     )
@@ -2704,27 +3523,75 @@ private fun gameInstallStageLabel(stage: GameInstallStage): String = when (stage
 private fun InstalledModuleUpdatesDialog(
     screenCache: LauncherScreenCache,
     updates: List<LibraryGame>,
+    state: InstalledModuleUpdatesUiState,
     onDismiss: () -> Unit,
-    onReview: (LibraryGame) -> Unit
+    onCancel: () -> Unit,
+    onReview: (LibraryGame) -> Unit,
+    onUpdate: (LibraryGame) -> Unit,
+    onUpdateAll: () -> Unit
 ) {
     val count = updates.size
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false
+    val installedCount = updates.count {
+        state.itemStates[it.packageName]?.status == InstalledModuleUpdateItemStatus.INSTALLED
+    }
+    val failedCount = updates.count {
+        state.itemStates[it.packageName]?.status == InstalledModuleUpdateItemStatus.FAILED
+    }
+    val remainingCount = count - installedCount
+    val activeUpdate = updates.firstOrNull { game ->
+        state.itemStates[game.packageName]?.status in setOf(
+            InstalledModuleUpdateItemStatus.QUEUED,
+            InstalledModuleUpdateItemStatus.DOWNLOADING
         )
+    }
+    val activeItemState = activeUpdate?.let { state.itemStates[it.packageName] }
+    val aggregateStage = when {
+        count > 0 && installedCount == count -> SecureTransferStage.COMPLETED
+        state.cancelled -> SecureTransferStage.CANCELLED
+        state.inProgress && activeItemState != null -> activeItemState.stage
+        failedCount > 0 -> SecureTransferStage.FAILED
+        else -> SecureTransferStage.READY
+    }
+    var diagnosticsExpanded by rememberSaveable(updates.joinToString { it.packageName }) {
+        mutableStateOf(false)
+    }
+    val report = remember(updates, state) {
+        buildString {
+            appendLine("Jester Mods add-on update diagnostics")
+            appendLine("Stage: ${installedModuleUpdateStageLabel(state, installedCount, count)}")
+            appendLine("Updates: $count")
+            appendLine("Installed: $installedCount")
+            appendLine("Failed: $failedCount")
+            appendLine("Remaining: $remainingCount")
+            updates.forEachIndexed { index, game ->
+                val item = state.itemStates[game.packageName]
+                    ?: InstalledModuleUpdateItemUiState()
+                appendLine()
+                appendLine("${index + 1}. ${game.title}")
+                appendLine("Package: ${game.packageName}")
+                appendLine("Build: ${game.installedBuild} -> ${game.listing?.catalog?.build ?: "Unknown"}")
+                appendLine("Status: ${item.status.name.lowercase().replaceFirstChar(Char::uppercase)}")
+                appendLine("Stage: ${secureTransferStageLabel(item.stage)}")
+                if (item.totalBytes > 0L || item.downloadedBytes > 0L) {
+                    appendLine("Progress: ${item.downloadedBytes.coerceAtLeast(0L)} / ${item.totalBytes.coerceAtLeast(0L)} bytes")
+                }
+                item.detail?.let { appendLine("Detail: $it") }
+                if (item.diagnostics.isNotEmpty()) {
+                    appendLine("Events:")
+                    item.diagnostics.forEach { appendLine("- $it") }
+                }
+            }
+            appendLine()
+            append(commonInstallerDiagnostics())
+        }.trim()
+    }
+    UnifiedInstallerDialog(
+        busy = state.inProgress || state.cancelling,
+        failed = failedCount > 0,
+        accent = AccentBlue,
+        onDismiss = onDismiss,
+        maxWidth = 580.dp
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .widthIn(max = 580.dp)
-                .padding(horizontal = 18.dp, vertical = 24.dp),
-            shape = RoundedCornerShape(32.dp),
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.34f))
-        ) {
             LazyColumn(
                 modifier = Modifier
                     .heightIn(max = 720.dp)
@@ -2737,57 +3604,168 @@ private fun InstalledModuleUpdatesDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 item {
-                    Row(verticalAlignment = Alignment.Top) {
-                        UpdateEmblem(contentDescription = "Installed add-on updates")
-                        Spacer(Modifier.width(15.dp))
-                        Column(Modifier.weight(1f)) {
+                    Box(Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            SecureTransferEmblem(
+                                stage = aggregateStage,
+                                downloadedBytes = activeItemState?.downloadedBytes ?: 0L,
+                                totalBytes = activeItemState?.totalBytes ?: 0L,
+                                stageProgress = activeItemState?.stageProgress,
+                                contentDescription = "Installed add-on updates",
+                                accent = AccentBlue
+                            )
+                            Spacer(Modifier.height(12.dp))
                             Text(
                                 "LIBRARY UPDATES",
                                 color = Accent,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                if (count == 1) "An add-on is ready" else "$count add-ons are ready",
+                                when {
+                                    state.inProgress && state.updatingAll -> "Updating your library"
+                                    state.inProgress -> "Installing add-on update"
+                                    installedCount == count -> "Your add-ons are current"
+                                    failedCount > 0 -> "Some updates need attention"
+                                    count == 1 -> "An add-on is ready"
+                                    else -> "$count add-ons are ready"
+                                },
                                 color = Color.White,
                                 style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
                             )
                             Text(
-                                if (count == 1) "1 verified release" else "$count verified releases",
+                                when {
+                                    state.inProgress -> "${installedCount.coerceAtMost(count)} of $count complete"
+                                    installedCount > 0 -> "$installedCount installed  ·  $remainingCount remaining"
+                                    count == 1 -> "1 verified release"
+                                    else -> "$count verified releases"
+                                },
                                 color = AccentBlue,
                                 style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
                         Text(
-                            "Later",
-                            color = Muted,
+                            when {
+                                state.inProgress -> "Updating"
+                                installedCount > 0 || failedCount > 0 -> "Done"
+                                else -> "Later"
+                            },
+                            color = if (state.inProgress) Muted.copy(alpha = 0.55f) else Muted,
                             style = MaterialTheme.typography.labelLarge,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable(onClick = onDismiss)
+                                .clickable(enabled = !state.inProgress, onClick = onDismiss)
                                 .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .align(Alignment.TopEnd)
                         )
                     }
                 }
                 item {
                     Text(
-                        if (count == 1) {
-                            "A newer release is available for one of this Library's installed add-ons. Review what changed and update when it suits this device."
-                        } else {
-                            "Newer releases are available for this Library's installed add-ons. Review each one and update when it suits this device."
+                        when {
+                            state.inProgress -> "Keep Jester Mods open. Signed packages are downloaded, verified, and installed one at a time."
+                            installedCount == count -> "Everything finished successfully. You can close this window and return to your library."
+                            failedCount > 0 -> "Successful updates are already installed. Retry only the add-ons that need attention, or finish the rest together."
+                            count == 1 -> "Install the verified release here now, open its details first, or choose Later and update whenever you are ready."
+                            else -> "Update everything safely in sequence, install releases one by one, or choose Later and decide from each add-on's details."
                         },
                         color = Muted,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
+                item {
+                    SecureTransferJourney(
+                        stage = aggregateStage,
+                        labels = listOf("Queue", "Download", "Verify", "Activate"),
+                        accent = AccentBlue
+                    )
+                }
+                if (state.inProgress && activeItemState != null) {
+                    item {
+                        SecureTransferProgressPanel(
+                            stage = aggregateStage,
+                            downloadedBytes = activeItemState.downloadedBytes,
+                            totalBytes = activeItemState.totalBytes,
+                            stageProgress = activeItemState.stageProgress,
+                            accent = AccentBlue,
+                            subject = activeUpdate?.title?.let { "$it package" } ?: "add-on package",
+                            finalAction = "safe activation"
+                        )
+                    }
+                }
+                item {
+                    Button(
+                        onClick = onUpdateAll,
+                        enabled = !state.inProgress && remainingCount > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Accent,
+                            contentColor = Ink,
+                            disabledContainerColor = Accent.copy(alpha = 0.18f),
+                            disabledContentColor = Color.White.copy(alpha = 0.55f)
+                        )
+                    ) {
+                        Text(
+                            when {
+                                state.inProgress && state.updatingAll -> "Updating all · ${installedCount.coerceAtMost(count)}/$count"
+                                state.inProgress -> "Another update is in progress"
+                                remainingCount == 0 -> "All updates installed"
+                                failedCount > 0 -> "Retry & update remaining ($remainingCount)"
+                                count == 1 -> "Update now"
+                                else -> "Update all $remainingCount add-ons"
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (state.inProgress) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = { diagnosticsExpanded = !diagnosticsExpanded },
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Hairline),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                            ) { Text("Diagnostics") }
+                            OutlinedButton(
+                                onClick = onCancel,
+                                enabled = !state.cancelling,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)
+                            ) { Text(if (state.cancelling) "Stoppingâ€¦" else "Cancel") }
+                        }
+                    }
+                }
                 items(updates, key = LibraryGame::packageName) { game ->
                     InstalledModuleUpdateCard(
                         screenCache = screenCache,
                         game = game,
-                        onReview = { onReview(game) }
+                        itemState = state.itemStates[game.packageName]
+                            ?: InstalledModuleUpdateItemUiState(),
+                        anotherUpdateInProgress = state.inProgress,
+                        onReview = { onReview(game) },
+                        onUpdate = { onUpdate(game) }
+                    )
+                }
+                item {
+                    InstallerDiagnosticsPanel(
+                        expanded = diagnosticsExpanded,
+                        onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
+                        summary = "$count add-on update ${if (count == 1) "record" else "records"}",
+                        report = report,
+                        clipboardLabel = "Jester Mods add-on update diagnostics",
+                        accent = AccentBlue
                     )
                 }
                 item {
@@ -2802,22 +3780,40 @@ private fun InstalledModuleUpdatesDialog(
                         Box(Modifier.size(8.dp).clip(CircleShape).background(Accent))
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            "Every package is signed and verified. Updates are installed one at a time so each download can finish safely.",
+                            if (state.inProgress) {
+                                "The window stays open until the active update finishes, so progress and any retry guidance remain visible."
+                            } else {
+                                "Details still includes Check for updates and Download, so choosing Later never takes away your options."
+                            },
                             color = Muted,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
             }
-        }
     }
+}
+
+private fun installedModuleUpdateStageLabel(
+    state: InstalledModuleUpdatesUiState,
+    installedCount: Int,
+    count: Int
+): String = when {
+    state.inProgress && state.updatingAll -> "Updating all add-ons"
+    state.inProgress -> "Installing add-on update"
+    count > 0 && installedCount == count -> "All updates installed"
+    state.itemStates.values.any { it.status == InstalledModuleUpdateItemStatus.FAILED } -> "Update needs attention"
+    else -> "Updates available"
 }
 
 @Composable
 private fun InstalledModuleUpdateCard(
     screenCache: LauncherScreenCache,
     game: LibraryGame,
-    onReview: () -> Unit
+    itemState: InstalledModuleUpdateItemUiState,
+    anotherUpdateInProgress: Boolean,
+    onReview: () -> Unit,
+    onUpdate: () -> Unit
 ) {
     val listing = game.listing ?: return
     val bitmap = rememberLibraryBitmap(screenCache, game, 112)
@@ -2873,16 +3869,323 @@ private fun InstalledModuleUpdateCard(
             }
         }
         Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = onReview,
+        if (itemState.status in setOf(
+                InstalledModuleUpdateItemStatus.QUEUED,
+                InstalledModuleUpdateItemStatus.DOWNLOADING
+            )) {
+            SecureTransferProgressPanel(
+                stage = itemState.stage,
+                downloadedBytes = itemState.downloadedBytes,
+                totalBytes = itemState.totalBytes,
+                stageProgress = itemState.stageProgress,
+                accent = Accent,
+                subject = "add-on package",
+                finalAction = "safe activation"
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+        itemState.detail?.let { detail ->
+            Text(
+                detail,
+                color = when (itemState.status) {
+                    InstalledModuleUpdateItemStatus.INSTALLED -> Accent
+                    InstalledModuleUpdateItemStatus.FAILED -> Danger
+                    else -> Muted
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(vertical = 12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Review update", fontWeight = FontWeight.Bold)
+            Button(
+                onClick = onUpdate,
+                enabled = !anotherUpdateInProgress &&
+                    itemState.status != InstalledModuleUpdateItemStatus.INSTALLED,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Accent,
+                    contentColor = Ink,
+                    disabledContainerColor = when (itemState.status) {
+                        InstalledModuleUpdateItemStatus.INSTALLED -> Accent.copy(alpha = 0.16f)
+                        else -> Hairline
+                    },
+                    disabledContentColor = when (itemState.status) {
+                        InstalledModuleUpdateItemStatus.INSTALLED -> Accent
+                        else -> Muted
+                    }
+                )
+            ) {
+                Text(
+                    when (itemState.status) {
+                        InstalledModuleUpdateItemStatus.AVAILABLE -> "Update"
+                        InstalledModuleUpdateItemStatus.QUEUED -> "Queued"
+                        InstalledModuleUpdateItemStatus.DOWNLOADING -> "Updating"
+                        InstalledModuleUpdateItemStatus.INSTALLED -> "Installed"
+                        InstalledModuleUpdateItemStatus.FAILED -> "Retry"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            OutlinedButton(
+                onClick = onReview,
+                enabled = !anotherUpdateInProgress,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.42f))
+            ) {
+                Text("Details", color = if (anotherUpdateInProgress) Muted else AccentBlue, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
+}
+
+@Composable
+private fun SecureTransferEmblem(
+    stage: SecureTransferStage,
+    downloadedBytes: Long,
+    totalBytes: Long,
+    stageProgress: Float?,
+    contentDescription: String,
+    accent: Color
+) {
+    if (stage == SecureTransferStage.READY) {
+        UpdateEmblem(contentDescription)
+        return
+    }
+    val byteProgress = if (totalBytes > 0L) {
+        (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val label = when (stage) {
+        SecureTransferStage.COMPLETED -> "OK"
+        SecureTransferStage.FAILED -> "!"
+        SecureTransferStage.CANCELLED -> "X"
+        SecureTransferStage.DOWNLOADING -> "${(byteProgress * 100).toInt()}%"
+        SecureTransferStage.PREPARING,
+        SecureTransferStage.VERIFYING -> stageProgress?.takeIf { it > 0.01f }
+            ?.let { "${(it.coerceIn(0f, 1f) * 100).toInt()}%" }
+            ?: "â€¦"
+        SecureTransferStage.ACTIVATING,
+        SecureTransferStage.WAITING_FOR_ANDROID -> ""
+        SecureTransferStage.READY -> ""
+    }
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    listOf(accent.copy(alpha = 0.34f), Accent.copy(alpha = 0.1f), SurfaceDark)
+                )
+            )
+            .border(1.dp, accent.copy(alpha = 0.55f), CircleShape)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center
+    ) {
+        if (stage == SecureTransferStage.ACTIVATING || stage == SecureTransferStage.WAITING_FOR_ANDROID) {
+            InstallerOrbitAnimation()
+        } else {
+            Text(
+                label,
+                color = when (stage) {
+                    SecureTransferStage.FAILED -> Danger
+                    SecureTransferStage.COMPLETED -> Accent
+                    SecureTransferStage.CANCELLED -> PrivateGold
+                    else -> Color.White
+                },
+                style = if (label.length > 2) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black
+            )
+        }
+    }
+}
+
+@Composable
+private fun SecureTransferJourney(
+    stage: SecureTransferStage,
+    labels: List<String>,
+    accent: Color
+) {
+    require(labels.size == 4)
+    val activeStep = when (stage) {
+        SecureTransferStage.READY,
+        SecureTransferStage.PREPARING,
+        SecureTransferStage.CANCELLED,
+        SecureTransferStage.FAILED -> 0
+        SecureTransferStage.DOWNLOADING -> 1
+        SecureTransferStage.VERIFYING -> 2
+        SecureTransferStage.ACTIVATING,
+        SecureTransferStage.WAITING_FOR_ANDROID,
+        SecureTransferStage.COMPLETED -> 3
+    }
+    val complete = stage == SecureTransferStage.COMPLETED
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        labels.forEachIndexed { index, label ->
+            val reached = index <= activeStep
+            if (index > 0) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .padding(top = 11.dp)
+                        .height(2.dp)
+                        .background(if (reached) accent.copy(alpha = 0.75f) else Hairline)
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                complete || index < activeStep -> accent
+                                index == activeStep -> accent.copy(alpha = 0.22f)
+                                else -> Hairline
+                            }
+                        )
+                        .border(
+                            1.dp,
+                            if (reached) accent.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (complete || index < activeStep) "✓" else (index + 1).toString(),
+                        color = if (complete || index < activeStep) Ink else if (reached) Color.White else Muted,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    label,
+                    color = if (reached) Color.White else Muted.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (index == activeStep) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SecureTransferProgressPanel(
+    stage: SecureTransferStage,
+    downloadedBytes: Long,
+    totalBytes: Long,
+    stageProgress: Float?,
+    accent: Color,
+    subject: String,
+    finalAction: String
+) {
+    val reportedProgress = stageProgress?.takeIf { it > 0.01f }
+    val targetProgress = reportedProgress ?: when (stage) {
+        SecureTransferStage.PREPARING -> 0.72f
+        SecureTransferStage.VERIFYING -> 0.9f
+        else -> 0f
+    }
+    val phaseProgress by animateFloatAsState(
+        targetValue = targetProgress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = if (reportedProgress == null) 1_400 else 320),
+        label = "secure-transfer-progress"
+    )
+    val stageAccent = when (stage) {
+        SecureTransferStage.VERIFYING -> Accent
+        SecureTransferStage.ACTIVATING -> PrivateViolet
+        else -> accent
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(stageAccent.copy(alpha = 0.12f), Color.White.copy(alpha = 0.035f))
+                )
+            )
+            .border(1.dp, stageAccent.copy(alpha = 0.24f), RoundedCornerShape(22.dp))
+            .padding(16.dp)
+    ) {
+        Text(
+            when (stage) {
+                SecureTransferStage.PREPARING -> "PREPARING"
+                SecureTransferStage.DOWNLOADING -> "DOWNLOADING"
+                SecureTransferStage.VERIFYING -> "VERIFYING"
+                SecureTransferStage.ACTIVATING -> "ACTIVATING"
+                SecureTransferStage.WAITING_FOR_ANDROID -> "INSTALLING"
+                else -> "SECURE TRANSFER"
+            },
+            color = stageAccent,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Black
+        )
+        Text(
+            when (stage) {
+                SecureTransferStage.PREPARING -> "Authorizing and preparing $subject"
+                SecureTransferStage.DOWNLOADING -> "Receiving the signed $subject"
+                SecureTransferStage.VERIFYING -> "Proving integrity and identity"
+                SecureTransferStage.ACTIVATING -> "Completing $finalAction"
+                SecureTransferStage.WAITING_FOR_ANDROID -> "$finalAction is active"
+                else -> secureTransferStageLabel(stage)
+            },
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(14.dp))
+        when (stage) {
+            SecureTransferStage.DOWNLOADING -> DownloadProgressBar(
+                downloadedBytes = downloadedBytes,
+                totalBytes = totalBytes,
+                waiting = true,
+                color = stageAccent
+            )
+            SecureTransferStage.PREPARING,
+            SecureTransferStage.VERIFYING -> InstallerDeterminateProgress(
+                progress = phaseProgress,
+                color = stageAccent,
+                label = if (stage == SecureTransferStage.PREPARING) {
+                    "Checking access and signed release details"
+                } else {
+                    "Checking package hash, identity, and signature"
+                }
+            )
+            SecureTransferStage.ACTIVATING,
+            SecureTransferStage.WAITING_FOR_ANDROID -> InstallerIndeterminateProgress(
+                color = stageAccent,
+                message = if (stage == SecureTransferStage.WAITING_FOR_ANDROID) {
+                    "Complete Android's secure prompt. Jester Mods will verify the result when you return."
+                } else {
+                    "The verified files are being activated atomically. Keep Jester Mods open."
+                },
+                contentDescription = if (stage == SecureTransferStage.WAITING_FOR_ANDROID) {
+                    "Android installation in progress"
+                } else {
+                    "Verified add-on activation in progress"
+                }
+            )
+            else -> Unit
+        }
+    }
+}
+
+private fun secureTransferStageLabel(stage: SecureTransferStage): String = when (stage) {
+    SecureTransferStage.READY -> "Ready"
+    SecureTransferStage.PREPARING -> "Preparing secure transfer"
+    SecureTransferStage.DOWNLOADING -> "Downloading package"
+    SecureTransferStage.VERIFYING -> "Verifying package"
+    SecureTransferStage.ACTIVATING -> "Activating package"
+    SecureTransferStage.WAITING_FOR_ANDROID -> "Waiting for Android"
+    SecureTransferStage.COMPLETED -> "Complete"
+    SecureTransferStage.FAILED -> "Failed"
+    SecureTransferStage.CANCELLED -> "Paused"
 }
 
 @Composable
@@ -3294,7 +4597,10 @@ private fun ModuleDownloadScreen(
         addOnSize?.let { source.size + it }
     } else null
     val directUpdateIsNewer = game == null || directSource == null || directSource.versionCode > game.versionCode
-    val busy = update.inProgress || gameInstall.inProgress || gameInstall.installing || gameInstall.cancelling
+    val busy = update.inProgress || update.cancelling || gameInstall.inProgress ||
+        gameInstall.installing || gameInstall.cancelling
+    val companionWindowActive = directSource != null && gameInstall.visible &&
+        (gameInstall.packageName.isBlank() || gameInstall.packageName == listing.catalog.config.packageName)
 
     RefreshableScreen(
         refreshing = refreshing,
@@ -3322,7 +4628,7 @@ private fun ModuleDownloadScreen(
             Text("See what is included and required before adding this add-on to your library.", color = Muted)
         }
 
-        if (listing.catalog.privateScope != null && listing.privateAccessExpiresAtEpochSeconds != null) {
+        if (listing.privateAccessProtected) {
             item {
                 PrivateModuleAccessTimer(listing.privateAccessExpiresAtEpochSeconds)
             }
@@ -3380,19 +4686,17 @@ private fun ModuleDownloadScreen(
                 InformationGroupLabel(methodPresentation.setupLabel)
                 Spacer(Modifier.height(8.dp))
                 DownloadInfoRow(methodPresentation.fieldLabel, methodPresentation.method.displayName)
-                if (listing.catalog.installSource is GameInstallSource.PlayStore) {
-                    DownloadInfoRow(
-                        "Google Play",
-                        playStoreStatus?.let { status ->
-                            buildString {
-                                append(playStoreReleaseLabel(status))
-                                if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                                else if (playStoreOutdatedWarning) append(" · add-on update needed")
-                                if (status.stale) append(" · last saved check")
-                            }
-                        } ?: "Check temporarily unavailable"
-                    )
-                }
+                DownloadInfoRow(
+                    "Google Play",
+                    playStoreStatus?.let { status ->
+                        buildString {
+                            append(playStoreReleaseLabel(status))
+                            if (playStoreUpdateInProgress) append(" · add-on update in progress")
+                            else if (playStoreOutdatedWarning) append(" · add-on update needed")
+                            if (status.stale) append(" · last saved check")
+                        }
+                    } ?: "Check temporarily unavailable"
+                )
                 LauncherMethodNotice(methodPresentation)
                 if (playStoreStatus != null && playStoreSupported == false) {
                     Spacer(Modifier.height(8.dp))
@@ -3459,27 +4763,31 @@ private fun ModuleDownloadScreen(
                 Text("GET THE GAME", color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
                 when {
-                    gameInstall.inProgress -> {
-                        Text(gameInstall.headline ?: "Downloading game", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(12.dp))
-                        DownloadProgressBar(
-                            downloadedBytes = gameInstall.downloadedBytes,
-                            totalBytes = gameInstall.totalBytes,
-                            waiting = true,
-                            color = AccentBlue
+                    companionWindowActive -> {
+                        Text(
+                            when {
+                                gameInstall.completed -> "Game companion installed"
+                                gameInstall.failed -> "Game companion needs attention"
+                                gameInstall.cancelled -> "Game companion install paused"
+                                else -> "Secure installer window active"
+                            },
+                            color = when {
+                                gameInstall.failed -> Danger
+                                gameInstall.completed -> Accent
+                                else -> Color.White
+                            },
+                            fontWeight = FontWeight.SemiBold
                         )
-                    }
-                    gameInstall.installing -> {
-                        Text(gameInstall.headline ?: "Waiting for Android", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text(gameInstall.detail ?: "Confirm the game installation in the Android prompt.", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    gameInstall.completed -> {
-                        Text(gameInstall.headline ?: "Game installed", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        gameInstall.detail?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
-                    }
-                    gameInstall.failed -> {
-                        Text(gameInstall.headline ?: "Couldn't install the game", color = Danger, fontWeight = FontWeight.SemiBold)
-                        gameInstall.detail?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            if (update.inProgress) {
+                                "The add-on update window has priority. Companion progress will return when that update finishes."
+                            } else {
+                                "Progress, cancellation, recovery, and diagnostics are available in the companion installer window."
+                            },
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     gameInstall.headline != null -> {
                         Text(gameInstall.headline, color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -3487,8 +4795,24 @@ private fun ModuleDownloadScreen(
                     }
                     else -> when (val source = listing.catalog.installSource) {
                         is GameInstallSource.PlayStore -> {
-                            Text(if (game == null) "Available from Google Play" else "Update from Google Play", color = Color.White, fontWeight = FontWeight.SemiBold)
-                            Text("Google Play handles the original game installation and updates.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                when {
+                                    playStoreStatus == null -> "Google Play listing not detected"
+                                    game == null -> "Available from Google Play"
+                                    else -> "Update from Google Play"
+                                },
+                                color = if (playStoreStatus == null) Muted else Color.White,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                if (playStoreStatus == null) {
+                                    "The launcher couldn't confirm this package on Google Play, so the store action is hidden."
+                                } else {
+                                    "Google Play handles the original game installation and updates."
+                                },
+                                color = Muted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                         is GameInstallSource.DirectDownload -> {
                             Text(if (game == null) "Download original game" else "Compatible game update", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -3501,27 +4825,28 @@ private fun ModuleDownloadScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = onAcquireGame,
-                    enabled = !busy && !gameInstall.completed && directUpdateIsNewer,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
-                ) {
-                    Text(
-                        when {
-                            gameInstall.inProgress -> "Downloading…"
-                            gameInstall.installing -> "Waiting for Android…"
-                            gameInstall.failed -> "Try again"
-                            listing.catalog.installSource is GameInstallSource.PlayStore && game == null -> "Get from Google Play"
-                            listing.catalog.installSource is GameInstallSource.PlayStore -> "Update in Google Play"
-                            game == null -> "Download game"
-                            else -> "Download game update"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+                if (listing.configuredGameSourceAvailable) {
+                    Button(
+                        onClick = onAcquireGame,
+                        enabled = !busy && !gameInstall.completed && directUpdateIsNewer,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
+                    ) {
+                        Text(
+                            when {
+                                companionWindowActive && (gameInstall.inProgress || gameInstall.installing) -> "Installer window active"
+                                companionWindowActive && gameInstall.failed -> "Use installer window"
+                                listing.catalog.installSource is GameInstallSource.PlayStore && game == null -> "Get from Google Play"
+                                listing.catalog.installSource is GameInstallSource.PlayStore -> "Update in Google Play"
+                                game == null -> "Download game"
+                                else -> "Download game update"
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-                if (directSource != null) {
+                if (directSource != null && listing.playStoreListingDetected) {
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onOpenGameStore,
@@ -3624,7 +4949,7 @@ private fun ModuleFeaturesSection(
     Column(
         Modifier.fillMaxWidth().animateContentSize().clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onToggle)
-            .padding(vertical = 2.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -3767,25 +5092,28 @@ private fun moduleDownloadSizeLabel(module: CatalogModule, abi: String?): String
 
 @Composable
 private fun PrivateModuleAccessTimer(
-    expiresAtEpochSeconds: Long,
+    expiresAtEpochSeconds: Long?,
     compact: Boolean = false
 ) {
-    val expiresAtMillis = remember(expiresAtEpochSeconds) { expiresAtEpochSeconds * 1_000L }
+    val expiresAtMillis = remember(expiresAtEpochSeconds) { expiresAtEpochSeconds?.times(1_000L) }
     val now by produceState(initialValue = System.currentTimeMillis(), expiresAtMillis) {
+        val expiry = expiresAtMillis ?: return@produceState
         while (true) {
             value = System.currentTimeMillis()
-            if (value >= expiresAtMillis) break
-            delay(minOf(1_000L, maxOf(250L, expiresAtMillis - value)))
+            if (value >= expiry) break
+            delay(minOf(1_000L, maxOf(250L, expiry - value)))
         }
     }
-    val remaining = expiresAtMillis - now
-    val remainingText = formatRemainingAccessPrimary(remaining)
+    val remainingText = expiresAtMillis?.let { formatRemainingAccessPrimary(it - now) }
+        ?: "Private add-on"
     val expiryText = remember(expiresAtMillis, compact) {
-        if (compact) {
-            SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(expiresAtMillis))
-        } else {
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(expiresAtMillis))
+        expiresAtMillis?.let { expiry ->
+            if (compact) {
+                SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(expiry))
+            } else {
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                    .format(Date(expiry))
+            }
         }
     }
     val shape = RoundedCornerShape(if (compact) 16.dp else 26.dp)
@@ -3805,7 +5133,11 @@ private fun PrivateModuleAccessTimer(
             )
             .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.38f)), shape)
             .semantics {
-                contentDescription = "Private access $remainingText, available until $expiryText"
+                contentDescription = if (expiryText != null) {
+                    "Private access $remainingText, available until $expiryText"
+                } else {
+                    "Private add-on, approval is verified before use"
+                }
             }
             .padding(
                 horizontal = if (compact) 13.dp else 20.dp,
@@ -3824,7 +5156,7 @@ private fun PrivateModuleAccessTimer(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "VERIFIED",
+                if (expiryText != null) "VERIFIED" else "PROTECTED",
                 color = PrivateViolet,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold
@@ -3840,7 +5172,11 @@ private fun PrivateModuleAccessTimer(
         if (!compact) {
             Spacer(Modifier.height(4.dp))
             Text(
-                "Private add-on access is active for this device.",
+                if (expiryText != null) {
+                    "Private add-on access is active for this device."
+                } else {
+                    "Access is verified before this add-on can be downloaded or launched."
+                },
                 color = Muted,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -3852,13 +5188,13 @@ private fun PrivateModuleAccessTimer(
         }
         if (compact) {
             Text(
-                "GRANTED UNTIL",
+                if (expiryText != null) "GRANTED UNTIL" else "ACCESS",
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall
             )
             Spacer(Modifier.height(1.dp))
             Text(
-                expiryText,
+                expiryText ?: "Approval required",
                 color = Color.White.copy(alpha = 0.88f),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold
@@ -3870,12 +5206,12 @@ private fun PrivateModuleAccessTimer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "AVAILABLE UNTIL",
+                    if (expiryText != null) "AVAILABLE UNTIL" else "ACCESS",
                     color = Muted,
                     style = MaterialTheme.typography.labelSmall
                 )
                 Text(
-                    expiryText,
+                    expiryText ?: "Approval required",
                     color = Color.White.copy(alpha = 0.88f),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
@@ -3888,7 +5224,7 @@ private fun PrivateModuleAccessTimer(
 private fun playStoreReleaseLabel(status: PlayStoreVersionStatus): String =
     status.latestVersion?.let { "v$it" } ?: when (status.updateAvailable) {
         true -> "New release detected"
-        false -> "No newer release detected"
+        false -> "Release checked"
         null -> "Release checked · version not published"
     }
 
@@ -3977,7 +5313,7 @@ private fun ModuleListingCard(
                 )
             }
         }
-        if (listing.catalog.privateScope != null && listing.privateAccessExpiresAtEpochSeconds != null) {
+        if (listing.privateAccessProtected) {
             Spacer(Modifier.height(13.dp))
             PrivateModuleAccessTimer(
                 expiresAtEpochSeconds = listing.privateAccessExpiresAtEpochSeconds,
@@ -4097,6 +5433,8 @@ private fun libraryStatusLabel(entry: LibraryGame): String {
         when (entry.launchAction) {
             LibraryLaunchAction.PATCH_AND_INSTALL -> return "Patched install required"
             LibraryLaunchAction.UPDATE_PATCHED_INSTALL -> return "Patched game update required"
+            LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> return "Official game restore required"
+            LibraryLaunchAction.SHELL_AND_INSTALL -> return "Exact-package shell required"
             LibraryLaunchAction.PLAY -> Unit
         }
     }
@@ -4149,7 +5487,7 @@ private fun LauncherMethodBadge(
     presentation: LauncherMethodPresentation,
     modifier: Modifier = Modifier
 ) {
-    val color = if (presentation.method == NonRootMethod.DIRECT_PATCH) AccentBlue else Accent
+    val color = if (presentation.method == NonRootMethod.INJECTION) Accent else AccentBlue
     Box(
         modifier = modifier
             .semantics { contentDescription = presentation.badgeDescription }
@@ -4171,7 +5509,7 @@ private fun LauncherMethodBadge(
 
 @Composable
 private fun LauncherMethodNotice(presentation: LauncherMethodPresentation) {
-    val color = if (presentation.method == NonRootMethod.DIRECT_PATCH) AccentBlue else Accent
+    val color = if (presentation.method == NonRootMethod.INJECTION) Accent else AccentBlue
     Spacer(Modifier.height(8.dp))
     Column(
         modifier = Modifier
@@ -4516,8 +5854,19 @@ private fun LibraryScreen(
                 val keepsPatchedInstalls = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
                     it.module.nonRootMethod == NonRootMethod.DIRECT_PATCH
                 }
+                val removesIdentityShells = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
+                    it.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL
+                }
                 Text(
                     when {
+                        removesIdentityShells && removesManagedCopies && keepsPatchedInstalls ->
+                            "This removes the selected add-ons and asks Android to uninstall any exact-package shells. Managed BlackBox copies and shell data are erased. Directly patched games and original Play installations stay on this device."
+                        removesIdentityShells && removesManagedCopies ->
+                            "This removes the selected add-ons and asks Android to uninstall any exact-package shells. Managed BlackBox copies, shell identities, settings, and save data are erased. Original Play installations are not uninstalled."
+                        removesIdentityShells && keepsPatchedInstalls ->
+                            "This removes the selected add-ons and asks Android to uninstall any exact-package shells, including their local data. Directly patched games and original Play installations stay on this device."
+                        removesIdentityShells ->
+                            "This removes the selected add-ons and asks Android to uninstall any installed exact-package shells, including their local data. It does not automatically restore the original Play-signed games."
                         removesManagedCopies && keepsPatchedInstalls ->
                             "This removes the selected add-ons. Managed BlackBox game copies are uninstalled with their sandbox identity, settings, and save data. Directly patched Android games and original installations stay on this device."
                         removesManagedCopies ->
@@ -4771,7 +6120,7 @@ private fun CompactGameCard(
                 )
             }
         }
-        if (game.privateScope != null && game.privateAccessExpiresAtEpochSeconds != null) {
+        if (game.privateAccessProtected) {
             Spacer(Modifier.height(12.dp))
             PrivateModuleAccessTimer(
                 expiresAtEpochSeconds = game.privateAccessExpiresAtEpochSeconds,
@@ -4861,7 +6210,7 @@ private fun ModuleScreen(
                 }
             }
         }
-        if (game.privateScope != null && game.privateAccessExpiresAtEpochSeconds != null) {
+        if (game.privateAccessProtected) {
             item {
                 PrivateModuleAccessTimer(game.privateAccessExpiresAtEpochSeconds)
             }
@@ -4974,7 +6323,12 @@ private fun ModuleScreen(
                     .padding(18.dp)
             ) {
                 Text(
-                    if (game.launchAction == LibraryLaunchAction.PLAY) "PLAY" else "PATCH & INSTALL",
+                    when (game.launchAction) {
+                        LibraryLaunchAction.PLAY -> "PLAY"
+                        LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "SAFE MIGRATION"
+                        LibraryLaunchAction.SHELL_AND_INSTALL -> "SHELL & INSTALL"
+                        else -> "PATCH & INSTALL"
+                    },
                     color = AccentBlue,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
@@ -4996,6 +6350,10 @@ private fun ModuleScreen(
                             "Create and install the patched game first. Android will ask before removing the current Play-signed installation."
                         game.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL ->
                             "The embedded add-on changed. Update the patched game in place before playing."
+                        game.launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL ->
+                            "A previous patched installation was detected. Restore the official game before creating its exact-package shell."
+                        game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL ->
+                            "Preserve the untouched game and install its game-branded exact-package shell."
                         else ->
                             "Jester Mods will open the game with your features ready."
                     },
@@ -5049,19 +6407,7 @@ private fun ModuleScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
                 ) {
                     Text(
-                        when {
-                            launch.inProgress && game.launchAction != LibraryLaunchAction.PLAY -> "Preparing patch…"
-                            game.status == LibraryGameStatus.RUNNING -> "Resume"
-                            game.status !in setOf(
-                                LibraryGameStatus.READY,
-                                LibraryGameStatus.UPDATE_AVAILABLE
-                            ) -> "View requirements"
-                            launch.inProgress -> "Launching…"
-                            game.launchAction == LibraryLaunchAction.PATCH_AND_INSTALL -> "Patch & install"
-                            game.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL -> "Update patched game"
-                            launch.completed -> "Play again"
-                            else -> "Play"
-                        },
+                        libraryPrimaryActionLabel(game.status, game.launchAction, launch),
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -5136,15 +6482,19 @@ private fun ModuleScreen(
             title = { Text("Remove ${game.title}?", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    if (launcherMethodPresentation(
-                            game.module.nonRootMethod,
-                            BuildConfig.IS_ROOT_MODE
-                        ).method == NonRootMethod.DIRECT_PATCH) {
-                        "This removes the add-on and its retryable patch files from the launcher. The currently installed patched game and its data stay on Android; it is not uninstalled or restored to the Google Play version."
-                    } else if (!BuildConfig.IS_ROOT_MODE) {
-                        "This removes the add-on and the managed game copy from BlackBox, including its sandbox identity, settings, and save data. The original Android game and its data will not be changed."
-                    } else {
-                        "This removes only its add-on from the Library. The original Android game and its data will not be changed."
+                    when (launcherMethodPresentation(
+                        game.module.nonRootMethod,
+                        BuildConfig.IS_ROOT_MODE
+                    ).method) {
+                        NonRootMethod.DIRECT_PATCH ->
+                            "This removes the add-on and its retryable patch files from the launcher. The currently installed patched game and its data stay on Android; it is not uninstalled or restored to the Google Play version."
+                        NonRootMethod.IDENTITY_SHELL ->
+                            "If the exact-package compatibility shell is installed, Android will ask you to uninstall it, including its local app data. Jester Mods removes the add-on and preserved shell files only after that succeeds. The original Play-signed game is not restored automatically."
+                        NonRootMethod.INJECTION -> if (!BuildConfig.IS_ROOT_MODE) {
+                            "This removes the add-on and the managed game copy from BlackBox, including its sandbox identity, settings, and save data. The original Android game and its data will not be changed."
+                        } else {
+                            "This removes only its add-on from the Library. The original Android game and its data will not be changed."
+                        }
                     }
                 )
             },
@@ -5230,6 +6580,8 @@ private fun ModuleCompatibilityCard(game: LibraryGame) {
         !game.installedComplete -> "Add-on needs repair"
         game.launchAction == LibraryLaunchAction.PATCH_AND_INSTALL -> "Patched install required"
         game.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL -> "Patched game update required"
+        game.launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "Official game restore required"
+        game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL -> "Exact-package shell required"
         playStoreUpdateInProgress -> "Add-on update in progress"
         playStoreOutdatedWarning -> "Add-on update advised"
         game.running -> "Running and ready"
@@ -5248,6 +6600,10 @@ private fun ModuleCompatibilityCard(game: LibraryGame) {
             "The add-on is downloaded. Build and install the patched game before the Play button becomes available."
         game.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL ->
             "Install the refreshed patch in place so the game contains this add-on version."
+        game.launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL ->
+            "Jester Mods detected its previous patch and will keep it out of the new shell. Restore the official Google Play game first."
+        game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL ->
+            "Jester Mods will preserve the untouched game package and create a shell with its exact name and icon."
         playStoreUpdateInProgress ->
             "The maintainer is updating this add-on for the newer game version shown by Google Play."
         playStoreOutdatedWarning ->
@@ -5332,10 +6688,9 @@ private fun ModuleUpdateChangelog(entries: List<ModuleChangelogEntry>) {
             Text("${entry.version} · Build ${entry.build}", color = Color.White, fontWeight = FontWeight.SemiBold)
             Text(entry.updateType.replaceFirstChar { it.uppercase() }, color = Accent, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(4.dp))
-            Text(
-                entry.notes.ifBlank { "Add-on maintenance and compatibility improvements." },
-                color = Muted,
-                style = MaterialTheme.typography.bodySmall
+            ChangelogRundown(
+                entry.notes,
+                fallback = "Add-on maintenance and compatibility improvements."
             )
         }
     }

@@ -102,14 +102,32 @@ class LauncherUpdateClient(private val context: Context) {
         return runCatching { parseChangelog(JSONObject(cache.readText())) }.getOrNull()
     }
 
-    fun isDownloaded(release: LauncherRelease): Boolean {
+    fun isDownloaded(
+        release: LauncherRelease,
+        onVerificationProgress: (Float) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): Boolean {
         val apk = downloadedFile(release)
-        return apk.isFile && apk.length() == release.size &&
-            sha256(apk) == release.sha256 && runCatching { validateApk(apk, release) }.isSuccess
+        if (!apk.isFile || apk.length() != release.size) return false
+        onVerificationProgress(0.04f)
+        val digest = sha256(apk, isCancelled) { completed, total ->
+            onVerificationProgress((0.04f + (completed.toFloat() / total.toFloat()) * 0.78f).coerceIn(0.04f, 0.82f))
+        }
+        if (digest != release.sha256) return false
+        onVerificationProgress(0.9f)
+        val valid = runCatching { validateApk(apk, release) }.isSuccess
+        if (valid) onVerificationProgress(1f)
+        return valid
     }
 
-    fun download(release: LauncherRelease, onProgress: (Long, Long) -> Unit): File {
-        if (isDownloaded(release)) {
+    fun download(
+        release: LauncherRelease,
+        onProgress: (Long, Long) -> Unit,
+        onVerificationProgress: (Float) -> Unit = {},
+        onDiagnostic: (String) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): File {
+        if (isDownloaded(release, onVerificationProgress, isCancelled)) {
             onProgress(release.size, release.size)
             return downloadedFile(release)
         }
@@ -129,10 +147,21 @@ class LauncherUpdateClient(private val context: Context) {
                     }
                 },
                 onProgress = onProgress,
-                onDiagnostic = { message -> Log.w(TAG, message) }
+                onDiagnostic = { message ->
+                    Log.w(TAG, message)
+                    onDiagnostic(message)
+                },
+                isCancelled = isCancelled
             )
-            require(sha256(temporary) == release.sha256) { "Launcher download verification failed" }
+            onVerificationProgress(0.04f)
+            require(sha256(temporary, isCancelled) { completed, total ->
+                onVerificationProgress(
+                    (0.04f + (completed.toFloat() / total.toFloat()) * 0.78f).coerceIn(0.04f, 0.82f)
+                )
+            } == release.sha256) { "Launcher download verification failed" }
+            onVerificationProgress(0.9f)
             validateApk(temporary, release)
+            onVerificationProgress(1f)
             if (target.exists()) require(target.delete()) { "Could not replace the previous launcher download" }
             require(temporary.renameTo(target)) { "Could not save the launcher update" }
             return target
@@ -142,9 +171,15 @@ class LauncherUpdateClient(private val context: Context) {
         }
     }
 
-    fun install(release: LauncherRelease) {
+    fun install(
+        release: LauncherRelease,
+        isCancelled: () -> Boolean = { false }
+    ) {
         val apk = downloadedFile(release)
-        require(isDownloaded(release)) { "Download the verified launcher update first" }
+        require(isDownloaded(release, isCancelled = isCancelled)) {
+            "Download the verified launcher update first"
+        }
+        if (isCancelled()) throw FastFileDownloader.DownloadCancelledException()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(context.packageManager.canRequestPackageInstalls()) {
                 "Allow Jester Mods to install app updates in Android settings"
@@ -161,6 +196,7 @@ class LauncherUpdateClient(private val context: Context) {
             "${context.packageName}.launcher-updates",
             apk
         )
+        if (isCancelled()) throw FastFileDownloader.DownloadCancelledException()
         context.startActivity(
             Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, APK_MIME_TYPE)
@@ -279,14 +315,27 @@ class LauncherUpdateClient(private val context: Context) {
         }
     }
 
-    private fun sha256(file: File): String {
+    private fun sha256(
+        file: File,
+        isCancelled: () -> Boolean = { false },
+        onProgress: (completedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        val total = file.length().coerceAtLeast(1L)
+        var completed = 0L
+        var lastReported = 0L
         file.inputStream().use { input ->
             val buffer = ByteArray(64 * 1024)
             while (true) {
+                if (isCancelled()) throw FastFileDownloader.DownloadCancelledException()
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)
+                completed += count
+                if (completed == total || completed - lastReported >= 512L * 1024L) {
+                    onProgress(completed, total)
+                    lastReported = completed
+                }
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }

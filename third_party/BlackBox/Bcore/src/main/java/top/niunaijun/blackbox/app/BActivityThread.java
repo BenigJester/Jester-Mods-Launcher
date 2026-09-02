@@ -400,6 +400,17 @@ public class BActivityThread extends IBActivityThread.Stub {
 
         Object boundApplication = BRActivityThread.get(BlackBoxCore.mainThread()).mBoundApplication();
 
+        boolean samePackageGuest = BlackBoxCore.get().isHostPackageVirtualizationEnabled()
+                && packageName.equals(BlackBoxCore.getHostPkg());
+        String identityShellApk = null;
+        if (samePackageGuest) {
+            try {
+                identityShellApk = BlackBoxCore.getContext().getApplicationInfo().sourceDir;
+            } catch (Throwable ignored) {
+            }
+            evictHostLoadedApk(packageName);
+        }
+
         Context packageContext = createPackageContext(applicationInfo);
         Object loadedApk = BRContextImpl.get(packageContext).mPackageInfo();
         BRLoadedApk.get(loadedApk)._set_mSecurityViolation(false);
@@ -420,6 +431,13 @@ public class BActivityThread extends IBActivityThread.Stub {
 
         try {
             ClassLoader cl = BRLoadedApk.get(loadedApk).getClassLoader();
+            if (samePackageGuest && identityShellApk != null) {
+                // Game elements were created first, so appending the shell keeps guest classes
+                // authoritative while retaining BlackBox proxy components for delayed callbacks.
+                injectJarIntoClassLoader(cl, identityShellApk, BlackBoxCore.getContext());
+                Slog.i(TAG, "Appended identity-shell classes behind same-package guest "
+                        + packageName);
+            }
             boolean hasApacheLegacy;
             try {
                 Class.forName("org.apache.http.entity.InputStreamEntity", false, cl);
@@ -614,6 +632,30 @@ public class BActivityThread extends IBActivityThread.Stub {
             expandFieldArray(pathList, "dexElements", newElements);
         } catch (Throwable t) {
             Slog.w(TAG, "Failed to inject jar into classloader: " + t.getMessage());
+        }
+    }
+
+    private static void evictHostLoadedApk(String packageName) {
+        Object activityThread = BlackBoxCore.mainThread();
+        if (activityThread == null || packageName == null) return;
+        evictLoadedApkMap(activityThread, "mPackages", packageName);
+        evictLoadedApkMap(activityThread, "mResourcePackages", packageName);
+    }
+
+    @SuppressWarnings("rawtypes")
+    private static void evictLoadedApkMap(Object activityThread, String fieldName,
+                                          String packageName) {
+        try {
+            java.lang.reflect.Field field = activityThread.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            Object value = field.get(activityThread);
+            if (value instanceof Map) {
+                ((Map) value).remove(packageName);
+                Slog.i(TAG, "Evicted outer identity-shell LoadedApk from " + fieldName);
+            }
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not evict identity-shell " + fieldName + ": "
+                    + error.getMessage());
         }
     }
 

@@ -13,8 +13,14 @@ data class PackageReplacementRequest(
     val title: String,
     val versionCode: Long,
     val apks: List<File>,
-    val requiresUninstall: Boolean
+    val requiresUninstall: Boolean,
+    val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH
 )
+
+enum class PackageReplacementKind {
+    DIRECT_PATCH,
+    IDENTITY_SHELL
+}
 
 data class PackageReplacementInstallResult(
     val packageName: String,

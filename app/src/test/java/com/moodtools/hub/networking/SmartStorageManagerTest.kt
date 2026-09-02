@@ -131,7 +131,7 @@ class SmartStorageManagerTest {
     }
 
     @Test
-    fun successfulPatchInstallAndAddOnRemovalReclaimOnlyLauncherOwnedPatchFiles() {
+    fun patchInstallMigrationAndAddOnRemovalReclaimOnlyLauncherOwnedPatchFiles() {
         val files = temporaryFolder.newFolder("files")
         val patchRoot = File(files, "soul-knight-patches")
         val installedPatch = artifact(
@@ -142,6 +142,10 @@ class SmartStorageManagerTest {
             File(patchRoot, "com.example.other/20-current/signed").apply { mkdirs() },
             "base.apk"
         )
+        val migratedPatch = artifact(
+            File(patchRoot, "com.example.migrated/30-current/signed").apply { mkdirs() },
+            "base.apk"
+        )
         val storage = SmartStorageManager(files, temporaryFolder.newFolder("cache"))
 
         val installedCleanup = storage.onDirectPatchInstallSucceeded("com.example.game")
@@ -150,9 +154,39 @@ class SmartStorageManagerTest {
         assertTrue(otherPatch.isFile)
         assertTrue(installedCleanup.deletedFiles == 1)
 
+        storage.onDirectPatchMigrationSucceeded("com.example.migrated")
+        assertFalse(migratedPatch.exists())
+        assertTrue(otherPatch.isFile)
+
         storage.onAddOnRemoved("com.example.other")
         assertFalse(otherPatch.exists())
         assertFalse(patchRoot.exists())
+    }
+
+    @Test
+    fun successfulIdentityImportReclaimsOnlyTheLargeOriginalGamePayload() {
+        val files = temporaryFolder.newFolder("files")
+        val shell = File(files, "identity-shells/com.example.game").apply { mkdirs() }
+        val payload = artifact(shell, "game.apks", "large-original-game")
+        val staleIncoming = artifact(shell, "game.apks.incoming", "stale-copy")
+        val metadata = artifact(shell, "metadata.json", "identity")
+        val generatedShell = artifact(shell, "shell.apk", "installed-shell-source")
+        val otherPayload = artifact(
+            File(files, "identity-shells/com.example.other").apply { mkdirs() },
+            "game.apks",
+            "other-original-game"
+        )
+
+        val result = SmartStorageManager(files, temporaryFolder.newFolder("cache"))
+            .onIdentityGameImportSucceeded("com.example.game")
+
+        assertFalse(payload.exists())
+        assertFalse(staleIncoming.exists())
+        assertTrue(metadata.isFile)
+        assertTrue(generatedShell.isFile)
+        assertTrue(otherPayload.isFile)
+        assertTrue(result.deletedFiles == 2)
+        assertTrue(result.reclaimedBytes > 0L)
     }
 
     private fun artifact(directory: File, name: String, contents: String = "verified"): File {

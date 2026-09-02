@@ -78,6 +78,27 @@ internal class SmartStorageManager(
     fun onDirectPatchInstallSucceeded(packageName: String): StorageCleanupResult =
         clearDirectPatchArtifacts(packageName)
 
+    /** The official-game migration no longer needs any retryable direct-patch generations. */
+    fun onDirectPatchMigrationSucceeded(packageName: String): StorageCleanupResult =
+        clearDirectPatchArtifacts(packageName)
+
+    /**
+     * The shell owns an imported copy after this acknowledgement, so keeping the large original
+     * APK cluster in launcher storage would double the game's storage cost.
+     */
+    fun onIdentityGameImportSucceeded(packageName: String): StorageCleanupResult {
+        require(PACKAGE_NAME.matches(packageName))
+        val result = MutableCleanupResult()
+        val root = File(filesDirectory, IDENTITY_SHELLS).canonicalFile
+        val packageDirectory = File(root, packageName).canonicalFile
+        require(packageDirectory.parentFile == root && packageDirectory.name == packageName) {
+            "Identity shell directory escaped launcher storage"
+        }
+        delete(File(packageDirectory, IDENTITY_GAME_PAYLOAD), result)
+        delete(File(packageDirectory, "$IDENTITY_GAME_PAYLOAD.incoming"), result)
+        return result.snapshot()
+    }
+
     /** Removing launcher support also removes retryable patch builds owned by that add-on. */
     fun onAddOnRemoved(packageName: String): StorageCleanupResult =
         clearDirectPatchArtifacts(packageName)
@@ -277,6 +298,8 @@ internal class SmartStorageManager(
         private const val GAME_DOWNLOADS = "game-downloads"
         private const val GAME_VALIDATION_CACHE = "game-apk-validation"
         private const val MENUS = "menus"
+        private const val IDENTITY_SHELLS = "identity-shells"
+        private const val IDENTITY_GAME_PAYLOAD = "game.apks"
         // Retain the established on-disk name while treating it as the generic direct-patch store.
         private const val DIRECT_PATCHES = "soul-knight-patches"
         private const val PATCH_SIGNED_DIRECTORY = "signed"

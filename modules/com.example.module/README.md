@@ -45,8 +45,9 @@ the compiled library unless it is separately removed.
 ## Choose the non-root method
 
 Every module must declare one non-root method in `config.json`. Copy one of the
-complete examples from [`examples/config.injection.json`](examples/config.injection.json)
-or [`examples/config.direct-patch.json`](examples/config.direct-patch.json), then
+complete examples from [`examples/config.injection.json`](examples/config.injection.json),
+[`examples/config.direct-patch.json`](examples/config.direct-patch.json), or
+[`examples/config.identity-shell.json`](examples/config.identity-shell.json), then
 replace all placeholder package, title, version, and entry-point values.
 
 ### Injection
@@ -81,6 +82,25 @@ valid ticket, `ModComponentFactory` delegates to the game's original component
 factory: the original game opens, but the native payload and menu stay disabled.
 Do not bypass or weaken this guard in a released module.
 
+### Exact-package identity shell
+
+Use an identity shell for a protected game that must observe its real package name while its
+original APK remains the virtualized game payload:
+
+```json
+"nonroot_method": "identity_shell"
+```
+
+The launcher preserves the untouched game APK, creates a small game-branded shell with the exact
+package identity, and hosts the original game inside that shell. A launcher-authorized launch uses
+the complete module. A direct home-screen launch is compatibility-only: it may apply the minimum
+package/signature bypasses required to start the original game, but it must not install menu or
+feature hooks.
+
+Keep both identity-shell Java entry points in `com.android.support.ModuleRuntime`. If the module
+uses a package-specific entry-point namespace, its `ModuleRuntime` wrapper must delegate those
+entry points to the shared runtime as this template does.
+
 Root launch behavior does not use `nonroot_method`; root always injects the
 verified module into the original game package.
 
@@ -91,14 +111,20 @@ The template starts native hooks only after Java supplies an explicit runtime me
 - `ModuleRuntime.loadNative(String)` selects injection for both root and BlackBox.
 - An authorized `ModComponentFactory` load selects direct patch only after
   `DirectLaunchGuard` accepts the launch ticket.
+- `ModuleRuntime.loadNativeForIdentityShell(String)` selects a launcher-authorized identity shell.
+- `ModuleRuntime.loadNativeForIdentityShellCompatibility(String)` selects an external shell launch
+  that must exclude menu and feature hooks.
 - Native code accepts the first method once, rejects attempts to change it, and leaves an
   unknown method disabled.
 
-Keep signing-certificate bypasses and other replacement-APK compatibility patches inside an
-`IsDirectPatchRuntime()` branch. Injection must skip their pattern scans as well as their
-patch calls, because the original Play-signed game does not need them and an outdated scan
-must not prevent ordinary root or BlackBox hooks from loading. Do not infer the runtime method
-from `config.json`, library paths, package signatures, or virtual-environment heuristics.
+Keep signing-certificate bypasses and other package-identity compatibility patches inside a
+`RequiresPackageIdentityBypass()` branch. Injection must skip their pattern scans and patch calls,
+because the original Play-signed game does not need them and an outdated scan must not prevent
+ordinary root or BlackBox hooks from loading. Apply those compatibility patches before the
+`IsIdentityShellCompatibilityOnlyRuntime()` early return; keep all menu and feature hooks after it.
+Use a narrower explicit method check for behavior that truly applies only to direct-patch APKs.
+Do not infer the runtime method from `config.json`, library paths, package signatures, or
+virtual-environment heuristics.
 
 The shared early-load observer also supports ARM64 games translated on x86-64 PC emulators. It
 falls back to the ELF scanner for libraries mapped from non-zero APK offsets and gives a detected
@@ -115,7 +141,8 @@ loader boundary.
 4. Keep `entry_point` as `com.android.support.Main` unless every shared Java and
    JNI class reference has intentionally been migrated to a new namespace.
 5. Set the supported game versions and ABIs in `config.json`.
-6. Select `injection` or `direct_patch` explicitly; never infer the active runtime in native code.
+6. Select `injection`, `direct_patch`, or `identity_shell` explicitly; never infer the active
+   runtime in native code.
 7. Replace the disabled native examples in `cpp/Main.cpp` with verified hooks.
 8. Keep the compatibility descriptor as the first native feature row.
 9. Keep `features.json` synchronized with the user-facing `GetFeatureList` rows.

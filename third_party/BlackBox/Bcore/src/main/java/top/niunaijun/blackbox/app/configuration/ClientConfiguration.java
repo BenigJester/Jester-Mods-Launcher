@@ -21,6 +21,14 @@ public abstract class ClientConfiguration {
         return true;
     }
 
+    /**
+     * Allows a purpose-built outer shell to host a virtual package with the same package name.
+     * This is deliberately default-off so the normal multi-game host keeps its recursion guards.
+     */
+    public boolean isHostPackageVirtualizationEnabled() {
+        return false;
+    }
+
     
     public boolean isUseVpnNetwork() {
         return false;

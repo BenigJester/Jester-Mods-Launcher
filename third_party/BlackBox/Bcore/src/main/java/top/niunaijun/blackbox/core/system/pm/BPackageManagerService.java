@@ -96,7 +96,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
     @Override
     public ApplicationInfo getApplicationInfo(String packageName, int flags, int userId) {
         if (!sUserManager.exists(userId)) return null;
-        if (Objects.equals(packageName, BlackBoxCore.getHostPkg())) {
+        if (Objects.equals(packageName, BlackBoxCore.getHostPkg())
+                && !BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
             try {
                 return BlackBoxCore.getPackageManager().getApplicationInfo(packageName, flags);
             } catch (PackageManager.NameNotFoundException e) {
@@ -301,7 +302,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
     @Override
     public PackageInfo getPackageInfo(String packageName, int flags, int userId) {
         if (!sUserManager.exists(userId)) return null;
-        if (Objects.equals(packageName, BlackBoxCore.getHostPkg())) {
+        if (Objects.equals(packageName, BlackBoxCore.getHostPkg())
+                && !BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
             try {
                 return BlackBoxCore.getPackageManager().getPackageInfo(packageName, flags);
             } catch (PackageManager.NameNotFoundException e) {
@@ -700,6 +702,9 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             if (option.isFlag(InstallOption.FLAG_URI_FILE)) {
                 Uri uri = Uri.parse(file);
                 String displayName = resolveDisplayName(uri);
+                if (TextUtils.isEmpty(displayName)) {
+                    displayName = uri.getLastPathSegment();
+                }
                 boolean isApks = displayName != null && displayName.toLowerCase().endsWith(".apks");
                 String suffix = isApks ? ".apks" : ".apk";
                 stagedFile = new File(BEnvironment.getCacheDir(), UUID.randomUUID().toString() + suffix);
@@ -755,7 +760,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             
             String packageName = packageArchiveInfo.packageName;
             String hostPackageName = BlackBoxCore.getHostPkg();
-            if (packageName.equals(hostPackageName)) {
+            if (packageName.equals(hostPackageName)
+                    && !BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
                 return result.installError("Cannot clone BlackBox app from within BlackBox. This would create infinite recursion and is not allowed for security reasons.");
             }
             

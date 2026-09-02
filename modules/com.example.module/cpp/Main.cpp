@@ -53,7 +53,10 @@ static std::atomic<int> gRuntimeMethod{0};
 bool StartNativeRuntime(int method) {
     constexpr int kInjectionMethod = 1;
     constexpr int kDirectPatchMethod = 2;
-    if (method != kInjectionMethod && method != kDirectPatchMethod) {
+    constexpr int kIdentityShellMethod = 3;
+    constexpr int kIdentityShellCompatibilityMethod = 4;
+    if (method != kInjectionMethod && method != kDirectPatchMethod &&
+        method != kIdentityShellMethod && method != kIdentityShellCompatibilityMethod) {
         LOGE(OBFUSCATE("Rejected unknown native runtime method: %d"), method);
         return false;
     }
@@ -69,8 +72,12 @@ bool StartNativeRuntime(int method) {
         return true;
     }
 
-    LOGI(OBFUSCATE("Starting native runtime in %s mode"),
-         method == kDirectPatchMethod ? "direct-patch" : "injection");
+    const char *runtimeName = method == kDirectPatchMethod ? "direct-patch" :
+                              method == kIdentityShellMethod ? "identity-shell" :
+                              method == kIdentityShellCompatibilityMethod ?
+                                  "identity-shell-compatibility" :
+                              "injection";
+    LOGI(OBFUSCATE("Starting native runtime in %s mode"), runtimeName);
     if (!kNativeExamplesConfigured) {
         gCompatibilityState.store(CompatibilityState::Ready, std::memory_order_release);
         LOGI(OBFUSCATE("Template native examples disabled; skipping early native observer"));
@@ -80,9 +87,19 @@ bool StartNativeRuntime(int method) {
     return true;
 }
 
-bool IsDirectPatchRuntime() {
+bool RequiresPackageIdentityBypass() {
     constexpr int kDirectPatchMethod = 2;
-    return gRuntimeMethod.load(std::memory_order_acquire) == kDirectPatchMethod;
+    constexpr int kIdentityShellMethod = 3;
+    constexpr int kIdentityShellCompatibilityMethod = 4;
+    const int method = gRuntimeMethod.load(std::memory_order_acquire);
+    return method == kDirectPatchMethod || method == kIdentityShellMethod ||
+           method == kIdentityShellCompatibilityMethod;
+}
+
+bool IsIdentityShellCompatibilityOnlyRuntime() {
+    constexpr int kIdentityShellCompatibilityMethod = 4;
+    return gRuntimeMethod.load(std::memory_order_acquire) ==
+           kIdentityShellCompatibilityMethod;
 }
 
 // Initialized by Menu/Setup.cpp during JNI_OnLoad and available to future JNI bridge examples.
@@ -226,6 +243,15 @@ void hack_thread() {
     if (!gNativeInstallStarted.compare_exchange_strong(expected, true)) return;
     gCompatibilityState.store(CompatibilityState::Installing, std::memory_order_release);
     compatibility_install_watchdog();
+
+    // Install any game-specific package/signature compatibility patches before this branch.
+    // An external shell launch needs those patches to run the untouched game, but must never
+    // install the menu or feature hooks that follow.
+    if (IsIdentityShellCompatibilityOnlyRuntime()) {
+        gCompatibilityState.store(CompatibilityState::Ready, std::memory_order_release);
+        LOGI(OBFUSCATE("External identity-shell launch: menu and feature hooks disabled"));
+        return;
+    }
 
 #if defined(__aarch64__)
     gCompatibilityState.store(

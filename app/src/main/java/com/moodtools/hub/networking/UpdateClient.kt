@@ -27,6 +27,13 @@ data class UpdateResult(
     val changelog: String?
 )
 
+enum class StandaloneUpdateStage {
+    PREPARING,
+    DOWNLOADING,
+    VERIFYING,
+    ACTIVATING
+}
+
 class ReleaseVerificationRequired(
     val releasePath: String,
     val updateBuild: Long,
@@ -137,8 +144,13 @@ class UpdateClient(private val moduleRoot: File) {
         abi: String,
         authorization: LauncherModuleAuthorization,
         bootstrap: Int = 1,
-        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
+        onStage: (StandaloneUpdateStage) -> Unit = {},
+        onDiagnostic: (String) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
     ): UpdateResult {
+        onStage(StandaloneUpdateStage.PREPARING)
+        ensureNotCancelled(isCancelled)
         require(packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
         require(abi == "arm64-v8a" || abi == "armeabi-v7a")
         require(authorization.capability.length in 80..4096)
@@ -181,6 +193,8 @@ class UpdateClient(private val moduleRoot: File) {
         val nativeSize = native.getLong("size").also { require(it > 0L) }
         val dexSize = dex.getLong("size").also { require(it > 0L) }
         val totalSize = Math.addExact(nativeSize, dexSize)
+        onDiagnostic("Signed manifest accepted for build $build")
+        onStage(StandaloneUpdateStage.DOWNLOADING)
         onProgress?.invoke(0L, totalSize)
         moduleRoot.mkdirs()
         val nextNative = File(moduleRoot, "libmenu_native.so.next")
@@ -202,7 +216,9 @@ class UpdateClient(private val moduleRoot: File) {
                 allowedPrefix = "/api/launcher-module-payload/",
                 progressBaseBytes = 0L,
                 progressTotalBytes = totalSize,
-                onProgress = onProgress
+                onProgress = onProgress,
+                onDiagnostic = onDiagnostic,
+                isCancelled = isCancelled
             )
             download(
                 path = dex.getString("path"),
@@ -214,8 +230,13 @@ class UpdateClient(private val moduleRoot: File) {
                 allowedPrefix = "/api/launcher-module-payload/",
                 progressBaseBytes = nativeSize,
                 progressTotalBytes = totalSize,
-                onProgress = onProgress
+                onProgress = onProgress,
+                onDiagnostic = onDiagnostic,
+                isCancelled = isCancelled
             )
+            ensureNotCancelled(isCancelled)
+            onStage(StandaloneUpdateStage.VERIFYING)
+            onDiagnostic("Payload hashes and signed identity verified")
             val config = JSONObject()
                 .put("package_name", packageName)
                 .put("title", moduleConfig.getString("title"))
@@ -238,6 +259,9 @@ class UpdateClient(private val moduleRoot: File) {
                     .put("scope", privateScope)
                     .toString()
             )
+            ensureNotCancelled(isCancelled)
+            onStage(StandaloneUpdateStage.ACTIVATING)
+            onDiagnostic("Activating the verified add-on atomically")
             commitStandalonePayload(nextNative, nextDex, nextConfig, nextSignedManifest, nextPrivateMarker)
             File(moduleRoot, "update.json").writeText(payload.toString())
         } finally {
@@ -347,12 +371,15 @@ class UpdateClient(private val moduleRoot: File) {
                          allowedPrefix: String = "/api/mod-update-payload/",
                          progressBaseBytes: Long = 0L,
                          progressTotalBytes: Long = 0L,
-                         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null) {
+                         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
+                         onDiagnostic: (String) -> Unit = {},
+                         isCancelled: () -> Boolean = { false }) {
+        ensureNotCancelled(isCancelled)
         require(path.startsWith(allowedPrefix))
         require(expectedSha256.matches(Regex("[0-9a-fA-F]{64}")))
         output.parentFile?.mkdirs()
         if (output.isFile && output.length() == expectedBytes &&
-            sha256(output) == expectedSha256.lowercase()
+            sha256(output, isCancelled) == expectedSha256.lowercase()
         ) {
             if (progressTotalBytes > 0L) {
                 onProgress?.invoke(
@@ -399,9 +426,14 @@ class UpdateClient(private val moduleRoot: File) {
                         )
                     }
                 },
-                onDiagnostic = { message -> Log.w("JesterMoodsDownload", message) }
+                onDiagnostic = { message ->
+                    Log.w("JesterMoodsDownload", message)
+                    onDiagnostic(message)
+                },
+                isCancelled = isCancelled
             )
-            require(sha256(temporary) == expectedSha256.lowercase()) { "Payload hash verification failed" }
+            ensureNotCancelled(isCancelled)
+            require(sha256(temporary, isCancelled) == expectedSha256.lowercase()) { "Payload hash verification failed" }
             if (output.exists()) require(output.delete())
             require(temporary.renameTo(output)) { "Could not commit downloaded payload" }
         } catch (error: Throwable) {
@@ -413,17 +445,22 @@ class UpdateClient(private val moduleRoot: File) {
         }
     }
 
-    private fun sha256(file: File): String {
+    private fun sha256(file: File, isCancelled: () -> Boolean = { false }): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(32 * 1024)
             while (true) {
+                ensureNotCancelled(isCancelled)
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun ensureNotCancelled(isCancelled: () -> Boolean) {
+        if (isCancelled()) throw FastFileDownloader.DownloadCancelledException()
     }
 
     private fun open(address: String): HttpURLConnection {

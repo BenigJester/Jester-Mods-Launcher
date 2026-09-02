@@ -8,4 +8,12 @@ public final class ModuleRuntime {
     public static void loadNative(String absolutePath) {
         com.android.support.ModuleRuntime.loadNative(absolutePath);
     }
+
+    public static void loadNativeForIdentityShell(String absolutePath) {
+        com.android.support.ModuleRuntime.loadNativeForIdentityShell(absolutePath);
+    }
+
+    public static void loadNativeForIdentityShellCompatibility(String absolutePath) {
+        com.android.support.ModuleRuntime.loadNativeForIdentityShellCompatibility(absolutePath);
+    }
 }

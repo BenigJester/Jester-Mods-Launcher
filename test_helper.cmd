@@ -17,6 +17,7 @@ set "DIAGNOSTIC_MODE=%~3"
 set "MODULE_SETUP_MODE=%~4"
 set "LAUNCHER_BUILD=%~5"
 set "MODULE_DROP=%~6"
+set "LAUNCHER_SOURCE=%~7"
 set "SKIP_MODULE_BUILD="
 set "MODULE_ONLY_TEST="
 set "MODULE_BUILD_MODE=debug"
@@ -77,6 +78,7 @@ if not defined EXECUTION_MODE if defined JESTER_MODE set "EXECUTION_MODE=%JESTER
 if not defined MODULE_SETUP_MODE if defined JESTER_MODULE_SETUP set "MODULE_SETUP_MODE=%JESTER_MODULE_SETUP%"
 if not defined LAUNCHER_BUILD if defined JESTER_LAUNCHER_BUILD set "LAUNCHER_BUILD=%JESTER_LAUNCHER_BUILD%"
 if not defined MODULE_DROP if defined JESTER_MODULE_DIR set "MODULE_DROP=%JESTER_MODULE_DIR%"
+if not defined LAUNCHER_SOURCE if defined JESTER_LAUNCHER_SOURCE set "LAUNCHER_SOURCE=%JESTER_LAUNCHER_SOURCE%"
 if defined JESTER_SKIP_MODULE_BUILD set "SKIP_MODULE_BUILD=%JESTER_SKIP_MODULE_BUILD%"
 if /I "%JESTER_MODULE_ONLY_TEST%"=="1" set "MODULE_ONLY_TEST=1"
 if defined JESTER_MODULE_BUILD_MODE set "MODULE_BUILD_MODE=%JESTER_MODULE_BUILD_MODE%"
@@ -127,6 +129,7 @@ if not defined MODULE_SETUP_MODE (
 )
 
 if not defined TARGET_GAME if not defined MODULE_DROP (
+    set "INTERACTIVE_TEST=1"
     echo.
     echo Choose test target:
     echo   [1] Launcher only
@@ -352,6 +355,40 @@ if "!GOOGLE_SIGNIN_DIAG!"=="1" (
     )
 )
 
+rem ---- Select fresh or existing launcher APK ---------------------------------
+if defined MODULE_ONLY_TEST (
+    set "LAUNCHER_SOURCE=installed"
+) else if not defined LAUNCHER_SOURCE (
+    if defined INTERACTIVE_TEST (
+        echo.
+        echo Choose launcher APK source:
+        echo   [1] Existing build - install the already-built selected APK
+        echo   [2] Build again    - run Gradle before installing
+        echo.
+        choice /C 12 /N /M "Select APK source [1/2]: "
+        if errorlevel 2 (set "LAUNCHER_SOURCE=build") else (set "LAUNCHER_SOURCE=existing")
+    ) else (
+        rem Preserve non-interactive callers unless they explicitly request an existing APK.
+        set "LAUNCHER_SOURCE=build"
+    )
+)
+
+if /I "!LAUNCHER_SOURCE!"=="1" set "LAUNCHER_SOURCE=existing"
+if /I "!LAUNCHER_SOURCE!"=="reuse" set "LAUNCHER_SOURCE=existing"
+if /I "!LAUNCHER_SOURCE!"=="skip" set "LAUNCHER_SOURCE=existing"
+if /I "!LAUNCHER_SOURCE!"=="2" set "LAUNCHER_SOURCE=build"
+if /I not "!LAUNCHER_SOURCE!"=="build" if /I not "!LAUNCHER_SOURCE!"=="existing" if /I not "!LAUNCHER_SOURCE!"=="installed" (
+    echo [ERROR] Unknown launcher APK source: !LAUNCHER_SOURCE!
+    echo         Use build or existing.
+    set "EXIT_CODE=1"
+    set "FAIL_CONTEXT=Unknown launcher APK source: !LAUNCHER_SOURCE!"
+    goto fail
+)
+
+set "NEEDS_LOCAL_BUILD="
+if /I "!LAUNCHER_SOURCE!"=="build" set "NEEDS_LOCAL_BUILD=1"
+if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" if /I not "!SKIP_MODULE_BUILD!"=="1" set "NEEDS_LOCAL_BUILD=1"
+
 rem Keep direct test_helper.cmd use consistent with standalone-tools.cmd. Run each flavor in
 rem its own process so all flavor-specific package, build, install, and staging state stays isolated.
 if /I "!EXECUTION_MODE!"=="both" (
@@ -359,7 +396,7 @@ if /I "!EXECUTION_MODE!"=="both" (
     echo ============================================================
     echo   Running Root launcher test
     echo ============================================================
-    call "%~f0" "!TARGET_GAME!" root "!DIAGNOSTIC_MODE!" "!MODULE_SETUP_MODE!" "!LAUNCHER_BUILD!" "!MODULE_DROP!"
+    call "%~f0" "!TARGET_GAME!" root "!DIAGNOSTIC_MODE!" "!MODULE_SETUP_MODE!" "!LAUNCHER_BUILD!" "!MODULE_DROP!" "!LAUNCHER_SOURCE!"
     if errorlevel 1 (
         set "EXIT_CODE=!ERRORLEVEL!"
         set "FAIL_CONTEXT=Root launcher pass failed in Both mode."
@@ -370,7 +407,7 @@ if /I "!EXECUTION_MODE!"=="both" (
     echo ============================================================
     echo   Running Non-root launcher test
     echo ============================================================
-    call "%~f0" "!TARGET_GAME!" nonroot "!DIAGNOSTIC_MODE!" "!MODULE_SETUP_MODE!" "!LAUNCHER_BUILD!" "!MODULE_DROP!"
+    call "%~f0" "!TARGET_GAME!" nonroot "!DIAGNOSTIC_MODE!" "!MODULE_SETUP_MODE!" "!LAUNCHER_BUILD!" "!MODULE_DROP!" "!LAUNCHER_SOURCE!"
     if errorlevel 1 (
         set "EXIT_CODE=!ERRORLEVEL!"
         set "FAIL_CONTEXT=Non-root launcher pass failed in Both mode."
@@ -396,6 +433,9 @@ if /I "!EXECUTION_MODE!"=="root" (
 )
 
 if /I "!LAUNCHER_BUILD!"=="debug" (
+    rem Debug uses a separate application ID so installing a device-test build never
+    rem replaces or downgrades the user's production launcher.
+    set "APP_ID=!APP_ID!.debug"
     set "BUILD_DIR=debug"
     set "BUILD_SUFFIX=Debug"
     set "APK_SUFFIX=debug"
@@ -422,6 +462,15 @@ if /I "!EXECUTION_MODE!"=="root" (
     set "BUILD_LABEL=nonroot!BUILD_SUFFIX!"
 )
 
+if /I "!LAUNCHER_SOURCE!"=="existing" if not exist "!APK_PATH!" (
+    echo [ERROR] Existing launcher APK not found:
+    echo         !APK_PATH!
+    echo         Build !BUILD_LABEL! once, or choose Build again.
+    set "EXIT_CODE=1"
+    set "FAIL_CONTEXT=Existing !BUILD_LABEL! launcher APK was not found."
+    goto fail
+)
+
 if not defined LAUNCHER_ONLY set "GOOGLE_DIAG_DIR=%CD%\diagnostics\google-signin-!TARGET_MODULE!"
 if not defined LAUNCHER_ONLY set "GOOGLE_DIAG_ZIP=%CD%\diagnostics\google-signin-!TARGET_MODULE!.zip"
 
@@ -433,6 +482,8 @@ if defined LAUNCHER_ONLY (
 )
 echo [MODE] !MODE_LABEL! launcher ^(!BUILD_LABEL!^)
 if defined MODULE_ONLY_TEST echo [SCOPE] Module only - reuse the installed launcher
+if /I "!LAUNCHER_SOURCE!"=="existing" echo [APK] Reuse existing build output ^(Gradle build skipped^)
+if /I "!LAUNCHER_SOURCE!"=="build" echo [APK] Build fresh before installation
 if not defined LAUNCHER_ONLY echo [MODULE] !MODULE_SETUP_MODE! test
 if /I "!LAUNCHER_BUILD!"=="release" if /I "!MODULE_SETUP_MODE!"=="stage" echo [NOTE] Release staging uses ADB-only local import; it does not publish or use the live catalog.
 if "!GOOGLE_SIGNIN_DIAG!"=="1" echo [DIAG] Google sign-in capture enabled
@@ -455,6 +506,7 @@ if not defined ADB_EXE (
 )
 
 rem build_modules.ps1 calls d8 by name, so expose the newest installed build-tools.
+if not defined NEEDS_LOCAL_BUILD goto build_toolchain_complete
 where d8.bat >nul 2>nul
 if errorlevel 1 if defined ANDROID_HOME (
     for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$p='%ANDROID_HOME%\build-tools'; if(Test-Path -LiteralPath $p){Get-ChildItem -LiteralPath $p -Directory ^| Sort-Object {[version]$_.Name} -Descending ^| Where-Object {Test-Path (Join-Path $_.FullName 'd8.bat')} ^| Select-Object -First 1 -ExpandProperty FullName}"`) do set "BUILD_TOOLS=%%I"
@@ -514,8 +566,11 @@ set /p JAVA_VERSION_LINE=<"%JAVA_VERSION_FILE%"
 del /q "%JAVA_VERSION_FILE%" >nul 2>nul
 echo [JAVA] !JAVA_VERSION_LINE!
 
+:build_toolchain_complete
+
 rem ---- Select Gradle --------------------------------------------------------
 if defined MODULE_ONLY_TEST goto gradle_selection_complete
+if /I "!LAUNCHER_SOURCE!"=="existing" goto gradle_selection_complete
 rem Priority: explicit override -> GRADLE_HOME -> Gradle on PATH -> wrappers.
 rem This intentionally lets a locally installed Gradle 9.4.1 win over the
 rem third_party\BlackBox Gradle 8.13 wrapper.
@@ -705,6 +760,15 @@ if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" (
 rem ---- Build selected launcher flavor -----------------------------------------
 if defined MODULE_ONLY_TEST goto validate_existing_launcher
 echo.
+if /I "!LAUNCHER_SOURCE!"=="existing" (
+    if defined LAUNCHER_ONLY (
+        echo [1/2] Using existing Jester Mods !BUILD_LABEL! APK...
+    ) else (
+        echo [2/4] Using existing Jester Mods !BUILD_LABEL! APK...
+    )
+    for %%A in ("!APK_PATH!") do echo [APK] %%~fA ^(%%~zA bytes^)
+    goto install_launcher
+)
 if defined LAUNCHER_ONLY (
     echo [1/2] Building Jester Mods !BUILD_LABEL!...
 ) else (
@@ -775,6 +839,7 @@ if not exist "%APK_PATH%" (
     set "FAIL_CONTEXT=Expected launcher APK was not created."
     goto fail
 )
+:install_launcher
 rem ---- Install launcher ------------------------------------------------------
 echo.
 if defined LAUNCHER_ONLY (
@@ -1082,11 +1147,9 @@ if defined LAUNCHER_ONLY (
 )
 "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am force-stop %APP_ID% >nul 2>nul
 if /I "!LAUNCHER_BUILD!"=="debug" (
-    if defined LAUNCHER_ONLY (
-        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity --ez moodtools.test_bypass_unlock true --ez moodtools.test_module_updates true
-    ) else (
-        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity
-    )
+    rem Always open both debug update previews. The launcher notice has priority; choosing
+    rem Later reveals the add-on update window so both unified designs can be reviewed.
+    "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity --ez moodtools.test_bypass_unlock true --ez moodtools.test_launcher_update true --ez moodtools.test_module_updates true
 ) else (
     if defined LOCAL_TEST_URI (
         "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell am start -n %APP_ID%/com.moodtools.hub.LauncherActivity -a android.intent.action.VIEW -d "!LOCAL_TEST_URI!"
@@ -1155,5 +1218,8 @@ echo      Legacy one-argument mode: test_helper.cmd nonroot
 echo      Optional: set JESTER_MODULE_DIR to one or more quoted local module folders.
 echo      Optional: set JESTER_SKIP_MODULE_BUILD=1 to use existing built output for staging.
 echo      Optional: set JESTER_MODULE_ONLY_TEST=1 to reuse the installed launcher.
+echo      Optional: set JESTER_LAUNCHER_SOURCE=existing to install an already-built APK without running Gradle.
+echo      Direct argument 7 also accepts existing: test_helper.cmd launcher root "" "" debug "" existing
+echo      Debug launchers install beside release and force launcher/add-on update previews.
 echo      Set ADB_SERIAL to target a specific device.
 exit /b 0

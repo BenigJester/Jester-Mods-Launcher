@@ -100,7 +100,8 @@ public class ActivityManagerCommonProxy {
                         if (packageInfo != null) {
                             String packageName = packageInfo.packageName;
                             String hostPackageName = BlackBoxCore.getHostPkg();
-                            if (packageName.equals(hostPackageName)) {
+                            if (packageName.equals(hostPackageName)
+                                    && !BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
                                 Slog.w(TAG, "Blocked attempt to install BlackBox app from within BlackBox: " + packageName);
                                 
                                 return 0;

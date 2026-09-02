@@ -38,12 +38,17 @@ import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.LibraryGameStatus
 import com.moodtools.hub.modules.LibraryLaunchAction
 import com.moodtools.hub.modules.LaunchUiState
+import com.moodtools.hub.modules.PackageSetupUiState
 import com.moodtools.hub.modules.LauncherUpdateUiState
 import com.moodtools.hub.modules.InstalledModuleUpdatesUiState
+import com.moodtools.hub.modules.InstalledModuleUpdateItemStatus
+import com.moodtools.hub.modules.InstalledModuleUpdateItemUiState
 import com.moodtools.hub.modules.ModuleRepository
 import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
+import com.moodtools.hub.modules.NonRootMethod
 import com.moodtools.hub.modules.PlayStoreVersionStatus
+import com.moodtools.hub.modules.SecureTransferStage
 import com.moodtools.hub.modules.installedModuleUpdates
 import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
@@ -66,15 +71,18 @@ import com.moodtools.hub.networking.LauncherServiceException
 import com.moodtools.hub.networking.PlayStoreVersionClient
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
+import com.moodtools.hub.networking.StandaloneUpdateStage
 import com.moodtools.hub.networking.UpdateClient
 import com.moodtools.hub.networking.UpdateRequest
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
 import java.net.URLEncoder
 import java.security.SecureRandom
+import java.util.ArrayDeque
 import java.util.Calendar
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -113,6 +121,31 @@ private class GameInstallCancellation {
     @Volatile var cancelled: Boolean = false
 }
 
+private class SecureTransferCancellation {
+    @Volatile var cancelled: Boolean = false
+}
+
+internal fun shouldUninstallIdentityShellBeforeRemoving(
+    isRootMode: Boolean,
+    method: NonRootMethod,
+    installedIdentityShell: Boolean
+): Boolean = !isRootMode && method == NonRootMethod.IDENTITY_SHELL && installedIdentityShell
+
+internal fun newestPlayStoreStatus(
+    cached: PlayStoreVersionStatus?,
+    received: PlayStoreVersionStatus
+): PlayStoreVersionStatus = when {
+    cached == null -> received
+    received.checkedAtEpochSeconds > cached.checkedAtEpochSeconds -> received
+    received.checkedAtEpochSeconds < cached.checkedAtEpochSeconds -> cached
+    (received.listingUpdatedAtEpochSeconds ?: 0L) >
+        (cached.listingUpdatedAtEpochSeconds ?: 0L) -> received
+    received.latestVersion != null && cached.latestVersion == null -> received
+    !received.stale && cached.stale -> received
+    received.updateAvailable != cached.updateAvailable -> received
+    else -> cached
+}
+
 private enum class InstallerPermissionTarget {
     LAUNCHER_UPDATE,
     ORIGINAL_GAME,
@@ -126,13 +159,31 @@ class LauncherActivity : ComponentActivity() {
     private var pendingGameInstall: ModuleListing? = null
     private var pendingPackageReplacement: PackageReplacementRequest? = null
     private var packageReplacementPhase = PackageReplacementPhase.IDLE
+    private var packageReplacementPreparation: Job? = null
     private var packageReplacementReconciliation: Job? = null
     private var packageReplacementLeftLauncher = false
+    private var pendingLegacyPatchMigration: LibraryGame? = null
+    private var legacyPatchMigrationReconciliation: Job? = null
+    private val identityShellRemovalQueue = ArrayDeque<LibraryGame>()
+    private var pendingIdentityShellRemoval: LibraryGame? = null
+    private var identityShellRemovalReconciliation: Job? = null
     private val packageUninstaller = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val request = pendingPackageReplacement ?: return@registerForActivityResult
         reconcilePackageUninstall(request, result.resultCode)
+    }
+    private val legacyPatchUninstaller = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val entry = pendingLegacyPatchMigration ?: return@registerForActivityResult
+        reconcileLegacyPatchUninstall(entry, result.resultCode)
+    }
+    private val identityShellUninstaller = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val entry = pendingIdentityShellRemoval ?: return@registerForActivityResult
+        reconcileIdentityShellRemoval(entry, result.resultCode)
     }
     private val unknownSourcesSettings = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -172,17 +223,21 @@ class LauncherActivity : ComponentActivity() {
                     changelogState = viewModel.changelogState,
                     accountIdentityState = viewModel.accountIdentityState,
                     launchState = viewModel.launchState,
+                    packageSetupState = viewModel.packageSetupState,
                     directPatchPromptState = viewModel.directPatchPromptState,
                     onOpenGame = viewModel::openLibraryGame,
                     onBack = viewModel::closeGame,
                     onUpdate = viewModel::updateLibraryGame,
                     onVerify = ::openTrustedWebPage,
                     onLaunch = ::launchLibraryGame,
-                    onConfirmDirectPatch = ::confirmPackageReplacementPrompt,
-                    onDismissDirectPatch = ::cancelPackageReplacement,
-                    onRemoveFromLibrary = viewModel::removeFromLibrary,
+                    onConfirmDirectPatch = ::confirmPackageSetupPrompt,
+                    onDismissDirectPatch = ::dismissPackageSetupPrompt,
+                    onCancelPackageSetup = ::cancelActivePackageSetup,
+                    onDismissPackageSetup = viewModel::dismissPackageSetup,
+                    onRetryPackageSetup = ::retryPackageSetup,
+                    onRemoveFromLibrary = ::requestRemoveFromLibrary,
                     onClearGameData = viewModel::clearGameData,
-                    onRemoveMultipleFromLibrary = viewModel::removeMultipleFromLibrary,
+                    onRemoveMultipleFromLibrary = ::requestRemoveMultipleFromLibrary,
                     onRefreshCatalog = viewModel::refreshCatalogAndLibrary,
                     onBrowse = viewModel::openModuleBrowser,
                     onCloseBrowser = viewModel::closeModuleBrowser,
@@ -196,8 +251,14 @@ class LauncherActivity : ComponentActivity() {
                     onOpenLauncherUpdate = viewModel::openLauncherUpdate,
                     onCloseLauncherUpdate = viewModel::closeLauncherUpdate,
                     onInstallLauncherUpdate = ::downloadOrInstallLauncherUpdate,
+                    onCancelLauncherUpdate = viewModel::cancelLauncherUpdate,
+                    onCancelModuleTransfer = viewModel::cancelModuleTransfer,
+                    onDismissModuleTransfer = viewModel::dismissModuleTransfer,
                     onDismissInstalledModuleUpdates = viewModel::dismissInstalledModuleUpdates,
+                    onCancelInstalledModuleUpdates = viewModel::cancelInstalledModuleUpdates,
                     onReviewInstalledModuleUpdate = viewModel::reviewInstalledModuleUpdate,
+                    onUpdateInstalledModule = viewModel::updateInstalledModuleFromPrompt,
+                    onUpdateAllInstalledModules = viewModel::updateAllInstalledModules,
                     onOpenChangelog = viewModel::openChangelog,
                     onCloseChangelog = viewModel::closeChangelog,
                     onOpenAccountIdentity = viewModel::openAccountIdentity,
@@ -264,7 +325,10 @@ class LauncherActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.onHostResumed(refreshGames = pendingPackageReplacement == null)
+        viewModel.onHostResumed(
+            refreshGames = pendingPackageReplacement == null && pendingIdentityShellRemoval == null &&
+                pendingLegacyPatchMigration == null
+        )
         if (waitingForLauncherUnlock) {
             waitingForLauncherUnlock = false
             viewModel.onUnlockBrowserReturnedWithoutCallback()
@@ -295,9 +359,274 @@ class LauncherActivity : ComponentActivity() {
             viewModel.launchLibraryGame(entry)
             return
         }
-        if (pendingPackageReplacement != null) return
+        if (pendingPackageReplacement != null || pendingLegacyPatchMigration != null) return
+        if (ExecutionModeLaunchBridge.requiresOfficialRestoreBeforeIdentityShell(this, game)) {
+            viewModel.authorizePackageReplacement(game) {
+                if (pendingPackageReplacement == null && pendingLegacyPatchMigration == null) {
+                    pendingLegacyPatchMigration = entry
+                    viewModel.showLegacyPatchMigration(entry.title)
+                }
+            }
+            return
+        }
         viewModel.authorizePackageReplacement(game) {
             preparePackageReplacement(entry, game)
+        }
+    }
+
+    private fun requestRemoveFromLibrary(entry: LibraryGame) {
+        requestRemoveLibraryEntries(listOf(entry))
+    }
+
+    private fun requestRemoveMultipleFromLibrary(entries: List<LibraryGame>) {
+        requestRemoveLibraryEntries(entries)
+    }
+
+    private fun requestRemoveLibraryEntries(entries: List<LibraryGame>) {
+        val targets = entries.distinctBy(LibraryGame::packageName)
+        if (targets.isEmpty()) return
+        if (pendingIdentityShellRemoval != null || identityShellRemovalQueue.isNotEmpty()) {
+            Toast.makeText(this, "Finish the current shell removal first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val removeDirectly = mutableListOf<LibraryGame>()
+        targets.forEach { entry ->
+            val installedIdentityShell = ExecutionModeLaunchBridge.isInstalledIdentityShell(
+                applicationContext,
+                entry
+            )
+            if (shouldUninstallIdentityShellBeforeRemoving(
+                    BuildConfig.IS_ROOT_MODE,
+                    entry.module.nonRootMethod,
+                    installedIdentityShell
+                )) {
+                identityShellRemovalQueue.addLast(entry)
+            } else {
+                removeDirectly += entry
+            }
+        }
+        if (removeDirectly.isNotEmpty()) {
+            viewModel.removeMultipleFromLibrary(removeDirectly)
+        }
+        launchNextIdentityShellRemoval()
+    }
+
+    private fun launchNextIdentityShellRemoval() {
+        if (pendingIdentityShellRemoval != null) return
+        val entry = identityShellRemovalQueue.pollFirst() ?: return
+        pendingIdentityShellRemoval = entry
+        val uninstall = Intent(
+            Intent.ACTION_DELETE,
+            Uri.parse("package:${entry.packageName}")
+        ).putExtra(Intent.EXTRA_RETURN_RESULT, true)
+        runCatching { identityShellUninstaller.launch(uninstall) }
+            .onFailure {
+                finishIdentityShellRemoval(
+                    entry,
+                    removed = false,
+                    message = "Android could not open the ${entry.title} shell uninstall screen."
+                )
+            }
+    }
+
+    private fun reconcileIdentityShellRemoval(entry: LibraryGame, resultCode: Int) {
+        if (pendingIdentityShellRemoval !== entry) return
+        if (!ExecutionModeLaunchBridge.isInstalledIdentityShell(applicationContext, entry)) {
+            finishIdentityShellRemoval(entry, removed = true)
+            return
+        }
+        if (resultCode != RESULT_OK) {
+            finishIdentityShellRemoval(
+                entry,
+                removed = false,
+                message = "${entry.title} shell was not uninstalled, so it remains in your Library."
+            )
+            return
+        }
+
+        identityShellRemovalReconciliation?.cancel()
+        identityShellRemovalReconciliation = lifecycleScope.launch {
+            val deadline = SystemClock.elapsedRealtime() + PACKAGE_UNINSTALL_RECONCILE_TIMEOUT_MS
+            while (pendingIdentityShellRemoval === entry) {
+                val stillInstalled = withContext(Dispatchers.IO) {
+                    ExecutionModeLaunchBridge.isInstalledIdentityShell(applicationContext, entry)
+                }
+                if (!stillInstalled) {
+                    identityShellRemovalReconciliation = null
+                    finishIdentityShellRemoval(entry, removed = true)
+                    return@launch
+                }
+                if (SystemClock.elapsedRealtime() >= deadline) break
+                delay(PACKAGE_REPLACEMENT_POLL_INTERVAL_MS)
+            }
+            if (pendingIdentityShellRemoval === entry) {
+                identityShellRemovalReconciliation = null
+                finishIdentityShellRemoval(
+                    entry,
+                    removed = false,
+                    message = "Android confirmed the uninstall, but the ${entry.title} shell still appears installed."
+                )
+            }
+        }
+    }
+
+    private fun finishIdentityShellRemoval(
+        entry: LibraryGame,
+        removed: Boolean,
+        message: String? = null
+    ) {
+        if (pendingIdentityShellRemoval !== entry) return
+        identityShellRemovalReconciliation = null
+        pendingIdentityShellRemoval = null
+        if (removed) {
+            viewModel.removeFromLibrary(entry)
+        } else if (!message.isNullOrBlank()) {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+        launchNextIdentityShellRemoval()
+    }
+
+    private fun confirmPackageSetupPrompt() {
+        if (pendingLegacyPatchMigration != null) {
+            beginLegacyPatchRestore()
+        } else {
+            confirmPackageReplacementPrompt()
+        }
+    }
+
+    private fun dismissPackageSetupPrompt() {
+        if (pendingLegacyPatchMigration != null) {
+            val title = pendingLegacyPatchMigration?.title ?: "Game"
+            pendingLegacyPatchMigration = null
+            legacyPatchMigrationReconciliation?.cancel()
+            legacyPatchMigrationReconciliation = null
+            viewModel.hideDirectPatchPrompt()
+            viewModel.onLegacyPatchMigrationCancelled(title)
+            viewModel.dismissPackageSetup()
+        } else {
+            cancelPackageReplacement()
+            viewModel.dismissPackageSetup()
+        }
+    }
+
+    private fun cancelActivePackageSetup() {
+        val preparing = packageReplacementPreparation
+        if (preparing?.isActive == true && pendingPackageReplacement == null) {
+            val title = viewModel.packageSetupState.value.title.ifBlank { "Game" }
+            preparing.cancel()
+            packageReplacementPreparation = null
+            packageReplacementPhase = PackageReplacementPhase.IDLE
+            viewModel.hideDirectPatchPrompt()
+            viewModel.onPackageReplacementCancelled(title)
+            return
+        }
+        if (pendingPackageReplacement != null) {
+            cancelPackageReplacement()
+        }
+    }
+
+    private fun retryPackageSetup() {
+        if (packageReplacementPreparation?.isActive == true || pendingPackageReplacement != null ||
+            pendingLegacyPatchMigration != null) return
+        val entry = viewModel.selectedLibraryGame.value ?: return
+        viewModel.dismissPackageSetup()
+        launchLibraryGame(entry)
+    }
+
+    private fun beginLegacyPatchRestore() {
+        val entry = pendingLegacyPatchMigration ?: return
+        viewModel.hideDirectPatchPrompt()
+        viewModel.onLegacyPatchMigrationStarted(entry.title)
+        val uninstall = Intent(
+            Intent.ACTION_DELETE,
+            Uri.parse("package:${entry.packageName}")
+        ).putExtra(Intent.EXTRA_RETURN_RESULT, true)
+        runCatching { legacyPatchUninstaller.launch(uninstall) }
+            .onFailure {
+                finishLegacyPatchRestore(
+                    entry,
+                    removed = false,
+                    message = "Android could not open the ${entry.title} uninstall screen."
+                )
+            }
+    }
+
+    private fun reconcileLegacyPatchUninstall(entry: LibraryGame, resultCode: Int) {
+        if (pendingLegacyPatchMigration !== entry) return
+        if (!isPackageInstalled(entry.packageName)) {
+            finishLegacyPatchRestore(entry, removed = true)
+            return
+        }
+        if (resultCode != RESULT_OK) {
+            finishLegacyPatchRestore(
+                entry,
+                removed = false,
+                message = "The previous ${entry.title} patch was not removed. Nothing was changed."
+            )
+            return
+        }
+
+        legacyPatchMigrationReconciliation?.cancel()
+        viewModel.onLegacyPatchMigrationReconciling(entry.title)
+        legacyPatchMigrationReconciliation = lifecycleScope.launch {
+            val deadline = SystemClock.elapsedRealtime() + PACKAGE_UNINSTALL_RECONCILE_TIMEOUT_MS
+            while (pendingLegacyPatchMigration === entry) {
+                val stillInstalled = withContext(Dispatchers.IO) {
+                    isPackageInstalled(entry.packageName)
+                }
+                if (!stillInstalled) {
+                    legacyPatchMigrationReconciliation = null
+                    finishLegacyPatchRestore(entry, removed = true)
+                    return@launch
+                }
+                if (SystemClock.elapsedRealtime() >= deadline) break
+                delay(PACKAGE_REPLACEMENT_POLL_INTERVAL_MS)
+            }
+            if (pendingLegacyPatchMigration === entry) {
+                legacyPatchMigrationReconciliation = null
+                finishLegacyPatchRestore(
+                    entry,
+                    removed = false,
+                    message = "Android confirmed the uninstall, but the previous patch still appears installed."
+                )
+            }
+        }
+    }
+
+    private fun finishLegacyPatchRestore(
+        entry: LibraryGame,
+        removed: Boolean,
+        message: String? = null
+    ) {
+        if (pendingLegacyPatchMigration !== entry) return
+        legacyPatchMigrationReconciliation?.cancel()
+        legacyPatchMigrationReconciliation = null
+        pendingLegacyPatchMigration = null
+        if (!removed) {
+            viewModel.onLegacyPatchMigrationFailed(
+                entry.title,
+                message ?: "The previous patch could not be removed."
+            )
+            return
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                ExecutionModeLaunchBridge.discardPreparedIdentityShell(
+                    applicationContext,
+                    entry.packageName
+                )
+            }.onFailure { error ->
+                android.util.Log.w(
+                    "JesterMoodsMigration",
+                    "Could not clear stale ${entry.packageName} shell material; preparation will replace it.",
+                    error
+                )
+            }
+            withContext(Dispatchers.Main) {
+                viewModel.onLegacyPatchRemoved(entry)
+            }
         }
     }
 
@@ -307,13 +636,16 @@ class LauncherActivity : ComponentActivity() {
         val updatingPatchedInstall = entry.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL
         viewModel.onPackageReplacementProgress(
             "Preparing ${game.module.title}",
-            if (updatingPatchedInstall) {
+            if (game.module.nonRootMethod == com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL) {
+                "Preserving the untouched game and creating its exact-package compatibility shell."
+            } else if (updatingPatchedInstall) {
                 "Creating an in-place patch update that keeps the installed game's local data."
             } else {
                 "Creating the patched non-root package before Android removes anything."
             }
         )
-        lifecycleScope.launch(Dispatchers.IO) {
+        packageReplacementPreparation?.cancel()
+        packageReplacementPreparation = lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 ExecutionModeLaunchBridge.preparePackageReplacement(
                     applicationContext,
@@ -321,17 +653,20 @@ class LauncherActivity : ComponentActivity() {
                     viewModel::onPackageReplacementProgress
                 )
             }.onSuccess { request ->
+                packageReplacementPreparation = null
                 withContext(Dispatchers.Main) {
                     pendingPackageReplacement = request
                     packageReplacementPhase = PackageReplacementPhase.IDLE
                     requestPackageReplacementPermissionOrConfirm(request)
                 }
             }.onFailure { error ->
-                android.util.Log.e("JesterMoodsDirectPatch", "Could not prepare direct package patch", error)
+                packageReplacementPreparation = null
+                if (error is CancellationException) return@onFailure
+                android.util.Log.e("JesterMoodsPackageSetup", "Could not prepare replacement package", error)
                 packageReplacementPhase = PackageReplacementPhase.IDLE
                 viewModel.onPackageReplacementFailed(
                     error.message?.take(220)?.takeIf { it.isNotBlank() }
-                        ?: "The ${game.module.title} patch could not be prepared.",
+                                ?: "The ${game.module.title} package could not be prepared.",
                     game.module.title
                 )
             }
@@ -341,6 +676,10 @@ class LauncherActivity : ComponentActivity() {
     private fun requestPackageReplacementPermissionOrConfirm(request: PackageReplacementRequest) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()) {
+            viewModel.onPackageReplacementProgress(
+                "Waiting for Android",
+                "Allow Jester Mods to install unknown apps, then return to review the ${request.title} setup."
+            )
             openInstallerPermissionSettings(InstallerPermissionTarget.PACKAGE_REPLACEMENT) {
                 finishPackageReplacementWithFailure(
                     "Android could not open the unknown-app installation setting."
@@ -353,7 +692,7 @@ class LauncherActivity : ComponentActivity() {
 
     private fun showPackageReplacementWarning(request: PackageReplacementRequest) {
         if (isFinishing || isDestroyed || pendingPackageReplacement !== request) return
-        viewModel.showDirectPatchPrompt(request.title, request.requiresUninstall)
+        viewModel.showDirectPatchPrompt(request.title, request.requiresUninstall, request.kind)
     }
 
     private fun confirmPackageReplacementPrompt() {
@@ -381,7 +720,7 @@ class LauncherActivity : ComponentActivity() {
             return
         }
         val uninstall = Intent(
-            Intent.ACTION_UNINSTALL_PACKAGE,
+            Intent.ACTION_DELETE,
             Uri.parse("package:${request.packageName}")
         ).putExtra(Intent.EXTRA_RETURN_RESULT, true)
         packageReplacementPhase = PackageReplacementPhase.WAITING_FOR_UNINSTALL
@@ -398,7 +737,11 @@ class LauncherActivity : ComponentActivity() {
         packageReplacementPhase = PackageReplacementPhase.COMMITTING_INSTALL
         packageReplacementLeftLauncher = false
         viewModel.onPackageReplacementProgress(
-            "Installing patched ${request.title}",
+            if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                "Installing ${request.title} shell"
+            } else {
+                "Installing patched ${request.title}"
+            },
             "Preparing Android's installation screen. You can keep using the launcher while it opens."
         )
         // APK verification and copying a split set into Package Installer can take seconds.
@@ -412,18 +755,22 @@ class LauncherActivity : ComponentActivity() {
                         packageReplacementPhase = PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT
                         viewModel.onPackageReplacementProgress(
                             "Waiting for Android",
-                            "Confirm the patched game installation. The launcher will detect when it finishes."
+                            if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                                "Confirm the game-branded shell installation. The launcher will detect when it finishes."
+                            } else {
+                                "Confirm the patched game installation. The launcher will detect when it finishes."
+                            }
                         )
                         schedulePackageReplacementReconciliation()
                     }
                 }
             }.onFailure { error ->
-                android.util.Log.e("JesterMoodsDirectPatch", "Could not start patched install", error)
+                android.util.Log.e("JesterMoodsPackageSetup", "Could not start package install", error)
                 withContext(Dispatchers.Main) {
                     if (pendingPackageReplacement === request) {
                         finishPackageReplacementWithFailure(
                             error.message?.take(220)?.takeIf { it.isNotBlank() }
-                                ?: "Android could not start the patched ${request.title} installation."
+                                ?: "Android could not start the ${request.title} installation."
                         )
                     }
                 }
@@ -505,7 +852,7 @@ class LauncherActivity : ComponentActivity() {
                 packageReplacementPhase == PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT &&
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                 finishPackageReplacementWithFailure(
-                    "The Android installation was cancelled or could not be confirmed. The prepared patch is still available."
+                    "The Android installation was cancelled or could not be confirmed. The prepared package is still available."
                 )
             }
         }
@@ -515,6 +862,7 @@ class LauncherActivity : ComponentActivity() {
         val request = pendingPackageReplacement ?: return
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
+        packageReplacementPreparation = null
         pendingPackageReplacement = null
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
@@ -526,6 +874,8 @@ class LauncherActivity : ComponentActivity() {
         val title = pendingPackageReplacement?.title ?: "Game"
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
+        packageReplacementPreparation?.cancel()
+        packageReplacementPreparation = null
         pendingPackageReplacement = null
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
@@ -534,9 +884,12 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun cancelPackageReplacement() {
-        val title = pendingPackageReplacement?.title ?: "Game"
+        val title = pendingPackageReplacement?.title
+            ?: viewModel.packageSetupState.value.title.ifBlank { "Game" }
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
+        packageReplacementPreparation?.cancel()
+        packageReplacementPreparation = null
         pendingPackageReplacement = null
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
@@ -752,6 +1105,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val _launchState = MutableStateFlow(LaunchUiState())
     val launchState: StateFlow<LaunchUiState> = _launchState
 
+    private val _packageSetupState = MutableStateFlow(PackageSetupUiState())
+    val packageSetupState: StateFlow<PackageSetupUiState> = _packageSetupState
+
     private val _directPatchPromptState = MutableStateFlow(DirectPatchPromptUiState())
     val directPatchPromptState: StateFlow<DirectPatchPromptUiState> = _directPatchPromptState
 
@@ -799,9 +1155,16 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var gameInstallerRecovery: Job? = null
     @Volatile
     private var gameInstallCancellation: GameInstallCancellation? = null
+    @Volatile
+    private var launcherUpdateCancellation: SecureTransferCancellation? = null
+    @Volatile
+    private var moduleTransferCancellation: SecureTransferCancellation? = null
+    @Volatile
+    private var installedModuleUpdateCancellation: SecureTransferCancellation? = null
     private var privateAccessExpiryByScope: Map<String, Long> = emptyMap()
     @Volatile
     private var acknowledgedInstalledModuleUpdates: Set<String> = emptySet()
+    private var installedModuleUpdateJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -972,28 +1335,24 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val configuredScope = BuildConfig.PRIVATE_MODULE_SCOPE.takeIf {
             BuildConfig.PRIVATE_MODULE_ENABLED
         }
-        val approvalByScope = (installedPrivateModules.values + listOfNotNull(configuredScope))
+        val cachedCatalog = catalogClient.loadCached().orEmpty()
+        val knownPrivateScopes = (
+            installedPrivateModules.values +
+                listOfNotNull(configuredScope) +
+                cachedCatalog.mapNotNull { it.privateScope }
+            )
             .distinct()
-            .associateWith { scope ->
-                if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith null
-                accessManager.checkPrivateAccess(scope).also { result ->
-                    if (result is LauncherPrivateAccessResult.Unavailable) {
-                        android.util.Log.w(
-                            "JesterMoodsPrivateAccess",
-                            "Private module approval could not be refreshed; retaining local support.",
-                            result.error
-                        )
-                    }
-                }
-            }
-
-        privateAccessExpiryByScope = approvalByScope.mapNotNull { (scope, result) ->
+        val cachedApprovalByScope = knownPrivateScopes.associateWith { scope ->
+            if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith null
+            accessManager.cachedPrivateAccess(scope)
+        }
+        privateAccessExpiryByScope = cachedApprovalByScope.mapNotNull { (scope, result) ->
             (result as? LauncherPrivateAccessResult.Approved)?.lease?.grantExpiresAt?.let { scope to it }
         }.toMap()
 
         val configuredApproved = configuredScope != null &&
             (bypassPrivateApproval && BuildConfig.DEBUG ||
-                approvalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
+                cachedApprovalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
         if (configuredApproved) {
             runCatching { embeddedPrivateModuleInstaller.installIfConfigured() }
                 .onFailure { error ->
@@ -1007,11 +1366,51 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         // Hydrate every launcher screen from verified disk/local state before exposing the
         // Library. Network-backed catalog, Play Store, and changelog checks continue below.
         // This keeps an existing library visible immediately on every process start.
-        hydrateCachedGames()
+        hydrateCachedGames(cachedCatalog)
         primeChangelogFromCache()
         markLauncherReady(launcherExpiresAt)
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
             _launcherEntered.value = true
+        }
+        // Cached signed approvals own the first frame. Refresh revocation and extended expiry
+        // information only after the launcher is visible, without temporarily presenting a
+        // cached private add-on as public while the network request is in flight.
+        val refreshedApprovalByScope = knownPrivateScopes.associateWith { scope ->
+            if (bypassPrivateApproval && BuildConfig.DEBUG) return@associateWith null
+            accessManager.checkPrivateAccess(scope).also { result ->
+                if (result is LauncherPrivateAccessResult.Unavailable) {
+                    android.util.Log.w(
+                        "JesterMoodsPrivateAccess",
+                        "Private module approval could not be refreshed; retaining cached support.",
+                        result.error
+                    )
+                }
+            }
+        }
+        val refreshedExpiries = privateAccessExpiryByScope.toMutableMap()
+        refreshedApprovalByScope.forEach { (scope, result) ->
+            when (result) {
+                is LauncherPrivateAccessResult.Approved -> {
+                    refreshedExpiries[scope] = result.lease.grantExpiresAt
+                }
+                LauncherPrivateAccessResult.Denied -> refreshedExpiries.remove(scope)
+                is LauncherPrivateAccessResult.Unavailable -> Unit
+                null -> Unit
+            }
+        }
+        privateAccessExpiryByScope = refreshedExpiries
+        val configuredApprovedAfterRefresh = configuredScope != null &&
+            (bypassPrivateApproval && BuildConfig.DEBUG ||
+                refreshedApprovalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
+        if (!configuredApproved && configuredApprovedAfterRefresh) {
+            runCatching { embeddedPrivateModuleInstaller.installIfConfigured() }
+                .onFailure { error ->
+                    android.util.Log.e(
+                        "JesterMoodsPrivateModule",
+                        "Embedded module installation failed; normal launcher startup will continue.",
+                        error
+                    )
+                }
         }
         // Publish the signed launcher-release cache concurrently before waiting on catalog
         // refresh. Installed add-on offers were already published by hydrateCachedGames().
@@ -1170,7 +1569,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun closeLauncherUpdate() {
         _launcherUpdateState.update { current ->
-            if (!current.inProgress && !current.installing) {
+            if (!current.inProgress && !current.installing && !current.cancelling) {
                 if (current.available && current.build > 0L) {
                     dismissedLauncherUpdateBuild = current.build
                 }
@@ -1183,57 +1582,377 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun dismissInstalledModuleUpdates() {
         val current = _installedModuleUpdatesState.value
+        if (current.inProgress) return
         val visibleUpdates = current.packageNames.mapNotNull { packageName ->
             (_libraryGames.value + current.previewUpdates).firstOrNull { it.packageName == packageName }
                 ?.installedModuleUpdateKey()
         }
         acknowledgedInstalledModuleUpdates = acknowledgedInstalledModuleUpdates + visibleUpdates
-        _installedModuleUpdatesState.value = current.copy(open = false)
+        _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
     }
 
     fun reviewInstalledModuleUpdate(game: LibraryGame) {
+        if (_installedModuleUpdatesState.value.inProgress) return
         dismissInstalledModuleUpdates()
         val current = _libraryGames.value.firstOrNull { it.packageName == game.packageName } ?: return
         openLibraryGame(current)
         updateLibraryGame(current)
     }
 
+    fun updateInstalledModuleFromPrompt(game: LibraryGame) {
+        runInstalledModuleUpdateQueue(listOf(game), updatingAll = false)
+    }
+
+    fun updateAllInstalledModules() {
+        val state = _installedModuleUpdatesState.value
+        val visibleUpdates = state.packageNames.mapNotNull { packageName ->
+            (_libraryGames.value + state.previewUpdates).firstOrNull { it.packageName == packageName }
+        }
+        val pendingUpdates = visibleUpdates.filter { game ->
+            state.itemStates[game.packageName]?.status != InstalledModuleUpdateItemStatus.INSTALLED
+        }
+        runInstalledModuleUpdateQueue(pendingUpdates, updatingAll = true)
+    }
+
+    private fun runInstalledModuleUpdateQueue(
+        requestedUpdates: List<LibraryGame>,
+        updatingAll: Boolean
+    ) {
+        if (installedModuleUpdateJob?.isActive == true || _installedModuleUpdatesState.value.inProgress) return
+        val updates = requestedUpdates.distinctBy(LibraryGame::packageName)
+        if (updates.isEmpty()) return
+        val cancellation = SecureTransferCancellation()
+        installedModuleUpdateCancellation = cancellation
+        val current = _installedModuleUpdatesState.value
+        val snapshots = (current.previewUpdates + updates).distinctBy(LibraryGame::packageName)
+        val queuedStates = current.itemStates.toMutableMap().apply {
+            updates.forEach { game ->
+                this[game.packageName] = InstalledModuleUpdateItemUiState(
+                    status = InstalledModuleUpdateItemStatus.QUEUED,
+                    stage = SecureTransferStage.PREPARING,
+                    stageProgress = null,
+                    detail = if (updatingAll) "Waiting its turn" else "Preparing verified update",
+                    totalBytes = game.listing?.let(::moduleDownloadSize) ?: 0L,
+                    diagnostics = listOf("Added to the verified update queue")
+                )
+            }
+        }
+        _installedModuleUpdatesState.value = current.copy(
+            open = true,
+            packageNames = (current.packageNames + updates.map(LibraryGame::packageName)).distinct(),
+            previewUpdates = snapshots,
+            inProgress = true,
+            cancelling = false,
+            cancelled = false,
+            updatingAll = updatingAll,
+            itemStates = queuedStates
+        )
+        installedModuleUpdateJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var accessInterrupted = false
+                updates.forEach { snapshot ->
+                    if (accessInterrupted || cancellation.cancelled) return@forEach
+                    val game = _libraryGames.value.firstOrNull { it.packageName == snapshot.packageName }
+                        ?: snapshot
+                    val listing = game.listing
+                    val installedGame = listing?.game ?: game.game
+                    if (listing == null || installedGame == null) {
+                        updateInstalledModuleItem(game.packageName) {
+                            InstalledModuleUpdateItemUiState(
+                                status = InstalledModuleUpdateItemStatus.FAILED,
+                                stage = SecureTransferStage.FAILED,
+                                detail = "Open details after reinstalling the original game, then try again."
+                            )
+                        }
+                        return@forEach
+                    }
+                    updateInstalledModuleItem(game.packageName) { previous ->
+                        previous.copy(
+                            status = InstalledModuleUpdateItemStatus.DOWNLOADING,
+                            stage = SecureTransferStage.PREPARING,
+                            stageProgress = null,
+                            detail = "Preparing signed download",
+                            downloadedBytes = 0L,
+                            totalBytes = moduleDownloadSize(listing)
+                        )
+                    }
+                    runCatching {
+                        applyUpdate(
+                            request = UpdateRequest(
+                                packageName = game.packageName,
+                                grant = null,
+                                nonce = null,
+                                buildHint = null
+                            ),
+                            gameHint = installedGame,
+                            onProgress = { downloaded, total ->
+                                updateInstalledModuleItem(game.packageName) { previous ->
+                                    previous.copy(
+                                        status = InstalledModuleUpdateItemStatus.DOWNLOADING,
+                                        stage = if (downloaded >= total && total > 0L) {
+                                            SecureTransferStage.VERIFYING
+                                        } else {
+                                            SecureTransferStage.DOWNLOADING
+                                        },
+                                        stageProgress = if (downloaded >= total && total > 0L) 0f else null,
+                                        detail = if (downloaded >= total && total > 0L) {
+                                            "Verifying signed package"
+                                        } else {
+                                            "Downloading secure package"
+                                        },
+                                        downloadedBytes = downloaded,
+                                        totalBytes = total
+                                    )
+                                }
+                            },
+                            onStage = { stage ->
+                                updateInstalledModuleItem(game.packageName) { previous ->
+                                    previous.copy(
+                                        status = InstalledModuleUpdateItemStatus.DOWNLOADING,
+                                        stage = stage,
+                                        stageProgress = when (stage) {
+                                            SecureTransferStage.PREPARING,
+                                            SecureTransferStage.VERIFYING -> null
+                                            else -> null
+                                        },
+                                        detail = when (stage) {
+                                            SecureTransferStage.PREPARING -> "Authorizing signed release"
+                                            SecureTransferStage.DOWNLOADING -> "Downloading secure package"
+                                            SecureTransferStage.VERIFYING -> "Verifying integrity and identity"
+                                            SecureTransferStage.ACTIVATING -> "Activating add-on safely"
+                                            else -> previous.detail
+                                        }
+                                    )
+                                }
+                            },
+                            onDiagnostic = { message ->
+                                updateInstalledModuleItem(game.packageName) { previous ->
+                                    previous.copy(
+                                        diagnostics = appendDiagnostic(previous.diagnostics, message)
+                                    )
+                                }
+                            },
+                            isCancelled = { cancellation.cancelled }
+                        )
+                    }.onSuccess { result ->
+                        updateInstalledModuleItem(game.packageName) { previous ->
+                            previous.copy(
+                                status = InstalledModuleUpdateItemStatus.INSTALLED,
+                                stage = SecureTransferStage.COMPLETED,
+                                stageProgress = 1f,
+                                detail = result.version?.let { "Version $it is ready" } ?: "Latest release is ready",
+                                downloadedBytes = previous.totalBytes.takeIf { it > 0L } ?: previous.downloadedBytes
+                            )
+                        }
+                    }.onFailure { error ->
+                        if (cancellation.cancelled) {
+                            updateInstalledModuleItem(game.packageName) { previous ->
+                                previous.copy(
+                                    status = InstalledModuleUpdateItemStatus.AVAILABLE,
+                                    stage = SecureTransferStage.CANCELLED,
+                                    stageProgress = null,
+                                    detail = "Paused safely; tap Update whenever you're ready"
+                                )
+                            }
+                            return@onFailure
+                        }
+                        accessInterrupted = error is NewSessionAccessBoundaryException
+                        if (!accessInterrupted) {
+                            android.util.Log.e(
+                                "JesterMoodsUpdate",
+                                "Update-center install failed for ${game.packageName}",
+                                error
+                            )
+                        }
+                        updateInstalledModuleItem(game.packageName) { previous ->
+                            previous.copy(
+                                status = InstalledModuleUpdateItemStatus.FAILED,
+                                stage = SecureTransferStage.FAILED,
+                                stageProgress = null,
+                                detail = if (accessInterrupted) {
+                                    "Unlock launcher access, then retry this update."
+                                } else {
+                                    moduleDownloadFailureDetail(error)
+                                }
+                            )
+                        }
+                    }
+                }
+                if (accessInterrupted || cancellation.cancelled) {
+                    _installedModuleUpdatesState.update { state ->
+                        state.copy(
+                            itemStates = state.itemStates.mapValues { (_, item) ->
+                                if (item.status == InstalledModuleUpdateItemStatus.QUEUED) {
+                                    item.copy(
+                                        status = InstalledModuleUpdateItemStatus.AVAILABLE,
+                                        stage = if (cancellation.cancelled) {
+                                            SecureTransferStage.CANCELLED
+                                        } else {
+                                            SecureTransferStage.READY
+                                        },
+                                        detail = if (cancellation.cancelled) {
+                                            "Paused before this download began"
+                                        } else {
+                                            "Ready after launcher access is restored"
+                                        }
+                                    )
+                                } else item
+                            }
+                        )
+                    }
+                }
+                refreshGames()
+            } finally {
+                _installedModuleUpdatesState.update { state ->
+                    state.copy(
+                        inProgress = false,
+                        cancelling = false,
+                        cancelled = cancellation.cancelled,
+                        updatingAll = false
+                    )
+                }
+                installedModuleUpdateJob = null
+                installedModuleUpdateCancellation = null
+            }
+        }
+    }
+
+    fun cancelInstalledModuleUpdates() {
+        val current = _installedModuleUpdatesState.value
+        if (!current.inProgress && !current.cancelling) {
+            dismissInstalledModuleUpdates()
+            return
+        }
+        val cancellation = installedModuleUpdateCancellation ?: return
+        cancellation.cancelled = true
+        _installedModuleUpdatesState.value = current.copy(
+            cancelling = true,
+            cancelled = false
+        )
+    }
+
+    private fun updateInstalledModuleItem(
+        packageName: String,
+        transform: (InstalledModuleUpdateItemUiState) -> InstalledModuleUpdateItemUiState
+    ) {
+        _installedModuleUpdatesState.update { state ->
+            val currentItem = state.itemStates[packageName] ?: InstalledModuleUpdateItemUiState()
+            val updatedItem = transform(currentItem)
+            state.copy(
+                itemStates = state.itemStates + (packageName to updatedItem)
+            )
+        }
+    }
+
     fun downloadAndInstallLauncherUpdate() {
         val current = _launcherUpdateState.value
-        if (!current.available || current.inProgress || current.installing) return
+        if (!current.available || current.inProgress || current.installing || current.cancelling) return
         val release = currentLauncherRelease?.takeIf { it.build == current.build } ?: return
+        val cancellation = SecureTransferCancellation()
+        launcherUpdateCancellation = cancellation
         launcherInstallerRecovery?.cancel()
         launcherInstallerRecovery = null
         launcherInstallerOpened = false
         _launcherUpdateState.value = current.copy(
             inProgress = !current.downloaded,
             installing = false,
+            cancelling = false,
+            cancelled = false,
+            stage = if (current.downloaded) SecureTransferStage.WAITING_FOR_ANDROID else SecureTransferStage.PREPARING,
+            stageProgress = null,
             failed = false,
             headline = if (current.downloaded) "Opening Android installer" else "Downloading launcher update",
-            detail = if (current.downloaded) "Confirm the update when Android asks." else "Keep Jester Mods open while the update downloads."
+            detail = if (current.downloaded) "Confirm the update when Android asks." else "Checking for a reusable verified package first.",
+            diagnostics = appendDiagnostic(current.diagnostics, "Launcher update started")
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                if (!launcherUpdateClient.isDownloaded(release)) {
-                    launcherUpdateClient.download(release) { downloaded, total ->
-                        _launcherUpdateState.value = _launcherUpdateState.value.copy(
-                            inProgress = true,
+                val alreadyDownloaded = launcherUpdateClient.isDownloaded(
+                    release = release,
+                    onVerificationProgress = { progress ->
+                        if (launcherUpdateCancellation === cancellation && !cancellation.cancelled) {
+                            _launcherUpdateState.update { state ->
+                                state.copy(
+                                    stage = SecureTransferStage.VERIFYING,
+                                    stageProgress = progress,
+                                    headline = "Checking saved launcher update",
+                                    detail = "Verifying package integrity, identity, and signing certificate."
+                                )
+                            }
+                        }
+                    },
+                    isCancelled = { cancellation.cancelled }
+                )
+                if (!alreadyDownloaded) {
+                    _launcherUpdateState.update { state ->
+                        state.copy(
+                            stage = SecureTransferStage.DOWNLOADING,
+                            stageProgress = null,
                             headline = "Downloading launcher update",
-                            detail = "The installer will open automatically when the download is verified.",
-                            downloadedBytes = downloaded,
-                            totalBytes = total
+                            detail = "The package will be verified before Android can open it.",
+                            diagnostics = appendDiagnostic(state.diagnostics, "Secure download started")
                         )
                     }
+                    launcherUpdateClient.download(
+                        release = release,
+                        onProgress = { downloaded, total ->
+                            if (launcherUpdateCancellation !== cancellation || cancellation.cancelled) return@download
+                            val verifying = downloaded >= total && total > 0L
+                            _launcherUpdateState.value = _launcherUpdateState.value.copy(
+                                inProgress = true,
+                                stage = if (verifying) SecureTransferStage.VERIFYING else SecureTransferStage.DOWNLOADING,
+                                stageProgress = if (verifying) 0f else null,
+                                headline = if (verifying) "Verifying launcher update" else "Downloading launcher update",
+                                detail = if (verifying) {
+                                    "Checking integrity, app identity, and signing certificate."
+                                } else {
+                                    "The verified installer will open automatically."
+                                },
+                                downloadedBytes = downloaded,
+                                totalBytes = total
+                            )
+                        },
+                        onVerificationProgress = { progress ->
+                            if (launcherUpdateCancellation === cancellation && !cancellation.cancelled) {
+                                _launcherUpdateState.update { state ->
+                                    state.copy(
+                                        stage = SecureTransferStage.VERIFYING,
+                                        stageProgress = progress,
+                                        headline = "Verifying launcher update",
+                                        detail = "Checking integrity, app identity, and signing certificate."
+                                    )
+                                }
+                            }
+                        },
+                        onDiagnostic = { message ->
+                            if (launcherUpdateCancellation === cancellation && !cancellation.cancelled) {
+                                _launcherUpdateState.update { state ->
+                                    state.copy(diagnostics = appendDiagnostic(state.diagnostics, message))
+                                }
+                            }
+                        },
+                        isCancelled = { cancellation.cancelled }
+                    )
                 }
+                if (cancellation.cancelled) error("Launcher update cancelled")
                 _launcherUpdateState.value = _launcherUpdateState.value.copy(
                     inProgress = false,
                     installing = true,
+                    stage = SecureTransferStage.WAITING_FOR_ANDROID,
+                    stageProgress = null,
                     downloaded = true,
                     failed = false,
                     headline = "Opening Android installer",
-                    detail = "Android is preparing its confirmation screen."
+                    detail = "Android is preparing its confirmation screen.",
+                    diagnostics = appendDiagnostic(
+                        _launcherUpdateState.value.diagnostics,
+                        "Verified launcher package handed to Android"
+                    )
                 )
-                launcherUpdateClient.install(release)
+                launcherUpdateClient.install(release, isCancelled = { cancellation.cancelled })
+                if (cancellation.cancelled || launcherUpdateCancellation !== cancellation) {
+                    error("Launcher update cancelled")
+                }
                 launcherInstallerOpened = true
                 launcherInstallerRecovery = viewModelScope.launch {
                     delay(LAUNCHER_INSTALLER_RECOVERY_DELAY_MS)
@@ -1241,10 +1960,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     if (launcherInstallerOpened && waiting.installing && waiting.build == release.build) {
                         launcherInstallerOpened = false
                         launcherInstallerRecovery = null
+                        launcherUpdateCancellation = null
                         _launcherUpdateState.value = waiting.copy(
                             inProgress = false,
                             installing = false,
                             downloaded = true,
+                            stage = SecureTransferStage.READY,
                             failed = false,
                             headline = "Update ready to install",
                             detail = "Android is taking longer than expected. Tap Install update to open the confirmation again."
@@ -1252,9 +1973,27 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     }
                 }
             }.onFailure { error ->
+                if (launcherUpdateCancellation !== cancellation) return@onFailure
                 launcherInstallerRecovery?.cancel()
                 launcherInstallerRecovery = null
                 launcherInstallerOpened = false
+                launcherUpdateCancellation = null
+                if (cancellation.cancelled) {
+                    val state = _launcherUpdateState.value
+                    _launcherUpdateState.value = state.copy(
+                        inProgress = false,
+                        installing = false,
+                        cancelling = false,
+                        cancelled = true,
+                        failed = false,
+                        stage = SecureTransferStage.CANCELLED,
+                        stageProgress = null,
+                        headline = "Launcher update paused",
+                        detail = "The partial package was kept safely, so a future retry can resume faster.",
+                        diagnostics = appendDiagnostic(state.diagnostics, "Cancelled by the user")
+                    )
+                    return@onFailure
+                }
                 android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update failed", error)
                 val state = _launcherUpdateState.value
                 val downloaded = launcherUpdateClient.isDownloaded(release)
@@ -1263,6 +2002,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     installing = false,
                     downloaded = downloaded,
                     failed = true,
+                    stage = SecureTransferStage.FAILED,
+                    stageProgress = null,
                     headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the update",
                     detail = if (downloaded) {
                         "Android couldn't open its app installer. The verified update is still saved, so you can restart the device and try again."
@@ -1274,6 +2015,40 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
+    fun cancelLauncherUpdate() {
+        val current = _launcherUpdateState.value
+        if (!current.inProgress && !current.installing && !current.cancelling) {
+            closeLauncherUpdate()
+            return
+        }
+        val cancellation = launcherUpdateCancellation ?: return
+        cancellation.cancelled = true
+        if (current.installing) {
+            launcherInstallerRecovery?.cancel()
+            launcherInstallerRecovery = null
+            launcherInstallerOpened = false
+            launcherUpdateCancellation = null
+            _launcherUpdateState.value = current.copy(
+                inProgress = false,
+                installing = false,
+                cancelling = false,
+                cancelled = true,
+                failed = false,
+                stage = SecureTransferStage.CANCELLED,
+                headline = "Stopped waiting for Android",
+                detail = "If Android's installer is still visible, close it there. The verified update remains saved.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Stopped waiting for Android installer")
+            )
+        } else {
+            _launcherUpdateState.value = current.copy(
+                cancelling = true,
+                headline = "Stopping safely",
+                detail = "Keeping the resumable download intact for a future retry.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Cancellation requested by the user")
+            )
+        }
+    }
+
     fun onLauncherInstallPermissionDenied() {
         val current = _launcherUpdateState.value
         if (!current.available) return
@@ -1281,6 +2056,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             inProgress = false,
             installing = false,
             failed = true,
+            stage = SecureTransferStage.FAILED,
             headline = "Installation permission is needed",
             detail = "Allow Jester Mods to install app updates, then tap Install update again."
         )
@@ -1300,6 +2076,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             launcherInstallerRecovery?.cancel()
             launcherInstallerRecovery = null
             launcherInstallerOpened = false
+            launcherUpdateCancellation = null
             launcherUpdateClient.markInstallSucceeded(installed)
             currentLauncherRelease = null
             _launcherUpdateState.value = LauncherUpdateUiState()
@@ -1309,11 +2086,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             launcherInstallerRecovery?.cancel()
             launcherInstallerRecovery = null
             launcherInstallerOpened = false
+            launcherUpdateCancellation = null
             _launcherUpdateState.value = current.copy(
                 inProgress = false,
                 installing = false,
                 downloaded = true,
                 failed = false,
+                stage = SecureTransferStage.READY,
                 headline = "Update ready to install",
                 detail = "Android closed without installing the update. Tap Install update to open it again."
             )
@@ -1329,6 +2108,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun checkLauncherUpdate() {
         viewModelScope.launch(Dispatchers.IO) {
+            if (launcherUpdateTestChannel && BuildConfig.DEBUG) {
+                // The CMD helper uses this deterministic, package-safe design preview. Do not
+                // depend on a published test APK (whose release application ID intentionally
+                // differs from the side-by-side debug launcher).
+                publishLauncherUpdatePreview()
+                return@launch
+            }
             val cachedRelease = launcherUpdateClient.loadCached(launcherUpdateTestChannel)
             if (cachedRelease != null) {
                 publishLauncherUpdate(
@@ -1346,10 +2132,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update check failed", error)
                 }
                 .getOrNull()
-            if (release == null && launcherUpdateTestChannel && BuildConfig.DEBUG) {
-                if (cachedRelease == null) publishLauncherUpdatePreview()
-                return@launch
-            }
             release ?: return@launch
             val history = if (launcherUpdateTestChannel) {
                 emptyList()
@@ -1433,12 +2215,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     notes = release.notes,
                     changelog = newEntries,
                     downloaded = current.downloaded || downloaded,
-                    headline = if (current.inProgress || current.installing || current.failed) {
+                    headline = if (current.inProgress || current.installing || current.failed || current.cancelled) {
                         current.headline
                     } else {
                         readyHeadline
                     },
-                    detail = if (current.inProgress || current.installing || current.failed) {
+                    detail = if (current.inProgress || current.installing || current.failed || current.cancelled) {
                         current.detail
                     } else {
                         readyDetail
@@ -1993,6 +2775,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _updateState.value = ModuleUpdateUiState()
         _gameDataResetState.value = GameDataResetUiState()
         _launchState.value = LaunchUiState()
+        if (!_packageSetupState.value.inProgress) {
+            _packageSetupState.value = PackageSetupUiState()
+        }
     }
 
     fun closeGame() {
@@ -2001,6 +2786,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _updateState.value = ModuleUpdateUiState()
         _gameDataResetState.value = GameDataResetUiState()
         _launchState.value = LaunchUiState()
+        if (!_packageSetupState.value.inProgress) {
+            _packageSetupState.value = PackageSetupUiState()
+        }
     }
 
     fun updateLibraryGame(entry: LibraryGame) {
@@ -2024,21 +2812,77 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun authorizePackageReplacement(game: InstalledGame, onAuthorized: () -> Unit) {
         if (!game.moduleSupported || _launchState.value.inProgress || _updateState.value.inProgress) return
+        val kind = if (game.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL) {
+            PackageReplacementKind.IDENTITY_SHELL
+        } else {
+            PackageReplacementKind.DIRECT_PATCH
+        }
+        _packageSetupState.value = PackageSetupUiState(
+            visible = true,
+            inProgress = true,
+            stage = SecureTransferStage.PREPARING,
+            stageProgress = 0.08f,
+            title = game.module.title,
+            packageName = game.packageName,
+            kind = kind,
+            headline = "Checking access",
+            detail = if (kind == PackageReplacementKind.IDENTITY_SHELL) {
+                "Verifying this add-on before preparing the exact-package shell."
+            } else {
+                "Verifying this add-on before preparing the patched game."
+            },
+            diagnostics = listOf("Started protected package setup")
+        )
         _launchState.value = LaunchUiState(
             inProgress = true,
             headline = "Checking access",
-            detail = "Verifying this add-on before preparing the patched game."
+            detail = if (game.module.nonRootMethod ==
+                com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL) {
+                "Verifying this add-on before preparing the exact-package shell."
+            } else {
+                "Verifying this add-on before preparing the patched game."
+            }
         )
         viewModelScope.launch(Dispatchers.IO) {
             if (!checkAccessForNewProtectedAction(
                     ProtectedActionBoundary.GAME_LAUNCH,
                     game.packageName
-                )) return@launch
+                )) {
+                val launchFailure = _launchState.value
+                _packageSetupState.update { current ->
+                    current.copy(
+                        inProgress = false,
+                        failed = true,
+                        stage = SecureTransferStage.FAILED,
+                        stageProgress = null,
+                        headline = launchFailure.headline ?: "Couldn't check access",
+                        detail = launchFailure.detail,
+                        diagnostics = appendDiagnostic(current.diagnostics, "Access check did not complete")
+                    )
+                }
+                return@launch
+            }
             withContext(Dispatchers.Main) { onAuthorized() }
         }
     }
 
     fun onPackageReplacementProgress(headline: String, detail: String) {
+        val stage = packageSetupStage(headline)
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = true,
+                cancelling = false,
+                cancelled = false,
+                completed = false,
+                failed = false,
+                stage = stage,
+                stageProgress = packageSetupStageProgress(headline, stage),
+                headline = headline,
+                detail = detail,
+                diagnostics = appendDiagnostic(current.diagnostics, "$headline: $detail")
+            )
+        }
         _launchState.value = LaunchUiState(
             inProgress = true,
             headline = headline,
@@ -2046,11 +2890,53 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         )
     }
 
-    fun showDirectPatchPrompt(title: String, replacesOriginal: Boolean) {
+    fun showDirectPatchPrompt(
+        title: String,
+        replacesOriginal: Boolean,
+        kind: PackageReplacementKind
+    ) {
         _directPatchPromptState.value = DirectPatchPromptUiState(
             visible = true,
             title = title,
-            replacesOriginal = replacesOriginal
+            replacesOriginal = replacesOriginal,
+            kind = kind
+        )
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                stage = SecureTransferStage.VERIFYING,
+                stageProgress = 1f,
+                title = title,
+                kind = kind,
+                headline = if (kind == PackageReplacementKind.IDENTITY_SHELL) {
+                    "Shell verified and ready"
+                } else {
+                    "Patch verified and ready"
+                },
+                detail = "Review the Android replacement steps before continuing.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Prepared package passed verification")
+            )
+        }
+    }
+
+    fun showLegacyPatchMigration(title: String) {
+        _launchState.value = LaunchUiState()
+        _packageSetupState.value = PackageSetupUiState(
+            visible = true,
+            title = title,
+            kind = PackageReplacementKind.IDENTITY_SHELL,
+            stage = SecureTransferStage.READY,
+            headline = "Official game restoration required",
+            detail = "The previous direct patch must be removed before the exact-package shell can be created.",
+            diagnostics = listOf("Detected a previous Jester direct-patch installation")
+        )
+        _directPatchPromptState.value = DirectPatchPromptUiState(
+            visible = true,
+            title = title,
+            replacesOriginal = true,
+            kind = PackageReplacementKind.IDENTITY_SHELL,
+            restoresOfficialGame = true
         )
     }
 
@@ -2058,9 +2944,159 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _directPatchPromptState.value = DirectPatchPromptUiState()
     }
 
-    fun onPackageReplacementFailed(detail: String, title: String) {
+    fun dismissPackageSetup() {
+        if (!_packageSetupState.value.inProgress) {
+            _packageSetupState.value = PackageSetupUiState()
+        }
+    }
+
+    private fun packageSetupStage(headline: String): SecureTransferStage {
+        val normalized = headline.lowercase()
+        return when {
+            "waiting for android" in normalized -> SecureTransferStage.WAITING_FOR_ANDROID
+            "installing" in normalized -> SecureTransferStage.ACTIVATING
+            "ready" in normalized || "verifying" in normalized -> SecureTransferStage.VERIFYING
+            else -> SecureTransferStage.PREPARING
+        }
+    }
+
+    private fun packageSetupStageProgress(
+        headline: String,
+        stage: SecureTransferStage
+    ): Float? {
+        if (stage == SecureTransferStage.ACTIVATING ||
+            stage == SecureTransferStage.WAITING_FOR_ANDROID) return null
+        val normalized = headline.lowercase()
+        return when {
+            "ready" in normalized -> 1f
+            "verifying" in normalized -> 0.9f
+            "signing" in normalized -> 0.78f
+            "creating" in normalized || "patching" in normalized -> 0.58f
+            "staging" in normalized || "inspecting" in normalized -> 0.3f
+            "finishing" in normalized -> 0.88f
+            "preparing" in normalized -> 0.18f
+            "checking" in normalized -> 0.08f
+            else -> 0.12f
+        }
+    }
+
+    fun onLegacyPatchMigrationStarted(title: String) {
+        onPackageReplacementProgress(
+            "Waiting for Android",
+            "Confirm the $title uninstall. Its Browse add-ons requirements will open next."
+        )
         _launchState.value = LaunchUiState(
-            headline = "$title patch failed",
+            inProgress = true,
+            headline = "Waiting for Android",
+            detail = "Confirm the $title uninstall. Its Browse add-ons requirements will open next."
+        )
+    }
+
+    fun onLegacyPatchMigrationReconciling(title: String) {
+        onPackageReplacementProgress(
+            "Finishing $title cleanup",
+            "Android confirmed the uninstall. Checking that the previous patch is fully removed."
+        )
+        _launchState.value = LaunchUiState(
+            inProgress = true,
+            headline = "Finishing $title cleanup",
+            detail = "Android confirmed the uninstall. Checking that the previous patch is fully removed."
+        )
+    }
+
+    fun onLegacyPatchMigrationCancelled(title: String) {
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                cancelled = true,
+                stage = SecureTransferStage.CANCELLED,
+                stageProgress = null,
+                headline = "$title wasn't changed",
+                detail = "The previous patch remains installed. You can restore the official game whenever you're ready.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Setup cancelled before Android changed the package")
+            )
+        }
+        _launchState.value = LaunchUiState(
+            headline = "$title wasn't changed",
+            detail = "The previous patch remains installed. You can restore the official game whenever you're ready."
+        )
+    }
+
+    fun onLegacyPatchMigrationFailed(title: String, detail: String) {
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                failed = true,
+                stage = SecureTransferStage.FAILED,
+                stageProgress = null,
+                headline = "$title migration needs attention",
+                detail = detail,
+                diagnostics = appendDiagnostic(current.diagnostics, "Migration failed: $detail")
+            )
+        }
+        _launchState.value = LaunchUiState(
+            headline = "$title migration needs attention",
+            detail = detail,
+            failed = true
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            refreshGames(forceGameScan = true)
+        }
+    }
+
+    fun onLegacyPatchRemoved(entry: LibraryGame) {
+        val packageName = entry.packageName
+        val listing = _availableModules.value.firstOrNull {
+            it.catalog.config.packageName == packageName
+        } ?: entry.listing
+
+        _selectedLibraryGame.value = null
+        _selectedGame.value = null
+        _moduleBrowserOpen.value = true
+        _downloadListing.value = listing?.copy(game = null)
+        _updateState.value = ModuleUpdateUiState(
+            totalBytes = listing?.let(::moduleDownloadSize) ?: 0L
+        )
+        _gameInstallState.value = GameInstallUiState(
+            headline = "Choose the original game source",
+            detail = "The previous ${entry.title} patch was removed safely. Download its companion game when offered, or choose Google Play."
+        )
+        _packageSetupState.value = PackageSetupUiState()
+        _launchState.value = LaunchUiState()
+        viewModelScope.launch(Dispatchers.IO) {
+            storageManager.onDirectPatchMigrationSucceeded(packageName)
+            refreshGames(refreshCatalog = listing == null, forceGameScan = true)
+            if (listing == null && _moduleBrowserOpen.value && _downloadListing.value == null) {
+                _availableModules.value.firstOrNull {
+                    it.catalog.config.packageName == packageName
+                }?.let { resolved ->
+                    _downloadListing.value = resolved.copy(game = null)
+                    _updateState.value = ModuleUpdateUiState(
+                        totalBytes = moduleDownloadSize(resolved)
+                    )
+                }
+            }
+        }
+    }
+
+    fun onPackageReplacementFailed(detail: String, title: String) {
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                failed = true,
+                stage = SecureTransferStage.FAILED,
+                stageProgress = null,
+                title = title,
+                headline = "$title setup failed",
+                detail = detail,
+                diagnostics = appendDiagnostic(current.diagnostics, "Setup failed: $detail")
+            )
+        }
+        _launchState.value = LaunchUiState(
+            headline = "$title setup failed",
             detail = detail,
             failed = true
         )
@@ -2070,20 +3106,69 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     fun onPackageReplacementCancelled(title: String) {
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                cancelling = false,
+                cancelled = true,
+                stage = SecureTransferStage.CANCELLED,
+                stageProgress = null,
+                title = title,
+                headline = "$title setup paused",
+                detail = "No Android package was changed. You can safely try again whenever you're ready.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Setup cancelled by the user")
+            )
+        }
         _launchState.value = LaunchUiState(
             headline = "$title wasn't changed",
-            detail = "The prepared patch remains available if you try again."
+            detail = "The prepared package remains available if you try again."
         )
     }
 
     fun onPackageReplacementInstalled(request: PackageReplacementRequest) {
+        _packageSetupState.update { current ->
+            current.copy(
+                visible = true,
+                inProgress = false,
+                cancelling = false,
+                completed = true,
+                failed = false,
+                cancelled = false,
+                stage = SecureTransferStage.COMPLETED,
+                stageProgress = 1f,
+                title = request.title,
+                packageName = request.packageName,
+                kind = request.kind,
+                headline = if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                    "${request.title} shell installed"
+                } else {
+                    "${request.title} patch installed"
+                },
+                detail = if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                    "The game-branded shell is ready. Open it here or directly from your home screen."
+                } else {
+                    "The patched game is ready. Open it from your Library when you want to play."
+                },
+                diagnostics = appendDiagnostic(current.diagnostics, "Installed package verified on this device")
+            )
+        }
         _launchState.value = LaunchUiState(
-            headline = "${request.title} patch installed",
-            detail = "The patched game is ready. Open it from your Library when you want to play.",
-            completed = true
+            headline = if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                "${request.title} shell installed"
+            } else {
+                "${request.title} patch installed"
+            },
+            detail = if (request.kind == PackageReplacementKind.IDENTITY_SHELL) {
+                "The game-branded shell is ready. Open it here or directly from your home screen."
+            } else {
+                "The patched game is ready. Open it from your Library when you want to play."
+            }
         )
         viewModelScope.launch(Dispatchers.IO) {
-            storageManager.onDirectPatchInstallSucceeded(request.packageName)
+            if (request.kind == PackageReplacementKind.DIRECT_PATCH) {
+                storageManager.onDirectPatchInstallSucceeded(request.packageName)
+            }
             refreshGames(forceGameScan = true)
         }
     }
@@ -2234,7 +3319,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 _launchState.value = LaunchUiState(
                     headline = "Opening game",
                     detail = "${game.module.title} is starting now.",
-                    completed = true
+                    gameLaunched = true
                 )
             } else if (!_launchState.value.failed) {
                 _launchState.value = LaunchUiState(
@@ -2293,13 +3378,26 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun downloadModuleUpdate(game: InstalledGame) {
         val offeredState = _updateState.value
         val offeredChangelog = offeredState.changelog
+        val listing = _availableModules.value.firstOrNull {
+            it.catalog.config.packageName == game.packageName
+        }
+        val cancellation = SecureTransferCancellation()
+        moduleTransferCancellation = cancellation
         _updateState.value = ModuleUpdateUiState(
+            visible = true,
             inProgress = true,
+            stage = SecureTransferStage.PREPARING,
+            stageProgress = null,
+            title = game.module.title,
+            packageName = game.packageName,
+            targetVersion = listing?.catalog?.version.orEmpty(),
+            actionLabel = "Add-on update",
             headline = "Preparing update",
             detail = "Checking the download for ${game.module.title}.",
             changelog = offeredChangelog,
             totalBytes = offeredState.totalBytes.takeIf { it > 0L }
-                ?: moduleDownloadSize(game.packageName, game.abi)
+                ?: moduleDownloadSize(game.packageName, game.abi),
+            diagnostics = listOf("Preparing ${game.module.title} update")
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -2311,12 +3409,25 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         buildHint = null
                     ),
                     progressHeadline = "Downloading update",
-                    progressDetail = "Downloading the latest add-on for ${game.module.title}."
+                    progressDetail = "Downloading the latest add-on for ${game.module.title}.",
+                    isCancelled = { cancellation.cancelled }
                 )
             }.onSuccess { result ->
+                if (cancellation.cancelled) {
+                    showModuleTransferCancelled()
+                    return@onSuccess
+                }
+                moduleTransferCancellation = null
                 refreshGames()
                 val progress = _updateState.value
                 _updateState.value = ModuleUpdateUiState(
+                    visible = true,
+                    stage = SecureTransferStage.COMPLETED,
+                    stageProgress = 1f,
+                    title = game.module.title,
+                    packageName = game.packageName,
+                    targetVersion = result.version.orEmpty(),
+                    actionLabel = "Add-on update",
                     headline = "Update installed",
                     detail = buildString {
                         append(result.version?.let { "Version $it" } ?: "The latest version")
@@ -2325,9 +3436,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     completed = true,
                     downloadedBytes = progress.downloadedBytes,
                     totalBytes = progress.totalBytes,
-                    changelog = offeredChangelog
+                    changelog = offeredChangelog,
+                    diagnostics = appendDiagnostic(progress.diagnostics, "Add-on update activated successfully")
                 )
-            }.onFailure(::showUpdateFailure)
+            }.onFailure { error ->
+                if (cancellation.cancelled) showModuleTransferCancelled() else showUpdateFailure(error)
+            }
         }
     }
 
@@ -2359,12 +3473,26 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         val offeredState = _updateState.value
         val offeredChangelog = offeredState.changelog
+        val cancellation = SecureTransferCancellation()
+        moduleTransferCancellation = cancellation
         _updateState.value = ModuleUpdateUiState(
+            visible = true,
             inProgress = true,
+            stage = SecureTransferStage.PREPARING,
+            stageProgress = null,
+            title = game.module.title,
+            packageName = game.packageName,
+            targetVersion = listing.catalog.version,
+            actionLabel = when (action) {
+                "update" -> "Add-on update"
+                "repair" -> "Add-on repair"
+                else -> "Add-on download"
+            },
             headline = "Preparing download",
             detail = "Checking the files for ${game.module.title}.",
             changelog = offeredChangelog,
-            totalBytes = offeredState.totalBytes.takeIf { it > 0L } ?: moduleDownloadSize(listing)
+            totalBytes = offeredState.totalBytes.takeIf { it > 0L } ?: moduleDownloadSize(listing),
+            diagnostics = listOf("Preparing ${game.module.title} $action")
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -2375,12 +3503,29 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         nonce = null,
                         buildHint = null
                     ),
-                    gameHint = game
+                    gameHint = game,
+                    isCancelled = { cancellation.cancelled }
                 )
             }.onSuccess { result ->
+                if (cancellation.cancelled) {
+                    showModuleTransferCancelled()
+                    return@onSuccess
+                }
+                moduleTransferCancellation = null
                 refreshGames()
                 val progress = _updateState.value
                 _updateState.value = ModuleUpdateUiState(
+                    visible = true,
+                    stage = SecureTransferStage.COMPLETED,
+                    stageProgress = 1f,
+                    title = game.module.title,
+                    packageName = game.packageName,
+                    targetVersion = result.version.orEmpty(),
+                    actionLabel = when (action) {
+                        "update" -> "Add-on update"
+                        "repair" -> "Add-on repair"
+                        else -> "Add-on download"
+                    },
                     headline = when (action) {
                         "update" -> "Add-on updated"
                         "repair" -> "Add-on repaired"
@@ -2394,12 +3539,54 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     completed = true,
                     downloadedBytes = progress.downloadedBytes,
                     totalBytes = progress.totalBytes,
-                    changelog = offeredChangelog
+                    changelog = offeredChangelog,
+                    diagnostics = appendDiagnostic(progress.diagnostics, "Verified add-on activated successfully")
                 )
             }.onFailure { error ->
-                showModuleDownloadFailure(error, action)
+                if (cancellation.cancelled) showModuleTransferCancelled() else showModuleDownloadFailure(error, action)
             }
         }
+    }
+
+    fun cancelModuleTransfer() {
+        val current = _updateState.value
+        if (current.stage == SecureTransferStage.ACTIVATING) return
+        if (!current.inProgress && !current.cancelling) {
+            dismissModuleTransfer()
+            return
+        }
+        val cancellation = moduleTransferCancellation ?: return
+        cancellation.cancelled = true
+        _updateState.value = current.copy(
+            cancelling = true,
+            headline = "Stopping safely",
+            detail = "Keeping the resumable package intact for a future retry.",
+            diagnostics = appendDiagnostic(current.diagnostics, "Cancellation requested by the user")
+        )
+    }
+
+    fun dismissModuleTransfer() {
+        val current = _updateState.value
+        if (current.inProgress || current.cancelling) return
+        _updateState.value = current.copy(visible = false)
+    }
+
+    private fun showModuleTransferCancelled() {
+        moduleTransferCancellation = null
+        val current = _updateState.value
+        _updateState.value = current.copy(
+            visible = true,
+            inProgress = false,
+            cancelling = false,
+            cancelled = true,
+            completed = false,
+            failed = false,
+            stage = SecureTransferStage.CANCELLED,
+            stageProgress = null,
+            headline = "Add-on download paused",
+            detail = "The partial package was kept safely, so the next attempt can resume faster.",
+            diagnostics = appendDiagnostic(current.diagnostics, "Cancelled by the user")
+        )
     }
 
     private fun publishModuleUpdateOffer(listing: ModuleListing) {
@@ -2606,14 +3793,28 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     it.packageName == packageName
                 }
             }
+            val cancellation = SecureTransferCancellation()
+            moduleTransferCancellation = cancellation
             _updateState.value = ModuleUpdateUiState(
+                visible = true,
                 inProgress = true,
+                stage = SecureTransferStage.PREPARING,
+                stageProgress = null,
+                title = matchingGame?.module?.title.orEmpty(),
+                packageName = packageName,
+                actionLabel = "Add-on update",
                 headline = "Finishing update",
                 detail = "Getting everything ready.",
-                totalBytes = moduleDownloadSize(packageName, matchingGame?.abi)
+                totalBytes = moduleDownloadSize(packageName, matchingGame?.abi),
+                diagnostics = listOf("Release verification completed in browser")
             )
-            runCatching { applyUpdate(request) }
+            runCatching { applyUpdate(request, isCancelled = { cancellation.cancelled }) }
                 .onSuccess { result ->
+                    if (cancellation.cancelled) {
+                        showModuleTransferCancelled()
+                        return@onSuccess
+                    }
+                    moduleTransferCancellation = null
                     clearReleaseGate()
                     val progress = _updateState.value
                     refreshGames()
@@ -2622,6 +3823,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         it.packageName == packageName
                     }
                     _updateState.value = ModuleUpdateUiState(
+                        visible = true,
+                        stage = SecureTransferStage.COMPLETED,
+                        stageProgress = 1f,
+                        title = matchingGame?.module?.title.orEmpty(),
+                        packageName = packageName,
+                        targetVersion = result.version.orEmpty(),
+                        actionLabel = "Add-on update",
                         headline = "Update complete",
                         detail = buildString {
                             append(result.version?.let { "Version $it" } ?: "The latest version")
@@ -2629,10 +3837,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         },
                         completed = true,
                         downloadedBytes = progress.downloadedBytes,
-                        totalBytes = progress.totalBytes
+                        totalBytes = progress.totalBytes,
+                        diagnostics = appendDiagnostic(progress.diagnostics, "Add-on update activated successfully")
                     )
                 }
-                .onFailure(::showUpdateFailure)
+                .onFailure { error ->
+                    if (cancellation.cancelled) showModuleTransferCancelled() else showUpdateFailure(error)
+                }
         }
     }
 
@@ -2640,7 +3851,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         request: UpdateRequest,
         gameHint: InstalledGame? = null,
         progressHeadline: String = "Downloading add-on",
-        progressDetail: String? = null
+        progressDetail: String? = null,
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
+        onStage: ((SecureTransferStage) -> Unit)? = null,
+        onDiagnostic: ((String) -> Unit)? = null,
+        isCancelled: () -> Boolean = { false }
     ): com.moodtools.hub.networking.UpdateResult {
         require(repository.embeddedPrivateScope(request.packageName) == null) {
             "The embedded private add-on can only be updated by installing a new signed launcher build that contains it."
@@ -2669,20 +3884,78 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         )
         val client = UpdateClient(moduleDirectory)
         val publishProgress: (Long, Long) -> Unit = { downloaded, total ->
-            val current = _updateState.value
-            _updateState.value = current.copy(
-                inProgress = true,
-                headline = progressHeadline,
-                detail = progressDetail ?: "Getting ${game.module.title} ready for Jester Mods.",
-                downloadedBytes = downloaded,
-                totalBytes = total
-            )
+            if (onProgress != null) {
+                onProgress(downloaded, total)
+            } else {
+                val current = _updateState.value
+                _updateState.value = current.copy(
+                    visible = true,
+                    inProgress = true,
+                    stage = if (downloaded >= total && total > 0L) {
+                        SecureTransferStage.VERIFYING
+                    } else {
+                        SecureTransferStage.DOWNLOADING
+                    },
+                    stageProgress = if (downloaded >= total && total > 0L) 0f else null,
+                    headline = progressHeadline,
+                    detail = progressDetail ?: "Getting ${game.module.title} ready for Jester Mods.",
+                    downloadedBytes = downloaded,
+                    totalBytes = total
+                )
+            }
         }
         fun downloadWithFreshAuthorization() = client.applyStandalone(
             request.packageName,
             abi,
             accessManager.authorizeModule(request.packageName, abi),
-            onProgress = publishProgress
+            onProgress = publishProgress,
+            onStage = { clientStage ->
+                val stage = when (clientStage) {
+                    StandaloneUpdateStage.PREPARING -> SecureTransferStage.PREPARING
+                    StandaloneUpdateStage.DOWNLOADING -> SecureTransferStage.DOWNLOADING
+                    StandaloneUpdateStage.VERIFYING -> SecureTransferStage.VERIFYING
+                    StandaloneUpdateStage.ACTIVATING -> SecureTransferStage.ACTIVATING
+                }
+                if (onStage != null) {
+                    onStage(stage)
+                } else {
+                    _updateState.update { state ->
+                        state.copy(
+                            visible = true,
+                            inProgress = true,
+                            stage = stage,
+                            stageProgress = when (stage) {
+                                SecureTransferStage.PREPARING,
+                                SecureTransferStage.VERIFYING -> null
+                                else -> null
+                            },
+                            headline = when (stage) {
+                                SecureTransferStage.PREPARING -> "Preparing secure download"
+                                SecureTransferStage.DOWNLOADING -> progressHeadline
+                                SecureTransferStage.VERIFYING -> "Verifying add-on"
+                                SecureTransferStage.ACTIVATING -> "Activating add-on"
+                                else -> state.headline
+                            },
+                            detail = when (stage) {
+                                SecureTransferStage.PREPARING -> "Authorizing the signed package for this device."
+                                SecureTransferStage.VERIFYING -> "Proving package integrity and signed identity."
+                                SecureTransferStage.ACTIVATING -> "Switching safely to the verified add-on files."
+                                else -> progressDetail ?: state.detail
+                            }
+                        )
+                    }
+                }
+            },
+            onDiagnostic = { message ->
+                if (onDiagnostic != null) {
+                    onDiagnostic(message)
+                } else {
+                    _updateState.update { state ->
+                        state.copy(diagnostics = appendDiagnostic(state.diagnostics, message))
+                    }
+                }
+            },
+            isCancelled = isCancelled
         )
         return try {
             downloadWithFreshAuthorization()
@@ -2857,26 +4130,60 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun showUpdateFailure(error: Throwable) {
+        moduleTransferCancellation = null
         if (error is NewSessionAccessBoundaryException) return
         android.util.Log.e("JesterMoodsUpdate", "Update failed", error)
         val progress = _updateState.value
-        _updateState.value = ModuleUpdateUiState(
+        _updateState.value = progress.copy(
+            visible = true,
+            inProgress = false,
+            cancelling = false,
+            cancelled = false,
             headline = "Couldn't finish the update",
             detail = "Please try again. If it keeps happening, restart Jester Mods.",
             failed = true,
-            downloadedBytes = progress.downloadedBytes,
-            totalBytes = progress.totalBytes
+            stage = SecureTransferStage.FAILED,
+            stageProgress = null,
+            diagnostics = appendDiagnostic(
+                progress.diagnostics,
+                "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
+            )
         )
     }
 
     private fun showModuleDownloadFailure(error: Throwable, action: String) {
+        moduleTransferCancellation = null
         if (error is NewSessionAccessBoundaryException) return
         android.util.Log.e("JesterMoodsDownload", "Game support $action failed", error)
         val progress = _updateState.value
+        val detail = moduleDownloadFailureDetail(error)
+        _updateState.value = progress.copy(
+            visible = true,
+            inProgress = false,
+            cancelling = false,
+            cancelled = false,
+            headline = when (action) {
+                "update" -> "Couldn't update add-on"
+                "repair" -> "Couldn't repair add-on"
+                else -> "Couldn't download add-on"
+            },
+            detail = detail,
+            failed = true,
+            updateAvailable = action == "update",
+            stage = SecureTransferStage.FAILED,
+            stageProgress = null,
+            diagnostics = appendDiagnostic(
+                progress.diagnostics,
+                "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
+            )
+        )
+    }
+
+    private fun moduleDownloadFailureDetail(error: Throwable): String {
         val serviceError = generateSequence(error) { it.cause }
             .filterIsInstance<LauncherServiceException>()
             .firstOrNull()
-        val detail = when (serviceError?.code) {
+        return when (serviceError?.code) {
             "ACCESS_REQUIRED", "ACCESS_EXPIRED" ->
                 "Your launcher access has expired. Unlock the launcher again, then retry."
             "LAUNCHER_UPDATE_REQUIRED" ->
@@ -2890,17 +4197,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             else -> serviceError?.message
                 ?: "Check your connection and available storage, then try again."
         }
-        _updateState.value = ModuleUpdateUiState(
-            headline = when (action) {
-                "update" -> "Couldn't update add-on"
-                "repair" -> "Couldn't repair add-on"
-                else -> "Couldn't download add-on"
-            },
-            detail = detail,
-            failed = true,
-            downloadedBytes = progress.downloadedBytes,
-            totalBytes = progress.totalBytes
-        )
     }
 
     private fun refreshGames(
@@ -2935,9 +4231,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
      * Builds the first frame only from verified files and Android package state. This method must
      * stay network-free: it runs before the launcher Library becomes visible.
      */
-    private fun hydrateCachedGames() {
+    private fun hydrateCachedGames(
+        catalog: List<com.moodtools.hub.modules.CatalogModule> = catalogClient.loadCached().orEmpty()
+    ) {
         publishGames(
-            catalog = catalogClient.loadCached().orEmpty(),
+            catalog = catalog,
             forceGameScan = true,
             refreshRemoteMetadata = false
         )
@@ -2946,23 +4244,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun playStoreStatusesFor(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
     ): Map<String, PlayStoreVersionStatus> {
-        val playStoreModules = catalog.filter { it.installSource is GameInstallSource.PlayStore }
-        if (playStoreModules.isEmpty()) return emptyMap()
+        if (catalog.isEmpty()) return emptyMap()
         val today = currentLocalDay()
-        val now = System.currentTimeMillis() / 1_000L
         val statuses = mutableMapOf<String, PlayStoreVersionStatus>()
         val editor = playStorePreferences.edit()
         var changed = false
-        playStoreModules.forEach { module ->
+        catalog.forEach { module ->
             val packageName = module.config.packageName
             val cached = cachedPlayStoreStatus(packageName, today)
-            val lastAttemptAt = playStorePreferences.getLong(playStoreAttemptAtKey(packageName), 0L)
-            if (lastAttemptAt in 1..now && now - lastAttemptAt < PLAY_STORE_RETRY_SECONDS) {
-                if (cached != null) statuses[packageName] = cached
-                return@forEach
-            }
-            editor.putLong(playStoreAttemptAtKey(packageName), now)
-            changed = true
             val fresh = runCatching { playStoreVersionClient.load(packageName) }
                 .onFailure {
                     android.util.Log.w(
@@ -2973,7 +4262,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 }
                 .getOrNull()
             if (fresh != null) {
-                val status = PlayStoreVersionStatus(
+                val received = PlayStoreVersionStatus(
                     latestVersion = fresh.version,
                     listingUpdatedAtEpochSeconds = fresh.listingUpdatedAtEpochSeconds,
                     updateAvailable = fresh.updateAvailable,
@@ -2981,26 +4270,28 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     checkedDay = today,
                     stale = fresh.stale
                 )
+                val status = newestPlayStoreStatus(cached, received)
                 statuses[packageName] = status
-                if (fresh.version != null) editor.putString(playStoreVersionKey(packageName), fresh.version)
+                if (status.latestVersion != null) editor.putString(playStoreVersionKey(packageName), status.latestVersion)
                 else editor.remove(playStoreVersionKey(packageName))
-                if (fresh.listingUpdatedAtEpochSeconds != null) {
+                if (status.listingUpdatedAtEpochSeconds != null) {
                     editor.putLong(
                         playStoreListingUpdatedAtKey(packageName),
-                        fresh.listingUpdatedAtEpochSeconds
+                        status.listingUpdatedAtEpochSeconds
                     )
                 } else editor.remove(playStoreListingUpdatedAtKey(packageName))
                 editor.putInt(
                     playStoreUpdateAvailableKey(packageName),
-                    when (fresh.updateAvailable) {
+                    when (status.updateAvailable) {
                         true -> 1
                         false -> 0
                         null -> -1
                     }
                 )
-                editor.putLong(playStoreCheckedAtKey(packageName), fresh.checkedAtEpochSeconds)
-                editor.putLong(playStoreCheckedDayKey(packageName), today)
-                editor.putBoolean(playStoreStaleKey(packageName), fresh.stale)
+                editor.putLong(playStoreCheckedAtKey(packageName), status.checkedAtEpochSeconds)
+                editor.putLong(playStoreCheckedDayKey(packageName), status.checkedDay)
+                editor.putBoolean(playStoreStaleKey(packageName), status.stale)
+                changed = true
             } else if (cached != null) {
                 statuses[packageName] = cached.copy(stale = true)
             }
@@ -3044,7 +4335,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     ): Map<String, PlayStoreVersionStatus> {
         val today = currentLocalDay()
         return catalog.asSequence()
-            .filter { it.installSource is GameInstallSource.PlayStore }
             .mapNotNull { module ->
                 cachedPlayStoreStatus(module.config.packageName, today)?.let { status ->
                     module.config.packageName to status
@@ -3062,7 +4352,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         return calendar.timeInMillis / (24L * 60L * 60L * 1000L)
     }
 
-    private fun playStoreAttemptAtKey(packageName: String): String = PLAY_STORE_ATTEMPT_AT_PREFIX + packageName
     private fun playStoreCheckedDayKey(packageName: String): String = PLAY_STORE_DAY_PREFIX + packageName
     private fun playStoreVersionKey(packageName: String): String = PLAY_STORE_VERSION_PREFIX + packageName
     private fun playStoreCheckedAtKey(packageName: String): String = PLAY_STORE_CHECKED_AT_PREFIX + packageName
@@ -3232,11 +4521,19 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
             val updates = installedModuleUpdatePreviewGames()
             val updateKeys = updates.mapTo(mutableSetOf()) { it.installedModuleUpdateKey() }
+            val current = _installedModuleUpdatesState.value
+            if (current.open && (current.inProgress || current.itemStates.isNotEmpty())) {
+                _installedModuleUpdatesState.value = current.copy(
+                    packageNames = (current.packageNames + updates.map(LibraryGame::packageName)).distinct(),
+                    previewUpdates = (current.previewUpdates + updates).distinctBy(LibraryGame::packageName)
+                )
+                return
+            }
             _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState(
                 open = InstalledModuleUpdatePromptPolicy.shouldOpen(
                     updateKeys = updateKeys,
                     dismissedKeys = acknowledgedInstalledModuleUpdates,
-                    currentlyOpen = _installedModuleUpdatesState.value.open
+                    currentlyOpen = current.open
                 ),
                 packageNames = updates.map(LibraryGame::packageName),
                 previewUpdates = updates
@@ -3244,8 +4541,18 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             return
         }
         val updates = installedModuleUpdates(_libraryGames.value)
+        val current = _installedModuleUpdatesState.value
         if (updates.isEmpty()) {
-            _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
+            if (!current.open || (!current.inProgress && current.itemStates.isEmpty())) {
+                _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
+            }
+            return
+        }
+        if (current.open && (current.inProgress || current.itemStates.isNotEmpty())) {
+            _installedModuleUpdatesState.value = current.copy(
+                packageNames = (current.packageNames + updates.map(LibraryGame::packageName)).distinct(),
+                previewUpdates = (current.previewUpdates + updates).distinctBy(LibraryGame::packageName)
+            )
             return
         }
         val updateKeys = updates.mapTo(mutableSetOf()) { it.installedModuleUpdateKey() }
@@ -3253,7 +4560,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             open = InstalledModuleUpdatePromptPolicy.shouldOpen(
                 updateKeys = updateKeys,
                 dismissedKeys = acknowledgedInstalledModuleUpdates,
-                currentlyOpen = _installedModuleUpdatesState.value.open
+                currentlyOpen = current.open
             ),
             packageNames = updates.map(LibraryGame::packageName)
         )
@@ -3380,14 +4687,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val GATE_NONCE = "nonce"
         private const val GATE_BUILD = "build"
         private const val GATE_EXPIRES = "expires"
-        private const val PLAY_STORE_ATTEMPT_AT_PREFIX = "attempt_at_"
         private const val PLAY_STORE_DAY_PREFIX = "checked_day_"
         private const val PLAY_STORE_VERSION_PREFIX = "latest_version_"
         private const val PLAY_STORE_CHECKED_AT_PREFIX = "checked_at_"
         private const val PLAY_STORE_LISTING_UPDATED_AT_PREFIX = "listing_updated_at_"
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
-        private const val PLAY_STORE_RETRY_SECONDS = 30L * 60L
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_ACCESS_CHECK_GATE_MS = 2_000L
         private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L

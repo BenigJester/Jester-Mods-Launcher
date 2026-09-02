@@ -31,6 +31,54 @@ class CatalogModulePlayStoreTest {
         assertEquals(url, catalogModule(GameInstallSource.PlayStore(url)).playStoreUrl)
     }
 
+    @Test
+    fun playStoreGameActionRequiresADetectedListing() {
+        val catalog = catalogModule(
+            GameInstallSource.PlayStore(
+                "https://play.google.com/store/apps/details?id=com.example.game"
+            )
+        )
+        val undetected = ModuleListing(
+            catalog = catalog,
+            game = null,
+            installedBuild = 0,
+            installedComplete = false
+        )
+        val detected = undetected.copy(
+            playStoreVersionStatus = PlayStoreVersionStatus(
+                latestVersion = "1.0.0",
+                listingUpdatedAtEpochSeconds = null,
+                updateAvailable = false,
+                checkedAtEpochSeconds = 1,
+                checkedDay = 1
+            )
+        )
+
+        assertEquals(false, undetected.configuredGameSourceAvailable)
+        assertEquals(true, detected.configuredGameSourceAvailable)
+    }
+
+    @Test
+    fun companionDownloadRemainsAvailableWithoutPlayStoreDetection() {
+        val listing = ModuleListing(
+            catalog = catalogModule(
+                GameInstallSource.DirectDownload(
+                    path = "/api/launcher-game-download/example/100.apk",
+                    versionCode = 100,
+                    version = "1.0.0",
+                    size = 1024,
+                    sha256 = "a".repeat(64),
+                    signingCertificateSha256 = "b".repeat(64)
+                )
+            ),
+            game = null,
+            installedBuild = 0,
+            installedComplete = false
+        )
+
+        assertEquals(true, listing.configuredGameSourceAvailable)
+    }
+
     private fun catalogModule(source: GameInstallSource) = CatalogModule(
         config = ModuleConfig(
             packageName = "com.example.game",

@@ -12,6 +12,12 @@
 
     <!-- BlackBox is hosted directly by the single non-root launcher package. -->
     <application android:name=".HubApplication">
+        <provider
+            android:name=".identity.IdentityPayloadProvider"
+            android:authorities="${applicationId}.identity-payload"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+
         <!-- Keep the visible launcher in a stable task of its own. BlackBox guest
              activities use separate proxy tasks and must never become the task
              Android restores for the launcher from Recents. -->

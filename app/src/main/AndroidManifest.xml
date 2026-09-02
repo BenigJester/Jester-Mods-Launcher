@@ -35,7 +35,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/jester_moods_icon"
-        android:label="Jester Mods"
+        android:label="${launcherLabel}"
         android:roundIcon="@mipmap/jester_moods_icon"
         android:resizeableActivity="true"
         android:supportsRtl="true"

@@ -26,6 +26,12 @@ object ExecutionModeLaunchBridge {
 
     fun removeLibraryGameData(context: Context, game: LibraryGame) = Unit
 
+    fun isInstalledIdentityShell(context: Context, game: LibraryGame): Boolean = false
+
+    fun requiresOfficialRestoreBeforeIdentityShell(context: Context, game: InstalledGame): Boolean = false
+
+    fun discardPreparedIdentityShell(context: Context, packageName: String) = Unit
+
     fun clearLibraryGameData(context: Context, game: LibraryGame) {
         val packageName = game.packageName
         require(packagePattern.matches(packageName)) { "Invalid game package name" }

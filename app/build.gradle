@@ -69,6 +69,7 @@ if (privateModuleBundle != null) {
 
 def generatedPrivateModuleAssets = layout.buildDirectory.dir('generated/privateModuleAssets')
 def generatedPrivateModuleAssetsDirectory = file("$buildDir/generated/privateModuleAssets")
+def generatedIdentityShellAssetsDirectory = file("$buildDir/generated/identityShellTemplateAssets")
 def preparePrivateModuleAssets = tasks.register('preparePrivateModuleAssets') {
     outputs.dir(generatedPrivateModuleAssets)
     if (privateModuleBundle != null) inputs.file(privateModuleBundle)
@@ -130,6 +131,7 @@ android {
 
     defaultConfig {
         applicationId 'com.moodtools'
+        manifestPlaceholders = [launcherLabel: 'Jester Mods']
         minSdk 26
         targetSdk 35
         versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(117)
@@ -203,6 +205,11 @@ android {
 
     buildTypes {
         debug {
+            // Keep local/device-test builds beside the production launcher instead of
+            // replacing its package, data, and signing identity during adb install -r.
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+            manifestPlaceholders = [launcherLabel: 'Jester Mods Debug']
             debuggable true
             minifyEnabled false
             shrinkResources false
@@ -253,6 +260,7 @@ android {
 
     sourceSets {
         main.assets.srcDir(generatedPrivateModuleAssetsDirectory)
+        nonroot.assets.srcDir(new File(generatedIdentityShellAssetsDirectory, 'nonroot'))
     }
 
     packaging {
@@ -265,10 +273,33 @@ android {
     }
 }
 
+// Every non-root variant embeds the same release-grade template. A single producer avoids
+// cross-variant output races and makes debug unit tests inspect the minified production shell.
+def prepareIdentityShellAsset = tasks.register('prepareIdentityShellAsset', Sync) {
+    dependsOn(':identity-shell-template:assembleRelease')
+    from(project(':identity-shell-template').layout.buildDirectory.dir('outputs/apk/release')) {
+        include('*.apk')
+        rename { 'template.apk' }
+    }
+    into(new File(generatedIdentityShellAssetsDirectory, 'nonroot/identity-shell'))
+}
+
 tasks.configureEach { task ->
     if ((task.name.startsWith('merge') && task.name.endsWith('Assets')) ||
             task.name.toLowerCase(java.util.Locale.ROOT).contains('lint')) {
         task.dependsOn(preparePrivateModuleAssets)
+    }
+    if ((task.name.startsWith('mergeNonroot') && task.name.endsWith('Assets')) ||
+            (task.name.toLowerCase(java.util.Locale.ROOT).contains('lint') &&
+                task.name.toLowerCase(java.util.Locale.ROOT).contains('nonroot')) ||
+            task.name == 'testNonrootDebugUnitTest') {
+        task.dependsOn(prepareIdentityShellAsset)
+        if (task.name == 'testNonrootDebugUnitTest') {
+            task.inputs.file(new File(
+                generatedIdentityShellAssetsDirectory,
+                'nonroot/identity-shell/template.apk'
+            ))
+        }
     }
 }
 
