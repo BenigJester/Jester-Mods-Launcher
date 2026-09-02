@@ -37,6 +37,10 @@ Release notes should publish the exact APK SHA-256 separately for each flavor.
 
 - Catalogs, launcher releases, module manifests, and module files are checked
   against signed metadata before use.
+- Public, limited-access, and approved private add-on variants are addressed by
+  immutable slugs, even when several variants target the same game package.
+- The launcher keeps one selected variant installed per game and binds its
+  downloads, updates, access checks, and changelog to that exact slug.
 - Protected module downloads require a fresh Android Keystore proof plus
   hardware-backed attestation of the official package and release signer.
 - A public-source build has a different signer and cannot receive production

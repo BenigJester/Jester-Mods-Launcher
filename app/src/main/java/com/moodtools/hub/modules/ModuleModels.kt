@@ -12,7 +12,9 @@ data class ModuleConfig(
     val dexFile: String,
     val nativeFile: String,
     val iconFile: String?,
-    val nonRootMethod: NonRootMethod = NonRootMethod.INJECTION
+    val nonRootMethod: NonRootMethod = NonRootMethod.INJECTION,
+    /** Stable catalog identity. Null only for legacy/local modules that predate slug storage. */
+    val catalogSlug: String? = null
 )
 
 enum class NonRootMethod(val jsonValue: String, val displayName: String) {
@@ -128,6 +130,7 @@ data class CatalogModule(
     val statusChangedAtEpochSeconds: Long? = null,
     val features: CatalogModuleFeatures? = null,
     val downloadSizeByAbi: Map<String, Long> = emptyMap(),
+    val access: ModuleAccess = ModuleAccess.PUBLIC,
     val privateScope: String? = null,
     val privateCatalogCapability: String? = null
 ) {
@@ -135,6 +138,20 @@ data class CatalogModule(
     val playStoreUrl: String
         get() = (installSource as? GameInstallSource.PlayStore)?.url
             ?: "https://play.google.com/store/apps/details?id=${config.packageName}"
+}
+
+enum class ModuleAccess(val catalogValue: String) {
+    PUBLIC("public"),
+    LIMITED("limited"),
+    PRIVATE("private");
+
+    companion object {
+        fun fromPublicCatalog(value: String?): ModuleAccess = when (value?.trim()?.lowercase()) {
+            null, "" -> PUBLIC
+            LIMITED.catalogValue -> LIMITED
+            else -> error("Unsupported public add-on access")
+        }
+    }
 }
 
 enum class ModuleUpdateStatus(val catalogValue: String) {
@@ -233,6 +250,9 @@ data class ModuleListing(
     val privateAccessProtected: Boolean
         get() = catalog.privateScope != null
 
+    val limitedAccess: Boolean
+        get() = catalog.access == ModuleAccess.LIMITED && !privateAccessProtected
+
     val playStoreVersionSupported: Boolean?
         get() = playStoreVersionStatus?.isSupportedBy(catalog.config)
 
@@ -298,8 +318,14 @@ data class LibraryGame(
     val privateAccessProtected: Boolean
         get() = privateScope != null
 
+    val limitedAccess: Boolean
+        get() = listing?.limitedAccess == true && !privateAccessProtected
+
     val packageName: String
         get() = module.packageName
+
+    val moduleIdentity: String
+        get() = listing?.catalog?.slug ?: module.catalogSlug ?: packageName
 
     val title: String
         get() = module.title
@@ -333,9 +359,22 @@ internal fun installedModuleUpdates(games: List<LibraryGame>): List<LibraryGame>
         availableBuild > game.installedBuild
 }
 
+internal fun isInstalledCatalogPublication(
+    module: CatalogModule,
+    inLibrary: Boolean,
+    installedSlug: String?,
+    installedPrivateScope: String?,
+    packagePublicationCount: Int
+): Boolean {
+    if (!inLibrary) return false
+    if (installedSlug != null) return installedSlug == module.slug
+    if (installedPrivateScope != null) return installedPrivateScope == module.privateScope
+    return packagePublicationCount == 1
+}
+
 internal fun sortLibraryGames(games: List<LibraryGame>): List<LibraryGame> = games.sortedWith(
     compareBy<LibraryGame, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
-        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.packageName }
+        .thenBy(String.CASE_INSENSITIVE_ORDER) { it.moduleIdentity }
 )
 
 /**

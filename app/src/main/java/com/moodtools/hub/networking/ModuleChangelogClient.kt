@@ -15,6 +15,7 @@ data class ModuleChangelogEntry(
 )
 
 data class ModuleChangelog(
+    val slug: String,
     val packageName: String,
     val title: String,
     val gameVersion: String,
@@ -103,6 +104,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
         }
         require(entries.first().build == module.build)
         return ModuleChangelog(
+            module.slug,
             module.config.packageName,
             module.config.title,
             gameVersion,
@@ -113,6 +115,7 @@ class ModuleChangelogClient(private val context: android.content.Context) {
     }
 
     private fun fallback(module: CatalogModule) = ModuleChangelog(
+        slug = module.slug,
         packageName = module.config.packageName,
         title = module.config.title,
         gameVersion = module.config.supportedVersions.sorted().joinToString(", "),

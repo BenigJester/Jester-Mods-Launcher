@@ -1,6 +1,7 @@
 package com.moodtools.hub.modules
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -114,6 +115,17 @@ class LibraryGameTest {
     }
 
     @Test
+    fun duplicatePackagePublicationsOnlyMarkTheInstalledSlugAsInstalled() {
+        val regular = libraryGame("Variant").listing!!.catalog
+        val publicVariant = regular.copy(slug = "variant-public")
+        val limitedVariant = regular.copy(slug = "variant-limited", access = ModuleAccess.LIMITED)
+
+        assertTrue(isInstalledCatalogPublication(publicVariant, true, "variant-public", null, 2))
+        assertFalse(isInstalledCatalogPublication(limitedVariant, true, "variant-public", null, 2))
+        assertFalse(isInstalledCatalogPublication(publicVariant, true, null, null, 2))
+    }
+
+    @Test
     fun privatePresentationDoesNotWaitForAccessExpiryRefresh() {
         val regular = libraryGame("Private cache")
         val listing = regular.listing!!.copy(
@@ -131,6 +143,42 @@ class LibraryGameTest {
         assertTrue(listing.privateAccessProtected)
         assertTrue(privateGame.privateAccessProtected)
         assertEquals(null, privateGame.privateAccessExpiresAtEpochSeconds)
+    }
+
+    @Test
+    fun limitedAccessRemainsPublicAndFollowsTheCatalogIntoLibrary() {
+        val regular = libraryGame("Limited")
+        val listing = regular.listing!!.copy(
+            catalog = regular.listing.catalog.copy(access = ModuleAccess.LIMITED)
+        )
+        val limitedGame = regular.copy(listing = listing)
+
+        assertTrue(listing.limitedAccess)
+        assertTrue(limitedGame.limitedAccess)
+        assertFalse(listing.privateAccessProtected)
+        assertFalse(limitedGame.privateAccessProtected)
+        assertEquals(ModuleAccess.PUBLIC, ModuleAccess.fromPublicCatalog(null))
+        assertEquals(ModuleAccess.LIMITED, ModuleAccess.fromPublicCatalog("limited"))
+    }
+
+    @Test
+    fun privateAccessCannotBePresentedAsLimited() {
+        val regular = libraryGame("Private limited")
+        val listing = regular.listing!!.copy(
+            catalog = regular.listing.catalog.copy(
+                access = ModuleAccess.LIMITED,
+                privateScope = "private.only"
+            )
+        )
+        val privateGame = regular.copy(
+            listing = listing,
+            privateScope = "private.only"
+        )
+
+        assertTrue(listing.privateAccessProtected)
+        assertTrue(privateGame.privateAccessProtected)
+        assertFalse(listing.limitedAccess)
+        assertFalse(privateGame.limitedAccess)
     }
 
     @Test

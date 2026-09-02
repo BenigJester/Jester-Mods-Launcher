@@ -129,6 +129,7 @@ internal class LauncherProofKeyManager(context: Context) {
             flavor: String,
             accessVersion: Int,
             packageName: String,
+            slug: String? = null,
             abi: String,
             bootstrap: Int,
             keyId: String
@@ -140,6 +141,7 @@ internal class LauncherProofKeyManager(context: Context) {
             "flavor=$flavor",
             "accessVersion=$accessVersion",
             "packageName=$packageName",
+            *slug?.let { arrayOf("slug=$it") }.orEmpty(),
             "abi=$abi",
             "bootstrap=$bootstrap",
             "keyId=$keyId"

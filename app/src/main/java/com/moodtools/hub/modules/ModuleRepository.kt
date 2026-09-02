@@ -1,6 +1,7 @@
 package com.moodtools.hub.modules
 
 import android.content.Context
+import com.moodtools.hub.networking.SignedEnvelopeVerifier
 import org.json.JSONObject
 import java.io.File
 
@@ -64,7 +65,8 @@ class ModuleRepository(private val context: Context) {
                 nonRootMethod = NonRootMethod.fromJson(
                     json.optString("nonroot_method").takeIf { it.isNotBlank() },
                     packageName
-                )
+                ),
+                catalogSlug = json.optString("module_slug").takeIf { it.matches(SLUG) }
             ).also {
                 require(it.supportedAbis.isNotEmpty()) { "Module supported_abis must not be empty" }
                 require(it.supportedAbis.all { abi -> abi in SUPPORTED_ABI_NAMES }) {
@@ -162,6 +164,19 @@ class ModuleRepository(private val context: Context) {
         }.getOrDefault(0L)
     }
 
+    fun installedSlug(packageName: String): String? {
+        if (!PACKAGE_NAME.matches(packageName)) return null
+        val directory = File(menuDirectory, packageName)
+        parseConfig(directory)?.catalogSlug?.let { return it }
+        return runCatching {
+            val manifest = File(directory, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE)
+            require(manifest.isFile && manifest.canonicalFile.parentFile == directory.canonicalFile)
+            SignedEnvelopeVerifier.payload(JSONObject(manifest.readText(Charsets.UTF_8)))
+                .getString("slug")
+                .also { require(it.matches(SLUG)) }
+        }.getOrNull()
+    }
+
     fun isInLibrary(packageName: String): Boolean {
         if (!PACKAGE_NAME.matches(packageName)) return false
         val directory = File(menuDirectory, packageName)
@@ -193,6 +208,7 @@ class ModuleRepository(private val context: Context) {
         const val PRIVATE_INSTALL_MARKER = "private-scope.json"
         private val PACKAGE_NAME = Regex("^[A-Za-z0-9_.]+$")
         private val PRIVATE_SCOPE = Regex("[a-z0-9][a-z0-9._-]{2,63}")
+        private val SLUG = Regex("[a-z0-9][a-z0-9-]{0,63}")
         private val SUPPORTED_ABI_NAMES = setOf(
             "armeabi-v7a",
             "arm64-v8a",

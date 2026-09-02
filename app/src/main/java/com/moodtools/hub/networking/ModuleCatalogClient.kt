@@ -7,6 +7,7 @@ import com.moodtools.hub.modules.CatalogModule
 import com.moodtools.hub.modules.GameInstallSource
 import com.moodtools.hub.modules.GamePackageFormat
 import com.moodtools.hub.modules.ModuleConfig
+import com.moodtools.hub.modules.ModuleAccess
 import com.moodtools.hub.modules.ModuleUpdateStatus
 import com.moodtools.hub.modules.NonRootMethod
 import org.json.JSONArray
@@ -132,7 +133,6 @@ class ModuleCatalogClient(
         publicModules: List<CatalogModule>,
         privateModules: List<CatalogModule>
     ): List<CatalogModule> = (publicModules + privateModules).also { modules ->
-        require(modules.map { it.config.packageName }.distinct().size == modules.size)
         require(modules.map { it.slug }.distinct().size == modules.size)
     }
 
@@ -193,6 +193,16 @@ class ModuleCatalogClient(
                 val updateStatus = ModuleUpdateStatus.fromCatalog(updateStatusValue)
                 val statusChangedAt = parseEpochSeconds(item, "statusChangedAt")
                 require((updateStatusValue == null) == (statusChangedAt == null))
+                val access = if (privateScope == null) {
+                    ModuleAccess.fromPublicCatalog(
+                        item.optString("access").takeIf(String::isNotBlank)
+                    )
+                } else {
+                    require(!item.has("access")) {
+                        "Private add-ons cannot also declare public limited access"
+                    }
+                    ModuleAccess.PRIVATE
+                }
                 add(
                     CatalogModule(
                         config = ModuleConfig(
@@ -207,7 +217,8 @@ class ModuleCatalogClient(
                             nonRootMethod = NonRootMethod.fromJson(
                                 item.optString("nonrootMethod").takeIf { it.isNotBlank() },
                                 packageName
-                            )
+                            ),
+                            catalogSlug = slug
                         ),
                         slug = slug,
                         build = build,
@@ -229,13 +240,13 @@ class ModuleCatalogClient(
                         statusChangedAtEpochSeconds = statusChangedAt,
                         features = parseFeatures(item, slug, build),
                         downloadSizeByAbi = parseDownloadSizes(item, supportedAbis),
+                        access = access,
                         privateScope = privateScope,
                         privateCatalogCapability = privateCatalogCapability
                     )
                 )
             }
         }.also { parsed ->
-            require(parsed.map { it.config.packageName }.distinct().size == parsed.size)
             require(parsed.map { it.slug }.distinct().size == parsed.size)
         }
     }

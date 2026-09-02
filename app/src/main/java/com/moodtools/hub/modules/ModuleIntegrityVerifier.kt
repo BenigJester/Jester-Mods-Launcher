@@ -65,6 +65,7 @@ class ModuleIntegrityVerifier(
         }
 
         val slug = payload.getString("slug").also { require(it.matches(SLUG_PATTERN)) }
+        module.catalogSlug?.let { require(it == slug) { "Module belongs to another catalog publication" } }
         val build = payload.getLong("build").also { require(it > 0L) }
         val version = payload.getString("version").trim().also {
             require(it.isNotEmpty() && it.length <= 64)
@@ -94,6 +95,7 @@ class ModuleIntegrityVerifier(
 
         val expectedConfig = JSONObject()
             .put("package_name", module.packageName)
+            .put("module_slug", slug)
             .put("title", title)
             .put("supported_versions", signedConfig.getJSONArray("supportedVersions"))
             .put("supported_abis", signedConfig.getJSONArray("supportedAbis"))
@@ -107,8 +109,10 @@ class ModuleIntegrityVerifier(
             }
             .toString()
         val configFile = regularFile(moduleDirectory, CONFIG_FILE)
+        val installedConfig = configFile.readText(Charsets.UTF_8)
+        val legacyConfig = JSONObject(expectedConfig).apply { remove("module_slug") }.toString()
         require(configFile.length() in 2..MAX_CONFIG_BYTES &&
-            configFile.readText(Charsets.UTF_8) == expectedConfig) {
+            (installedConfig == expectedConfig || installedConfig == legacyConfig)) {
             "Module configuration does not match its signed manifest"
         }
 

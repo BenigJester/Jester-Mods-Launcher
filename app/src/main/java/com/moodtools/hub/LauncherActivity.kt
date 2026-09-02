@@ -54,7 +54,6 @@ import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.sortLibraryGames
-import com.moodtools.hub.modules.mergeCatalogAndLocalModuleConfigs
 import com.moodtools.hub.networking.LauncherAccessManager
 import com.moodtools.hub.networking.LauncherPrivateAccessResult
 import com.moodtools.hub.networking.GameInstallClient
@@ -1487,31 +1486,31 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _accountIdentityState.value = _accountIdentityState.value.copy(open = false)
     }
 
-    fun openModuleChangelog(packageName: String) {
+    fun openModuleChangelog(slug: String) {
         val listing = _availableModules.value.firstOrNull {
-            it.catalog.config.packageName == packageName
+            it.catalog.slug == slug
         } ?: return
         val cachedHistory = moduleChangelogClient.loadCached(listing.catalog)
         _changelogState.value = _changelogState.value.copy(
             selectedModuleHistory = cachedHistory,
-            selectedModulePackage = packageName,
-            moduleHistoryLoadingPackage = packageName,
+            selectedModulePackage = slug,
+            moduleHistoryLoadingPackage = slug,
             moduleHistoryError = null
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { moduleChangelogClient.refresh(listing.catalog) }
                 .onSuccess { history ->
-                    if (_changelogState.value.moduleHistoryLoadingPackage == packageName) {
+                    if (_changelogState.value.moduleHistoryLoadingPackage == slug) {
                         _changelogState.value = _changelogState.value.copy(
                             selectedModuleHistory = history,
-                            selectedModulePackage = packageName,
+                            selectedModulePackage = slug,
                             moduleHistoryLoadingPackage = null,
                             moduleHistoryError = null
                         )
                     }
                 }
                 .onFailure {
-                    if (_changelogState.value.moduleHistoryLoadingPackage == packageName) {
+                    if (_changelogState.value.moduleHistoryLoadingPackage == slug) {
                         _changelogState.value = _changelogState.value.copy(
                             moduleHistoryLoadingPackage = null,
                             moduleHistoryError = if (cachedHistory == null) {
@@ -1577,7 +1576,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }.sortedWith(
         compareBy<com.moodtools.hub.networking.ModuleChangelog, String>(String.CASE_INSENSITIVE_ORDER) {
             it.title
-        }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.packageName }
+        }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.slug }
     )
 
     fun closeLauncherUpdate() {
@@ -1695,7 +1694,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                                 packageName = game.packageName,
                                 grant = null,
                                 nonce = null,
-                                buildHint = null
+                                buildHint = null,
+                                slug = listing.catalog.slug
                             ),
                             gameHint = installedGame,
                             onProgress = { downloaded, total ->
@@ -3061,9 +3061,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun onLegacyPatchRemoved(entry: LibraryGame) {
         val packageName = entry.packageName
-        val listing = _availableModules.value.firstOrNull {
-            it.catalog.config.packageName == packageName
-        } ?: entry.listing
+        val desiredSlug = entry.listing?.catalog?.slug ?: entry.module.catalogSlug
+        val listing = entry.listing ?: listingForModule(packageName, desiredSlug)
 
         _selectedLibraryGame.value = null
         _selectedGame.value = null
@@ -3082,9 +3081,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             storageManager.onDirectPatchMigrationSucceeded(packageName)
             refreshGames(refreshCatalog = listing == null, forceGameScan = true)
             if (listing == null && _moduleBrowserOpen.value && _downloadListing.value == null) {
-                _availableModules.value.firstOrNull {
-                    it.catalog.config.packageName == packageName
-                }?.let { resolved ->
+                listingForModule(packageName, desiredSlug)?.let { resolved ->
                     _downloadListing.value = resolved.copy(game = null)
                     _updateState.value = ModuleUpdateUiState(
                         totalBytes = moduleDownloadSize(resolved)
@@ -3362,9 +3359,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 catalogClient.refresh()
             }.onSuccess { catalog ->
                 publishGames(catalog, forceGameScan = false)
-                val listing = _availableModules.value.firstOrNull {
-                    it.catalog.config.packageName == game.packageName
-                }
+                val listing = listingForModule(game.packageName, game.module.catalogSlug)
                 if (listing != null && listing.installedBuild < listing.catalog.build) {
                     publishModuleUpdateOffer(listing)
                 } else {
@@ -3391,9 +3386,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun downloadModuleUpdate(game: InstalledGame) {
         val offeredState = _updateState.value
         val offeredChangelog = offeredState.changelog
-        val listing = _availableModules.value.firstOrNull {
-            it.catalog.config.packageName == game.packageName
-        }
+        val listing = listingForModule(game.packageName, game.module.catalogSlug) ?: return
         val cancellation = SecureTransferCancellation()
         moduleTransferCancellation = cancellation
         _updateState.value = ModuleUpdateUiState(
@@ -3419,7 +3412,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         packageName = game.packageName,
                         grant = null,
                         nonce = null,
-                        buildHint = null
+                        buildHint = null,
+                        slug = listing.catalog.slug
                     ),
                     progressHeadline = "Downloading update",
                     progressDetail = "Downloading the latest add-on for ${game.module.title}.",
@@ -3514,7 +3508,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         packageName = game.packageName,
                         grant = null,
                         nonce = null,
-                        buildHint = null
+                        buildHint = null,
+                        slug = listing.catalog.slug
                     ),
                     gameHint = game,
                     isCancelled = { cancellation.cancelled }
@@ -3624,11 +3619,21 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun moduleDownloadSize(packageName: String, abi: String?): Long {
-        val listing = _availableModules.value.firstOrNull {
-            it.catalog.config.packageName == packageName
-        } ?: return 0L
+        val listing = listingForModule(packageName) ?: return 0L
         return abi?.let(listing.catalog.downloadSizeByAbi::get)
             ?: moduleDownloadSize(listing)
+    }
+
+    private fun listingForModule(packageName: String, slug: String? = null): ModuleListing? {
+        val resolvedSlug = slug ?: repository.installedSlug(packageName)
+        if (resolvedSlug != null) {
+            return _availableModules.value.firstOrNull {
+                it.catalog.config.packageName == packageName && it.catalog.slug == resolvedSlug
+            }
+        }
+        return _availableModules.value.singleOrNull {
+            it.catalog.config.packageName == packageName
+        }
     }
 
     fun handleDeepLink(uri: Uri?) {
@@ -3873,7 +3878,22 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         require(repository.embeddedPrivateScope(request.packageName) == null) {
             "The embedded private add-on can only be updated by installing a new signed launcher build that contains it."
         }
+        val installedSlug = repository.installedSlug(request.packageName)
+        val listing = request.slug?.let { requestedSlug ->
+            _availableModules.value.firstOrNull {
+                it.catalog.slug == requestedSlug && it.catalog.config.packageName == request.packageName
+            }
+        } ?: installedSlug?.let { slug ->
+            _availableModules.value.firstOrNull {
+                it.catalog.slug == slug && it.catalog.config.packageName == request.packageName
+            }
+        } ?: _availableModules.value.singleOrNull {
+            it.catalog.config.packageName == request.packageName
+        }
+        val slug = listing?.catalog?.slug ?: request.slug
+            ?: error("Installed add-on publication could not be identified")
         val game = gameHint?.takeIf { it.packageName == request.packageName }
+            ?: listing?.game
             ?: _games.value.firstOrNull { it.packageName == request.packageName }
             ?: scanner.scan(repository.loadModules()).firstOrNull { it.packageName == request.packageName }
             ?: error("Installed game could not be inspected")
@@ -3885,7 +3905,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         if (!checkAccessForNewProtectedAction(
                 ProtectedActionBoundary.MODULE_DOWNLOAD,
-                request.packageName
+                request.packageName,
+                slug
             )) {
             throw NewSessionAccessBoundaryException()
         }
@@ -3919,8 +3940,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         fun downloadWithFreshAuthorization() = client.applyStandalone(
             request.packageName,
+            slug,
             abi,
-            accessManager.authorizeModule(request.packageName, abi),
+            accessManager.authorizeModule(request.packageName, slug, abi),
             onProgress = publishProgress,
             onStage = { clientStage ->
                 val stage = when (clientStage) {
@@ -3984,7 +4006,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun checkAccessForNewProtectedAction(
         action: ProtectedActionBoundary,
-        packageName: String
+        packageName: String,
+        slug: String? = null
     ): Boolean {
         if (debugAccessBypassActive) {
             return true
@@ -3995,7 +4018,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             failure = leaseResult.exceptionOrNull()
         )) {
             NewSessionAccessDecision.ALLOW ->
-                checkPrivateAccessForNewProtectedAction(action, packageName)
+                checkPrivateAccessForNewProtectedAction(action, packageName, slug)
             NewSessionAccessDecision.REQUIRE_UNLOCK -> {
                 _launcherEntered.value = false
                 _moduleBrowserOpen.value = false
@@ -4040,9 +4063,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun checkPrivateAccessForNewProtectedAction(
         action: ProtectedActionBoundary,
-        packageName: String
+        packageName: String,
+        slug: String?
     ): Boolean {
-        val scope = privateScopeForPackage(packageName) ?: return true
+        val scope = privateScopeForPackage(packageName, slug) ?: return true
         val result = accessManager.checkPrivateAccess(scope)
         if (result is LauncherPrivateAccessResult.Approved) {
             if (privateAccessExpiryByScope[scope] != result.lease.grantExpiresAt) {
@@ -4083,8 +4107,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         return false
     }
 
-    private fun privateScopeForPackage(packageName: String): String? =
-        _availableModules.value.firstOrNull { it.catalog.config.packageName == packageName }
+    private fun privateScopeForPackage(packageName: String, slug: String? = null): String? =
+        listingForModule(packageName, slug)
             ?.catalog?.privateScope
             ?: if (BuildConfig.PRIVATE_MODULE_ENABLED &&
             packageName == BuildConfig.PRIVATE_MODULE_PACKAGE) {
@@ -4262,7 +4286,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val statuses = mutableMapOf<String, PlayStoreVersionStatus>()
         val editor = playStorePreferences.edit()
         var changed = false
-        catalog.forEach { module ->
+        catalog.distinctBy { it.config.packageName }.forEach { module ->
             val packageName = module.config.packageName
             val cached = cachedPlayStoreStatus(packageName, today)
             val fresh = runCatching { playStoreVersionClient.load(packageName) }
@@ -4348,6 +4372,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     ): Map<String, PlayStoreVersionStatus> {
         val today = currentLocalDay()
         return catalog.asSequence()
+            .distinctBy { it.config.packageName }
             .mapNotNull { module ->
                 cachedPlayStoreStatus(module.config.packageName, today)?.let { status ->
                     module.config.packageName to status
@@ -4434,23 +4459,45 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             val localConfigs = repository.loadModules().filter {
                 repository.isInLibrary(it.packageName)
             }
-            val scanConfigs = mergeCatalogAndLocalModuleConfigs(
-                catalog.map { it.config },
-                localConfigs
-            )
+            val catalogSlugs = catalog.mapTo(hashSetOf()) { it.slug }
+            val scanConfigs = catalog.map { it.config } + localConfigs.filter {
+                it.catalogSlug == null || it.catalogSlug !in catalogSlugs
+            }
             val playStoreStatuses = if (refreshRemoteMetadata) {
                 playStoreStatusesFor(catalog)
             } else {
                 cachedPlayStoreStatusesFor(catalog)
             }
             val detected = scanGames(scanConfigs, forceGameScan)
-            val detectedByPackage = detected.associateBy { it.packageName }
+            val detectedByIdentity = detected.associateBy {
+                it.module.catalogSlug ?: "local:${it.packageName}"
+            }
+            val installedSlugByPackage = localConfigs.associate { config ->
+                config.packageName to repository.installedSlug(config.packageName)
+            }
+            val installedScopeByPackage = localConfigs.associate { config ->
+                config.packageName to repository.privateScope(config.packageName)
+            }
+            val catalogCountByPackage = catalog.groupingBy { it.config.packageName }.eachCount()
+            fun isInstalledPublication(item: com.moodtools.hub.modules.CatalogModule): Boolean {
+                val packageName = item.config.packageName
+                return com.moodtools.hub.modules.isInstalledCatalogPublication(
+                    module = item,
+                    inLibrary = repository.isInLibrary(packageName),
+                    installedSlug = installedSlugByPackage[packageName],
+                    installedPrivateScope = installedScopeByPackage[packageName],
+                    packagePublicationCount = catalogCountByPackage[packageName] ?: 0
+                )
+            }
             val listings = catalog.map { item ->
+                val installedPublication = isInstalledPublication(item)
                 ModuleListing(
                     catalog = item,
-                    game = detectedByPackage[item.config.packageName],
-                    installedBuild = repository.installedBuild(item.config.packageName),
-                    installedComplete = repository.isInstalled(item.config.packageName),
+                    game = detectedByIdentity[item.slug],
+                    installedBuild = if (installedPublication) {
+                        repository.installedBuild(item.config.packageName)
+                    } else 0L,
+                    installedComplete = installedPublication && repository.isInstalled(item.config.packageName),
                     deviceArchitectureSupported = DeviceArchitectureGuard.supports(item.config.supportedAbis),
                     playStoreVersionStatus = playStoreStatuses[item.config.packageName],
                     privateAccessExpiresAtEpochSeconds = item.privateScope
@@ -4458,14 +4505,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 )
             }
             _availableModules.value = listings
-            _games.value = detected.filter { repository.isInstalled(it.packageName) }
-            val catalogPackages = catalog.mapTo(hashSetOf()) { it.config.packageName }
             val catalogLibraryGames = listings
-                .filter { repository.isInLibrary(it.catalog.config.packageName) }
+                .filter { isInstalledPublication(it.catalog) }
                 .map { listing ->
                     val packageName = listing.catalog.config.packageName
                     LibraryGame(
-                        module = listing.game?.module ?: listing.catalog.config,
+                        module = listing.catalog.config,
                         game = listing.game,
                         listing = listing,
                         installedBuild = listing.installedBuild,
@@ -4480,10 +4525,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         playStoreVersionStatus = listing.playStoreVersionStatus
                     )
                 }
+            val representedPackages = catalogLibraryGames.mapTo(hashSetOf()) { it.packageName }
             val localOnlyLibraryGames = localConfigs
-                .filter { it.packageName !in catalogPackages }
+                .filter { it.packageName !in representedPackages }
                 .map { config ->
-                    val game = detectedByPackage[config.packageName]
+                    val game = detectedByIdentity[config.catalogSlug ?: "local:${config.packageName}"]
+                        ?: detected.firstOrNull { it.packageName == config.packageName }
                     LibraryGame(
                         module = config,
                         game = game,
@@ -4508,6 +4555,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     )
                 }
             _libraryGames.value = sortLibraryGames(catalogLibraryGames + localOnlyLibraryGames)
+            _games.value = _libraryGames.value.mapNotNull(LibraryGame::game)
         }
         syncInstalledModuleUpdatePrompt()
         _libraryLoading.value = false
@@ -4516,16 +4564,16 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (selectedPackage != null) {
             _selectedGame.value = refreshed.firstOrNull { it.packageName == selectedPackage }
         }
-        val selectedLibraryPackage = _selectedLibraryGame.value?.packageName
-        if (selectedLibraryPackage != null) {
+        val selectedLibraryIdentity = _selectedLibraryGame.value?.moduleIdentity
+        if (selectedLibraryIdentity != null) {
             _selectedLibraryGame.value = _libraryGames.value.firstOrNull {
-                it.packageName == selectedLibraryPackage
+                it.moduleIdentity == selectedLibraryIdentity
             }
         }
-        val downloadPackage = _downloadListing.value?.catalog?.config?.packageName
-        if (downloadPackage != null) {
+        val downloadSlug = _downloadListing.value?.catalog?.slug
+        if (downloadSlug != null) {
             _downloadListing.value = _availableModules.value.firstOrNull {
-                it.catalog.config.packageName == downloadPackage
+                it.catalog.slug == downloadSlug
             }
         }
     }

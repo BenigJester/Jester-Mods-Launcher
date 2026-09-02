@@ -432,8 +432,14 @@ class LauncherAccessManager(context: Context) {
             .build().toString()
     }
 
-    fun authorizeModule(packageName: String, abi: String, bootstrap: Int = 1): LauncherModuleAuthorization {
+    fun authorizeModule(
+        packageName: String,
+        slug: String,
+        abi: String,
+        bootstrap: Int = 1
+    ): LauncherModuleAuthorization {
         require(packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
+        require(slug.matches(Regex("[a-z0-9][a-z0-9-]{0,63}")))
         require(abi == "arm64-v8a" || abi == "armeabi-v7a")
         require(bootstrap >= 1)
         require(currentLease() != null) { "Active launcher access is required" }
@@ -447,6 +453,7 @@ class LauncherAccessManager(context: Context) {
             .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
             .put("keyId", identity.keyId)
             .put("packageName", packageName)
+            .put("slug", slug)
             .put("abi", abi)
             .put("bootstrap", bootstrap)
         val challengeResponse = postJson("$BASE_URL/api/launcher/proof/challenge", request)
@@ -464,6 +471,7 @@ class LauncherAccessManager(context: Context) {
                 flavor = BuildConfig.FLAVOR,
                 accessVersion = accessVersion,
                 packageName = packageName,
+                slug = slug,
                 abi = abi,
                 bootstrap = bootstrap,
                 keyId = identity.keyId
@@ -473,6 +481,7 @@ class LauncherAccessManager(context: Context) {
             "$BASE_URL/api/launcher-module",
             accessRequest(digitalKey)
                 .put("packageName", packageName)
+                .put("slug", slug)
                 .put("abi", abi)
                 .put("bootstrap", bootstrap)
                 .put("proof", proof.toJson())

@@ -139,6 +139,8 @@ private val Hairline = Color(0xFF2A313C)
 private val Danger = Color(0xFFFFB4AB)
 private val PrivateGold = Color(0xFFFFD99A)
 private val PrivateViolet = Color(0xFFC7B4FF)
+private val LimitedAmber = Color(0xFFFFCB78)
+private val LimitedSky = Color(0xFF9DCBFF)
 
 /** Launcher-owned update state. The module itself no longer needs to own an updater screen. */
 data class ModuleUpdateUiState(
@@ -359,9 +361,9 @@ private const val BROWSE_LOAD_MORE_KEY_PREFIX = "catalog-load-more:"
 
 private sealed class LauncherPage(val key: String, val rank: Int) {
     object Library : LauncherPage("library", 0)
-    data class Module(val game: LibraryGame) : LauncherPage("module:${game.packageName}", 1)
+    data class Module(val game: LibraryGame) : LauncherPage("module:${game.moduleIdentity}", 1)
     object Browse : LauncherPage("browse", 2)
-    data class Download(val listing: ModuleListing) : LauncherPage("download:${listing.catalog.config.packageName}", 3)
+    data class Download(val listing: ModuleListing) : LauncherPage("download:${listing.catalog.slug}", 3)
     object LauncherUpdate : LauncherPage("launcher-update", 4)
     object Changelog : LauncherPage("changelog", 5)
     object AccountIdentity : LauncherPage("account-identity", 6)
@@ -1589,6 +1591,7 @@ private fun ChangelogScreen(
         val query = moduleQuery.trim()
         val matching = if (query.isEmpty()) state.moduleHistories else state.moduleHistories.filter { history ->
             history.title.contains(query, ignoreCase = true) ||
+                history.slug.contains(query, ignoreCase = true) ||
                 history.packageName.contains(query, ignoreCase = true) ||
                 history.gameVersion.contains(query, ignoreCase = true) ||
                 history.entries.any { entry ->
@@ -1598,7 +1601,7 @@ private fun ChangelogScreen(
         }
         matching.sortedWith(
             compareBy<ModuleChangelog, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.packageName }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.slug }
         )
     }
     LaunchedEffect(moduleQuery) { visibleModules = CHANGELOG_PAGE_SIZE }
@@ -1705,13 +1708,13 @@ private fun ChangelogScreen(
                 )
             }
             filteredModules.take(visibleModules).forEach { history ->
-                item(key = "module-title-${history.packageName}") {
+                item(key = "module-title-${history.slug}") {
                     Column(Modifier.padding(top = 4.dp)) {
                         Text(history.title, color = Color.White, fontWeight = FontWeight.Bold)
                         Text("Game version ${history.gameVersion}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                items(history.entries, key = { "${history.packageName}-${it.build}" }) { entry ->
+                items(history.entries, key = { "${history.slug}-${it.build}" }) { entry ->
                     ChangelogEntryCard(
                         title = entry.version,
                         meta = "${entry.updateType.replaceFirstChar { it.uppercase() }} · Build ${entry.build}",
@@ -1719,9 +1722,9 @@ private fun ChangelogScreen(
                         highlighted = entry.build == history.currentBuild
                     )
                 }
-                item(key = "module-history-${history.packageName}") {
+                item(key = "module-history-${history.slug}") {
                     OutlinedButton(
-                        onClick = { onOpenModuleChangelog(history.packageName) },
+                        onClick = { onOpenModuleChangelog(history.slug) },
                         modifier = Modifier.fillMaxWidth(),
                         border = BorderStroke(1.dp, Hairline)
                     ) {
@@ -4462,7 +4465,7 @@ private fun ModuleBrowserScreen(
                 item(key = "recommended-heading") {
                     CatalogSectionHeader("Recommended for your device", recommendedCount)
                 }
-                items(recommended, key = { "recommended:${it.catalog.config.packageName}" }) { listing ->
+                items(recommended, key = { "recommended:${it.catalog.slug}" }) { listing ->
                     ModuleListingCard(
                         screenCache = screenCache,
                         listing = listing,
@@ -4475,7 +4478,7 @@ private fun ModuleBrowserScreen(
                 item(key = "remaining-heading") {
                     CatalogSectionHeader(if (defaultSections) "All add-ons" else "Results", remainingCount)
                 }
-                items(remaining, key = { "remaining:${it.catalog.config.packageName}" }) { listing ->
+                items(remaining, key = { "remaining:${it.catalog.slug}" }) { listing ->
                     ModuleListingCard(
                         screenCache = screenCache,
                         listing = listing,
@@ -4550,7 +4553,7 @@ private fun ModuleDownloadScreen(
 ) {
     val game = listing.game
     val context = LocalContext.current.applicationContext
-    var featuresExpanded by rememberSaveable(listing.catalog.config.packageName) { mutableStateOf(false) }
+    var featuresExpanded by rememberSaveable(listing.catalog.slug) { mutableStateOf(false) }
     val featureKey = remember(listing.catalog.slug, listing.catalog.build, listing.catalog.features?.path) {
         listOf(
             listing.catalog.slug,
@@ -4633,6 +4636,10 @@ private fun ModuleDownloadScreen(
         if (listing.privateAccessProtected) {
             item {
                 PrivateModuleAccessTimer(listing.privateAccessExpiresAtEpochSeconds)
+            }
+        } else if (listing.limitedAccess) {
+            item {
+                LimitedModuleAccessNotice()
             }
         }
 
@@ -5223,6 +5230,70 @@ private fun PrivateModuleAccessTimer(
     }
 }
 
+@Composable
+private fun LimitedModuleAccessNotice(compact: Boolean = false) {
+    val shape = RoundedCornerShape(if (compact) 16.dp else 26.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        Color(0xFF2A2115),
+                        Color(0xFF1D2631),
+                        Color(0xFF171E29)
+                    )
+                )
+            )
+            .border(BorderStroke(1.dp, LimitedAmber.copy(alpha = 0.42f)), shape)
+            .semantics {
+                contentDescription = "Limited access public add-on. In-game eligibility requirements may apply."
+            }
+            .padding(
+                horizontal = if (compact) 13.dp else 20.dp,
+                vertical = if (compact) 11.dp else 18.dp
+            )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "LIMITED ACCESS",
+                color = LimitedAmber,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "PUBLIC",
+                color = LimitedSky,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(if (compact) 5.dp else 10.dp))
+        Text(
+            if (compact) "In-game requirements may apply" else "Public to browse and install",
+            color = Color.White,
+            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(if (compact) 2.dp else 6.dp))
+        Text(
+            if (compact) {
+                "Access to some or all features may depend on the game."
+            } else {
+                "This add-on is available to everyone, but access to some or all features may depend on requirements inside the game. " +
+                    "Requirements vary; check the guidance shown inside the game."
+            },
+            color = Muted,
+            style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
 private fun playStoreReleaseLabel(status: PlayStoreVersionStatus): String =
     status.latestVersion?.let { "v$it" } ?: when (status.updateAvailable) {
         true -> "New release detected"
@@ -5321,6 +5392,9 @@ private fun ModuleListingCard(
                 expiresAtEpochSeconds = listing.privateAccessExpiresAtEpochSeconds,
                 compact = true
             )
+        } else if (listing.limitedAccess) {
+            Spacer(Modifier.height(13.dp))
+            LimitedModuleAccessNotice(compact = true)
         }
         Spacer(Modifier.height(14.dp))
         Button(
@@ -6128,6 +6202,9 @@ private fun CompactGameCard(
                 expiresAtEpochSeconds = game.privateAccessExpiresAtEpochSeconds,
                 compact = true
             )
+        } else if (game.limitedAccess) {
+            Spacer(Modifier.height(12.dp))
+            LimitedModuleAccessNotice(compact = true)
         }
     }
 }
@@ -6215,6 +6292,10 @@ private fun ModuleScreen(
         if (game.privateAccessProtected) {
             item {
                 PrivateModuleAccessTimer(game.privateAccessExpiresAtEpochSeconds)
+            }
+        } else if (game.limitedAccess) {
+            item {
+                LimitedModuleAccessNotice()
             }
         }
         item {

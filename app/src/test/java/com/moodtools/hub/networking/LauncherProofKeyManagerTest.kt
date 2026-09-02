@@ -134,4 +134,58 @@ class LauncherProofKeyManagerTest {
             )
         )
     }
+
+    @Test
+    fun bindsModulePublicationSlugWithoutBreakingLegacyCanonicalRequests() {
+        val common = listOf(
+            "moodtools-module-authorize-v1",
+            "nonce=${"n".repeat(43)}",
+            "installationId=${"i".repeat(43)}",
+            "deviceId=${"d".repeat(43)}",
+            "flavor=nonroot",
+            "accessVersion=4",
+            "packageName=com.example.game"
+        )
+        val arguments = LauncherProofKeyManager.moduleAuthorizationCanonical(
+            nonce = "n".repeat(43),
+            installationId = "i".repeat(43),
+            deviceId = "d".repeat(43),
+            flavor = "nonroot",
+            accessVersion = 4,
+            packageName = "com.example.game",
+            slug = "example-limited",
+            abi = "arm64-v8a",
+            bootstrap = 1,
+            keyId = "k".repeat(43)
+        )
+        assertEquals(
+            (common + listOf(
+                "slug=example-limited",
+                "abi=arm64-v8a",
+                "bootstrap=1",
+                "keyId=${"k".repeat(43)}"
+            )).joinToString("\n"),
+            arguments
+        )
+
+        val legacy = LauncherProofKeyManager.moduleAuthorizationCanonical(
+            nonce = "n".repeat(43),
+            installationId = "i".repeat(43),
+            deviceId = "d".repeat(43),
+            flavor = "nonroot",
+            accessVersion = 4,
+            packageName = "com.example.game",
+            abi = "arm64-v8a",
+            bootstrap = 1,
+            keyId = "k".repeat(43)
+        )
+        assertEquals(
+            (common + listOf(
+                "abi=arm64-v8a",
+                "bootstrap=1",
+                "keyId=${"k".repeat(43)}"
+            )).joinToString("\n"),
+            legacy
+        )
+    }
 }

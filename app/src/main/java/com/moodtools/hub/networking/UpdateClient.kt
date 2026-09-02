@@ -18,7 +18,8 @@ data class UpdateRequest(
     val packageName: String,
     val grant: String?,
     val nonce: String?,
-    val buildHint: String?
+    val buildHint: String?,
+    val slug: String? = null
 )
 
 data class UpdateResult(
@@ -141,6 +142,7 @@ class UpdateClient(private val moduleRoot: File) {
     /** Downloads a free standalone launcher module from the catalog-backed channel. */
     fun applyStandalone(
         packageName: String,
+        slug: String,
         abi: String,
         authorization: LauncherModuleAuthorization,
         bootstrap: Int = 1,
@@ -152,6 +154,7 @@ class UpdateClient(private val moduleRoot: File) {
         onStage(StandaloneUpdateStage.PREPARING)
         ensureNotCancelled(isCancelled)
         require(packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
+        require(slug.matches(SLUG_PATTERN))
         require(abi == "arm64-v8a" || abi == "armeabi-v7a")
         require(authorization.capability.length in 80..4096)
         if (authorization.expiresAt <= System.currentTimeMillis() / 1000L) {
@@ -162,6 +165,7 @@ class UpdateClient(private val moduleRoot: File) {
         require(payload.getInt("schema") == 1)
         require(payload.getString("audience") == "moodtools-standalone")
         require(payload.getString("packageName") == packageName)
+        require(payload.getString("slug") == slug)
         val privateScope = payload.optString("privateScope").takeIf(String::isNotBlank)
         privateScope?.let { require(it.matches(PRIVATE_SCOPE_PATTERN)) }
         require(privateScope == authorization.privateScope) {
@@ -239,6 +243,7 @@ class UpdateClient(private val moduleRoot: File) {
             onDiagnostic("Payload hashes and signed identity verified")
             val config = JSONObject()
                 .put("package_name", packageName)
+                .put("module_slug", slug)
                 .put("title", moduleConfig.getString("title"))
                 .put("supported_versions", supportedVersions)
                 .put("supported_abis", supportedAbis)
@@ -478,6 +483,7 @@ class UpdateClient(private val moduleRoot: File) {
 
     companion object {
         private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
+        private val SLUG_PATTERN = Regex("[a-z0-9][a-z0-9-]{0,63}")
     }
 }
 
