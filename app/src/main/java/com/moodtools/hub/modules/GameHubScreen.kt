@@ -154,6 +154,7 @@ data class ModuleUpdateUiState(
     val packageName: String = "",
     val targetVersion: String = "",
     val actionLabel: String = "Add-on",
+    val intent: ModuleTransferIntent = ModuleTransferIntent.TRANSFER,
     val headline: String? = null,
     val detail: String? = null,
     val updateAvailable: Boolean = false,
@@ -165,6 +166,17 @@ data class ModuleUpdateUiState(
     val changelog: List<ModuleChangelogEntry> = emptyList(),
     val diagnostics: List<String> = emptyList()
 )
+
+enum class ModuleTransferIntent {
+    TRANSFER,
+    UPDATE_CHECK
+}
+
+internal fun moduleTransferPrimaryActionLabel(state: ModuleUpdateUiState): String = when {
+    state.updateAvailable -> "Download update"
+    state.intent == ModuleTransferIntent.UPDATE_CHECK -> "Check again"
+    else -> "Try again"
+}
 
 enum class SecureTransferStage {
     READY,
@@ -843,7 +855,11 @@ fun GameHubScreen(
                 state = update,
                 canRetry = pendingDownload?.game != null || selected?.listing?.game != null,
                 onRetry = {
-                    (pendingDownload ?: selected?.listing)?.let(onInstall)
+                    if (update.intent == ModuleTransferIntent.UPDATE_CHECK) {
+                        selected?.let(onUpdate) ?: pendingDownload?.let(onInstall)
+                    } else {
+                        (pendingDownload ?: selected?.listing)?.let(onInstall)
+                    }
                 },
                 onCancel = onCancelModuleTransfer,
                 onDismiss = onDismissModuleTransfer
@@ -2288,6 +2304,7 @@ private fun InstallerDiagnosticsPanel(
 private fun commonInstallerDiagnostics(): String = buildString {
     appendLine("Launcher: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
     appendLine("Mode: ${if (BuildConfig.IS_ROOT_MODE) "Root" else "Non-root"}")
+    appendLine("Channel: ${BuildConfig.SECURITY_BUILD_CHANNEL}${if (BuildConfig.DEBUG) " (debuggable)" else ""}")
     append("Android API: ${Build.VERSION.SDK_INT}")
 }
 
@@ -2574,10 +2591,14 @@ private fun ModuleTransferDialog(
     onDismiss: () -> Unit
 ) {
     val busy = state.inProgress || state.cancelling
+    val checkingForUpdate = state.intent == ModuleTransferIntent.UPDATE_CHECK
     var diagnosticsExpanded by rememberSaveable(state.packageName) { mutableStateOf(false) }
     val report = remember(state) {
         buildString {
-            appendLine("Jester Mods add-on transfer diagnostics")
+            appendLine(
+                if (checkingForUpdate) "Jester Mods add-on update check diagnostics"
+                else "Jester Mods add-on transfer diagnostics"
+            )
             appendLine("Stage: ${secureTransferStageLabel(state.stage)}")
             if (state.title.isNotBlank()) appendLine("Add-on: ${state.title}")
             if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
@@ -2671,7 +2692,11 @@ private fun ModuleTransferDialog(
             item {
                 SecureTransferJourney(
                     stage = state.stage,
-                    labels = listOf("Prepare", "Download", "Verify", "Activate"),
+                    labels = if (checkingForUpdate) {
+                        listOf("Connect", "Compare", "Review", "Ready")
+                    } else {
+                        listOf("Prepare", "Download", "Verify", "Activate")
+                    },
                     accent = AccentBlue
                 )
             }
@@ -2688,8 +2713,13 @@ private fun ModuleTransferDialog(
                         totalBytes = state.totalBytes,
                         stageProgress = state.stageProgress,
                         accent = AccentBlue,
-                        subject = "add-on package",
-                        finalAction = "safe activation"
+                        subject = if (checkingForUpdate) "signed release catalog" else "add-on package",
+                        finalAction = if (checkingForUpdate) "update review" else "safe activation",
+                        verificationDetail = if (checkingForUpdate) {
+                            "Validating the release identity, version, and changelog"
+                        } else {
+                            "Checking package hash, identity, and signature"
+                        }
                     )
                 }
             }
@@ -2727,9 +2757,17 @@ private fun ModuleTransferDialog(
                 InstallerDiagnosticsPanel(
                     expanded = diagnosticsExpanded,
                     onToggle = { diagnosticsExpanded = !diagnosticsExpanded },
-                    summary = "Live add-on transfer report",
+                    summary = if (checkingForUpdate) {
+                        "Live add-on update check report"
+                    } else {
+                        "Live add-on transfer report"
+                    },
                     report = report,
-                    clipboardLabel = "Jester Mods add-on transfer diagnostics",
+                    clipboardLabel = if (checkingForUpdate) {
+                        "Jester Mods add-on update check diagnostics"
+                    } else {
+                        "Jester Mods add-on transfer diagnostics"
+                    },
                     accent = AccentBlue
                 )
             }
@@ -2781,7 +2819,12 @@ private fun ModuleTransferDialog(
                             enabled = canRetry,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
-                        ) { Text("Try again", fontWeight = FontWeight.Bold) }
+                        ) {
+                            Text(
+                                moduleTransferPrimaryActionLabel(state),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -4088,7 +4131,8 @@ private fun SecureTransferProgressPanel(
     stageProgress: Float?,
     accent: Color,
     subject: String,
-    finalAction: String
+    finalAction: String,
+    verificationDetail: String = "Checking package hash, identity, and signature"
 ) {
     val reportedProgress = stageProgress?.takeIf { it > 0.01f }
     val targetProgress = reportedProgress ?: when (stage) {
@@ -4135,7 +4179,7 @@ private fun SecureTransferProgressPanel(
             when (stage) {
                 SecureTransferStage.PREPARING -> "Authorizing and preparing $subject"
                 SecureTransferStage.DOWNLOADING -> "Receiving the signed $subject"
-                SecureTransferStage.VERIFYING -> "Proving integrity and identity"
+                SecureTransferStage.VERIFYING -> "Verifying $subject"
                 SecureTransferStage.ACTIVATING -> "Completing $finalAction"
                 SecureTransferStage.WAITING_FOR_ANDROID -> "$finalAction is active"
                 else -> secureTransferStageLabel(stage)
@@ -4159,7 +4203,7 @@ private fun SecureTransferProgressPanel(
                 label = if (stage == SecureTransferStage.PREPARING) {
                     "Checking access and signed release details"
                 } else {
-                    "Checking package hash, identity, and signature"
+                    verificationDetail
                 }
             )
             SecureTransferStage.ACTIVATING,

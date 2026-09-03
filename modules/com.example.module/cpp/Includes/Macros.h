@@ -18,21 +18,34 @@ int MP_ASM = 0;
 /// dobby hook (offset || sym) without original
 #define HOOK_NO_ORIG(lib, off_sym, ptr) DobbyHookWrapper(lib, OBFUSCATE(off_sym), (void*)(ptr), nullptr)
 
+// Keep hook failures observable. A hook macro only logs by default, which can make a module
+// claim that every feature is ready after Dobby rejected one of its optional hooks.
+// Main.cpp snapshots this counter around each optional feature group and reports a partial-ready
+// state without disabling unrelated controls.
+std::atomic<int> gDobbyHookFailureCount{0};
+
 void DobbyHookWrapper(const char *lib, const char *relative, void* hook_function, void** original_function) {
     void *abs = getAbsoluteAddress(lib, relative);
     // LOGI(OBFUSCATE("Off: 0x%llx, Addr: 0x%llx"), offset, (uintptr_t) abs);
     if (abs == nullptr) {
         LOGE(OBFUSCATE("HOOK ADDRESS NOT FOUND: %s"), relative);
+        gDobbyHookFailureCount.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
     int res = -1;
     if (original_function != nullptr) {
         res = DobbyHook(abs, (dobby_dummy_func_t)hook_function, (dobby_dummy_func_t*)original_function);
-        if (res < 0) LOGE(OBFUSCATE("HOOK FAILED: %s"), relative);
+        if (res < 0) {
+            gDobbyHookFailureCount.fetch_add(1, std::memory_order_relaxed);
+            LOGE(OBFUSCATE("HOOK FAILED: %s"), relative);
+        }
     } else {
         res = DobbyHook(abs, (dobby_dummy_func_t)hook_function, nullptr);
-        if (res < 0) LOGE(OBFUSCATE("HOOK_NO_ORIG FAILED: %s"), relative);
+        if (res < 0) {
+            gDobbyHookFailureCount.fetch_add(1, std::memory_order_relaxed);
+            LOGE(OBFUSCATE("HOOK_NO_ORIG FAILED: %s"), relative);
+        }
     }
 }
 

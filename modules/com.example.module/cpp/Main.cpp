@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <cstdint>
+#include <elf.h>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -24,13 +27,27 @@
 // native code until the developer replaces the placeholder RVAs and intentionally enables this.
 constexpr bool kNativeExamplesConfigured = false;
 
+// Keep package-identity startup patches behind a second explicit switch. Root/BlackBox injection
+// uses the original package identity and must never be blocked by an outdated shell-only scan.
+constexpr bool kPackageIdentityExamplesConfigured = false;
+
 enum class CompatibilityState : int {
     Waiting = 0,
     Installing,
     Ready,
+    ReadyWithLimits,
     TargetNotFound,
+    MapFailed,
     HookFailed,
     UnsupportedAbi,
+};
+
+// Record why a fatal startup prerequisite failed instead of collapsing target discovery and
+// memory-write rejection into the same vague message.
+enum class CompatibilityFailure : int {
+    None = 0,
+    TargetProfileMismatch,
+    StartupPatchRejected,
 };
 
 // Generic MultiSelectSpinner callback contract. The example descriptor has three selectable
@@ -48,7 +65,11 @@ void compatibility_wait_timeout();
 void compatibility_install_watchdog();
 static std::atomic<bool> gNativeInstallStarted{false};
 static std::atomic<CompatibilityState> gCompatibilityState{CompatibilityState::Waiting};
+static std::atomic<CompatibilityFailure> gCompatibilityFailure{CompatibilityFailure::None};
 static std::atomic<int> gRuntimeMethod{0};
+static std::atomic<bool> gHookExampleAvailable{true};
+static std::atomic<bool> gDirectCallExampleAvailable{true};
+static std::atomic<bool> gInstallWatchdogRecovered{false};
 
 bool StartNativeRuntime(int method) {
     constexpr int kInjectionMethod = 1;
@@ -187,6 +208,168 @@ void WriteField(void *instance, uintptr_t offset, const T &value) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Resilient target discovery and verified startup patch example
+// ---------------------------------------------------------------------------------------------
+// These values are deliberately inert placeholders. Replace every pattern, instruction offset,
+// expected byte sequence, patch byte sequence, and profile RVA from the exact supported binary
+// before setting kPackageIdentityExamplesConfigured to true.
+constexpr const char *kStartupCheckStrictPattern = "DE AD BE EF 11 22 33 44";
+constexpr const char *kStartupCheckRelaxedPattern = "DE AD ? ? 11 22 ? ?";
+constexpr const char *kStartupCallerPattern = "AA BB CC DD ? ? ? 94";
+constexpr size_t kStartupCallerBlOffset = 4;
+constexpr uintptr_t kVerifiedStartupProfileRva = 0;
+constexpr uint8_t kExpectedStartupPrologue[] = {
+        0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44};
+constexpr uint8_t kStartupPassPatch[] = {
+        0x20, 0x00, 0x80, 0x52, 0xC0, 0x03, 0x5F, 0xD6}; // mov w0, #1; ret
+
+void AppendUniqueMatches(std::vector<uintptr_t> *destination,
+                         const std::vector<uintptr_t> &source) {
+    if (destination == nullptr) return;
+    destination->insert(destination->end(), source.begin(), source.end());
+    std::sort(destination->begin(), destination->end());
+    destination->erase(
+            std::unique(destination->begin(), destination->end()), destination->end());
+}
+
+std::vector<uintptr_t> FindTargetExecutablePattern(const char *pattern) {
+    std::vector<uintptr_t> matches;
+
+    // Scan every readable executable mapping carrying the target name. Vendor loaders may split
+    // an APK-backed library into several mappings instead of one conventional contiguous range.
+    const auto maps = KittyMemory::getMaps(
+            KittyMemory::EProcMapFilter::Contains, targetLibName);
+    for (const auto &map : maps) {
+        if (!map.readable || !map.executable || map.length == 0) continue;
+        AppendUniqueMatches(&matches, KittyScanner::findIdaPatternAll(
+                map.startAddress, map.endAddress, pattern));
+    }
+
+    // Also scan executable ELF PT_LOAD segments. This covers native-bridge or anonymous mappings
+    // whose /proc/self/maps pathname no longer contains the original library name.
+    const auto targetElf = KittyScanner::ElfScanner::findElf(
+            targetLibName, KittyScanner::EScanElfType::Any,
+            KittyScanner::EScanElfFilter::Any);
+    if (targetElf.isValid()) {
+        for (const auto &programHeader : targetElf.programHeaders()) {
+            if (programHeader.p_type != PT_LOAD ||
+                (programHeader.p_flags & PF_X) == 0 || programHeader.p_filesz == 0) continue;
+            const uintptr_t start = targetElf.loadBias() + programHeader.p_vaddr;
+            const uintptr_t requestedEnd = start + programHeader.p_filesz;
+            const auto addressMap = KittyMemory::getAddressMap(start);
+            if (!addressMap.isValid() || !addressMap.readable || !addressMap.executable) continue;
+            const uintptr_t safeEnd = std::min(requestedEnd, addressMap.endAddress);
+            if (safeEnd <= start) continue;
+            AppendUniqueMatches(&matches, KittyScanner::findIdaPatternAll(
+                    start, safeEnd, pattern));
+        }
+    }
+    return matches;
+}
+
+bool IsExecutableTargetAddress(uintptr_t address, size_t byteCount) {
+    if (address == 0 || byteCount == 0 ||
+        (address & (alignof(uint32_t) - 1)) != 0) return false;
+    const auto map = KittyMemory::getAddressMap(address);
+    return map.isValid() && map.readable && map.executable &&
+           address <= map.endAddress && byteCount <= map.endAddress - address;
+}
+
+template <size_t N>
+bool AddressMatches(uintptr_t address, const uint8_t (&expected)[N]) {
+    uint8_t actual[N]{};
+    return IsExecutableTargetAddress(address, N) &&
+           KittyMemory::memRead(reinterpret_cast<const void *>(address), actual, N) &&
+           std::memcmp(actual, expected, N) == 0;
+}
+
+uintptr_t ResolveArm64BlTarget(uintptr_t instructionAddress, uint32_t instruction) {
+    if ((instruction & 0xFC000000u) != 0x94000000u) return 0;
+    int64_t immediate = static_cast<int64_t>(instruction & 0x03FFFFFFu);
+    if ((immediate & 0x02000000LL) != 0) immediate |= ~0x03FFFFFFLL;
+    return static_cast<uintptr_t>(
+            static_cast<int64_t>(instructionAddress) + (immediate << 2));
+}
+
+uintptr_t FindVerifiedStartupPatchTarget() {
+    // Discovery ladder: exact AOB first, relaxed AOB second, then a structurally related BL
+    // caller, and finally an RVA whose original bytes are verified. Never patch the first loose
+    // match or use an unchecked fixed offset.
+    auto matches = FindTargetExecutablePattern(kStartupCheckStrictPattern);
+    if (matches.size() == 1 && AddressMatches(matches.front(), kExpectedStartupPrologue)) {
+        return matches.front();
+    }
+
+    matches = FindTargetExecutablePattern(kStartupCheckRelaxedPattern);
+    if (matches.size() == 1 && AddressMatches(matches.front(), kExpectedStartupPrologue)) {
+        return matches.front();
+    }
+
+    const auto callers = FindTargetExecutablePattern(kStartupCallerPattern);
+    if (callers.size() == 1) {
+        const uintptr_t callAddress = callers.front() + kStartupCallerBlOffset;
+        uint32_t instruction = 0;
+        if (IsExecutableTargetAddress(callAddress, sizeof(instruction)) &&
+            KittyMemory::memRead(reinterpret_cast<const void *>(callAddress),
+                                 &instruction, sizeof(instruction))) {
+            const uintptr_t target = ResolveArm64BlTarget(callAddress, instruction);
+            if (AddressMatches(target, kExpectedStartupPrologue)) return target;
+        }
+    }
+
+    if (kVerifiedStartupProfileRva != 0) {
+        const uintptr_t libraryBase = getLibraryAddress(targetLibName);
+        const uintptr_t profileTarget = libraryBase == 0
+                                        ? 0 : libraryBase + kVerifiedStartupProfileRva;
+        if (AddressMatches(profileTarget, kExpectedStartupPrologue)) return profileTarget;
+    }
+
+    LOGE(OBFUSCATE("Required startup target did not match a verified profile"));
+    return 0;
+}
+
+template <size_t N>
+bool ApplyPatchAndVerify(MemoryPatch *patch, const uint8_t (&expected)[N]) {
+    if (patch == nullptr || !patch->isValid() || !patch->Modify()) return false;
+    uint8_t actual[N]{};
+    const bool verified = KittyMemory::memRead(
+                                  reinterpret_cast<const void *>(patch->get_TargetAddress()),
+                                  actual, N) &&
+                          std::memcmp(actual, expected, N) == 0;
+    if (!verified) {
+        // A successful API return is not enough on every device. Roll back a partial or rejected
+        // critical write so the original process is left in a predictable state.
+        patch->Restore();
+    }
+    return verified;
+}
+
+bool InstallPackageIdentityCompatibilityExamples() {
+    if (!RequiresPackageIdentityBypass() || !kPackageIdentityExamplesConfigured) return true;
+
+#if defined(__aarch64__)
+    const uintptr_t startupTarget = FindVerifiedStartupPatchTarget();
+    if (startupTarget == 0) {
+        gCompatibilityFailure.store(
+                CompatibilityFailure::TargetProfileMismatch, std::memory_order_release);
+        return false;
+    }
+
+    MemoryPatch startupPatch = MemoryPatch::createWithHex(
+            startupTarget, OBFUSCATE("20008052C0035FD6"));
+    if (!ApplyPatchAndVerify(&startupPatch, kStartupPassPatch)) {
+        gCompatibilityFailure.store(
+                CompatibilityFailure::StartupPatchRejected, std::memory_order_release);
+        return false;
+    }
+    return true;
+#else
+    LOGE(OBFUSCATE("Package-identity compatibility example has no verified ARM32 profile"));
+    return false;
+#endif
+}
+
 bool InstallNativeExamples() {
     if (!kNativeExamplesConfigured) {
         LOGI(OBFUSCATE("Template native examples are disabled"));
@@ -194,8 +377,14 @@ bool InstallNativeExamples() {
     }
 
 #if defined(__aarch64__)
+    const int failuresBefore = gDobbyHookFailureCount.load(std::memory_order_acquire);
+
     // Hook with a callable original trampoline.
     HOOK(targetLibName, "0x123456", HookWithOriginalExample, originalExampleFunction);
+    const bool hookReady = originalExampleFunction != nullptr &&
+                           gDobbyHookFailureCount.load(std::memory_order_acquire) ==
+                                   failuresBefore;
+    gHookExampleAvailable.store(hookReady, std::memory_order_release);
 
     // Hook without an original trampoline:
     // HOOK_NO_ORIG(targetLibName, "0x234568", HookWithoutOriginalExample);
@@ -203,7 +392,13 @@ bool InstallNativeExamples() {
     // Resolve a method for a later direct call:
     directFunctionExample = reinterpret_cast<DirectFunction>(
             getAbsoluteAddress(targetLibName, OBFUSCATE("0x345678")));
-    return originalExampleFunction != nullptr && directFunctionExample != nullptr;
+    const bool directCallReady = directFunctionExample != nullptr;
+    gDirectCallExampleAvailable.store(directCallReady, std::memory_order_release);
+
+    // Both examples are optional feature groups. A failure returns partial-ready rather than
+    // disabling unrelated working controls. Reserve fatal states for prerequisites without which
+    // the game or module cannot safely continue.
+    return hookReady && directCallReady;
 #else
     LOGI(OBFUSCATE("Add separately verified ARM32 examples before enabling native changes"));
     return false;
@@ -244,7 +439,14 @@ void hack_thread() {
     gCompatibilityState.store(CompatibilityState::Installing, std::memory_order_release);
     compatibility_install_watchdog();
 
-    // Install any game-specific package/signature compatibility patches before this branch.
+    // Install required game-specific package/signature compatibility patches before this branch.
+    // Failure is fatal only for runtime methods that actually need those prerequisites.
+    if (!InstallPackageIdentityCompatibilityExamples()) {
+        gCompatibilityState.store(CompatibilityState::MapFailed, std::memory_order_release);
+        LOGE(OBFUSCATE("Required package-identity compatibility setup failed"));
+        return;
+    }
+
     // An external shell launch needs those patches to run the untouched game, but must never
     // install the menu or feature hooks that follow.
     if (IsIdentityShellCompatibilityOnlyRuntime()) {
@@ -256,7 +458,7 @@ void hack_thread() {
 #if defined(__aarch64__)
     gCompatibilityState.store(
             InstallNativeExamples() ? CompatibilityState::Ready
-                                    : CompatibilityState::HookFailed,
+                                    : CompatibilityState::ReadyWithLimits,
             std::memory_order_release);
 #else
     if (kNativeExamplesConfigured) {
@@ -278,9 +480,11 @@ void compatibility_install_watchdog() {
         CompatibilityState expected = CompatibilityState::Installing;
         if (EarlyLoadObserver::IsMapped(targetLibName) &&
             gCompatibilityState.compare_exchange_strong(
-                    expected, CompatibilityState::Ready, std::memory_order_acq_rel)) {
+                    expected, CompatibilityState::ReadyWithLimits,
+                    std::memory_order_acq_rel)) {
+            gInstallWatchdogRecovered.store(true, std::memory_order_release);
             const char *libraryName = targetLibName;
-            LOGW(OBFUSCATE("%s native install status stayed pending; marking compatibility ready"),
+            LOGW(OBFUSCATE("%s native install status stayed pending; marking compatibility limited"),
                  libraryName);
         }
     }).detach();
@@ -318,8 +522,12 @@ const char *CompatibilityStateName(CompatibilityState state) {
             return "Installing native hooks";
         case CompatibilityState::Ready:
             return "Ready";
+        case CompatibilityState::ReadyWithLimits:
+            return "Ready with limited features";
         case CompatibilityState::TargetNotFound:
             return "Target library not found";
+        case CompatibilityState::MapFailed:
+            return "Required startup compatibility failed";
         case CompatibilityState::HookFailed:
             return "Native hook setup failed";
         case CompatibilityState::UnsupportedAbi:
@@ -328,15 +536,46 @@ const char *CompatibilityStateName(CompatibilityState state) {
     return "Unknown";
 }
 
+const char *CompatibilityFailureName(CompatibilityFailure failure) {
+    switch (failure) {
+        case CompatibilityFailure::None:
+            return "";
+        case CompatibilityFailure::TargetProfileMismatch:
+            return "target binary differs from every verified profile";
+        case CompatibilityFailure::StartupPatchRejected:
+            return "device rejected a verified startup patch";
+    }
+    return "unknown startup failure";
+}
+
 std::string CompatibilityFeatureDescriptor() {
     const CompatibilityState state = gCompatibilityState.load(std::memory_order_acquire);
     const char *color = state == CompatibilityState::Ready ? "#69D28C" :
                         (state == CompatibilityState::Waiting ||
-                         state == CompatibilityState::Installing) ? "#E8B86A" : "#FF7A7A";
+                         state == CompatibilityState::Installing ||
+                         state == CompatibilityState::ReadyWithLimits) ? "#E8B86A" : "#FF7A7A";
     std::string descriptor = "RichTextView_<font color='";
     descriptor += color;
     descriptor += "'><b>Menu status:</b> ";
     descriptor += CompatibilityStateName(state);
+    if (state == CompatibilityState::MapFailed) {
+        const CompatibilityFailure failure =
+                gCompatibilityFailure.load(std::memory_order_acquire);
+        if (failure != CompatibilityFailure::None) {
+            descriptor += " - ";
+            descriptor += CompatibilityFailureName(failure);
+        }
+    } else if (state == CompatibilityState::ReadyWithLimits) {
+        if (gInstallWatchdogRecovered.load(std::memory_order_acquire)) {
+            descriptor += " - setup did not confirm completion";
+        } else if (!gHookExampleAvailable.load(std::memory_order_acquire)) {
+            descriptor += " - hook example disabled";
+        } else if (!gDirectCallExampleAvailable.load(std::memory_order_acquire)) {
+            descriptor += " - direct-call example disabled";
+        } else if (gDobbyHookFailureCount.load(std::memory_order_acquire) > 0) {
+            descriptor += " - some optional hooks unavailable";
+        }
+    }
 #if defined(__aarch64__)
     descriptor += " | ARM64";
 #else
@@ -376,6 +615,19 @@ void AddFeatureIfVisible(std::vector<std::string> *features, int featureId,
     }
 }
 
+jobjectArray BuildFeatureArray(JNIEnv *env, const std::vector<std::string> &features) {
+    const jsize featureCount = static_cast<jsize>(features.size());
+    jclass stringClass = env->FindClass(OBFUSCATE("java/lang/String"));
+    jobjectArray result = env->NewObjectArray(
+            featureCount, stringClass, env->NewStringUTF(OBFUSCATE("")));
+
+    for (jsize i = 0; i < featureCount; ++i) {
+        env->SetObjectArrayElement(
+                result, i, env->NewStringUTF(features[static_cast<size_t>(i)].c_str()));
+    }
+    return result;
+}
+
 jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
     (void) context;
 
@@ -387,7 +639,19 @@ jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
     // CollapseAdd_ before a Collapse_ parent would make it an orphaned child.
     features.emplace_back(compatibilityDescriptor);
 
-    // Display-only types have no callback IDs and are always included.
+    const CompatibilityState compatibilityState =
+            gCompatibilityState.load(std::memory_order_acquire);
+    if (compatibilityState == CompatibilityState::MapFailed ||
+        compatibilityState == CompatibilityState::HookFailed ||
+        compatibilityState == CompatibilityState::UnsupportedAbi) {
+        // Do not render controls that look usable after a fatal prerequisite failure. Optional
+        // failures use ReadyWithLimits below and remove only their own affected controls.
+        features.emplace_back(OBFUSCATE(
+                "RichTextView_<font color='#FF7A7A'><b>Features unavailable</b><br>The module stopped before installing feature hooks. No controls were applied to this session.</font>"));
+        return BuildFeatureArray(env, features);
+    }
+
+    // Display-only types have no callback IDs and are included in every non-fatal session.
     features.emplace_back(OBFUSCATE("Category_Display Only Types"));
     features.emplace_back(OBFUSCATE(
             "RichTextView_<b>RichTextView</b> supports compact formatted guidance."));
@@ -498,24 +762,27 @@ jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
         AddFeatureIfVisible(
                 &features, 30,
                 OBFUSCATE("30_CollapseAdd_Toggle_Patch Example_ForTesting"));
-        AddFeatureIfVisible(
-                &features, 31,
-                OBFUSCATE("31_CollapseAdd_Toggle_Hook Example_ForTesting"));
-        AddFeatureIfVisible(
-                &features, 32,
-                OBFUSCATE("32_CollapseAdd_Button_Direct Function Call Example_ForTesting"));
+        if (!IsFeatureHidden(31)) {
+            if (gHookExampleAvailable.load(std::memory_order_acquire)) {
+                features.emplace_back(OBFUSCATE(
+                        "31_CollapseAdd_Toggle_Hook Example_ForTesting"));
+            } else {
+                features.emplace_back(OBFUSCATE(
+                        "CollapseAdd_RichTextView_<font color='#E8B86A'>The hook example is unavailable for this binary. Other compatible examples remain active.</font>"));
+            }
+        }
+        if (!IsFeatureHidden(32)) {
+            if (gDirectCallExampleAvailable.load(std::memory_order_acquire)) {
+                features.emplace_back(OBFUSCATE(
+                        "32_CollapseAdd_Button_Direct Function Call Example_ForTesting"));
+            } else {
+                features.emplace_back(OBFUSCATE(
+                        "CollapseAdd_RichTextView_<font color='#E8B86A'>The direct-call example is unavailable for this binary. Other compatible examples remain active.</font>"));
+            }
+        }
     }
 
-    const jsize featureCount = static_cast<jsize>(features.size());
-    jclass stringClass = env->FindClass(OBFUSCATE("java/lang/String"));
-    jobjectArray result = env->NewObjectArray(featureCount, stringClass,
-                                               env->NewStringUTF(OBFUSCATE("")));
-
-    for (jsize i = 0; i < featureCount; ++i) {
-        env->SetObjectArrayElement(
-                result, i, env->NewStringUTF(features[static_cast<size_t>(i)].c_str()));
-    }
-    return result;
+    return BuildFeatureArray(env, features);
 }
 
 // Every callback type arrives here:
@@ -608,10 +875,17 @@ void Changes(JNIEnv *env, jclass clazz, jobject context, jint featNum, jstring f
             ApplyPatchExample(env, context, boolean);
             break;
         case 31:
+            if (!gHookExampleAvailable.load(std::memory_order_acquire)) {
+                Toast(env, context, OBFUSCATE("Hook example is unavailable for this binary."),
+                      ToastLength::LENGTH_LONG);
+                break;
+            }
             state.hookEnabled.store(boolean, std::memory_order_relaxed);
             break;
         case 32:
-            if (!kNativeExamplesConfigured || directFunctionExample == nullptr) {
+            if (!kNativeExamplesConfigured ||
+                !gDirectCallExampleAvailable.load(std::memory_order_acquire) ||
+                directFunctionExample == nullptr) {
                 Toast(env, context,
                       OBFUSCATE("Direct function example is disabled until its RVA is configured."),
                       ToastLength::LENGTH_LONG);

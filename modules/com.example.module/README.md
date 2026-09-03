@@ -132,6 +132,37 @@ Houdini/NDK Translation mapping a slightly longer stabilization window before in
 Keep game-specific native hooks behind that observer unless the target requires an earlier custom
 loader boundary.
 
+## Design compatibility as a capability report
+
+`cpp/Main.cpp` includes a commented, disabled reference implementation of the resilient startup
+flow. Keep `kPackageIdentityExamplesConfigured` false until every placeholder has been replaced
+from a supported game binary.
+
+The discovery ladder intentionally tries a strict signature, a relaxed signature, a verified
+direct-call target, and finally a fixed RVA with byte validation. It scans both readable executable
+process maps and executable ELF segments so split APK-backed and native-bridge mappings are not
+missed. Every result must be unique and its original instructions must match before it can be used.
+
+Treat required startup compatibility separately from optional feature groups:
+
+- A missing required package/signature target is `MapFailed` with `TargetProfileMismatch`.
+- A critical write that cannot be read back exactly is restored and reported as
+  `StartupPatchRejected`.
+- A failed optional hook or resolver produces `ReadyWithLimits`; only that feature's control is
+  replaced with an amber explanation while unrelated compatible features remain available.
+- Fatal states return only the compatibility card and a features-unavailable explanation, avoiding
+  controls that appear functional even though no hooks were installed.
+
+`cpp/Includes/Macros.h` counts failed Dobby calls because logging alone is not a usable readiness
+signal. Snapshot the counter around an optional hook group, keep a separate availability flag for
+that group, and guard its stale callback as well as its feature descriptor. The Java compatibility
+card checks `ready with limited` before `ready` so the native amber state is not accidentally shown
+as green.
+
+Do not make patterns progressively looser without a second structural check. Do not use an RVA as
+a blind fallback. A device-specific mapping difference may justify searching more executable
+regions; it never justifies writing to an address whose expected original bytes were not verified.
+
 ## Retargeting checklist
 
 1. Rename `modules/com.example.module` to the target game's package name.
@@ -143,7 +174,8 @@ loader boundary.
 5. Set the supported game versions and ABIs in `config.json`.
 6. Select `injection`, `direct_patch`, or `identity_shell` explicitly; never infer the active
    runtime in native code.
-7. Replace the disabled native examples in `cpp/Main.cpp` with verified hooks.
+7. Replace the disabled native examples and compatibility placeholders in `cpp/Main.cpp` with
+   verified, version-specific targets.
 8. Keep the compatibility descriptor as the first native feature row.
 9. Keep `features.json` synchronized with the user-facing `GetFeatureList` rows.
 10. Build only the new module and resolve every Java/native contract check.

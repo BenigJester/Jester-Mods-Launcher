@@ -1559,6 +1559,11 @@ public class Menu {
 
     private String compatibilityStatusColor(String text) {
         String status = compactCompatibilityStatus(text).toLowerCase();
+        // Native RichTextView markup is compacted and recolored by this card, so preserve the
+        // amber partial-ready state before the broader green "ready" match.
+        if (status.contains("ready with limited")) {
+            return "#E8B86A";
+        }
         if (status.contains("ready")) {
             return "#69D28C";
         }

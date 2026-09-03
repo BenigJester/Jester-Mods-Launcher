@@ -46,6 +46,7 @@ import com.moodtools.hub.modules.InstalledModuleUpdateItemUiState
 import com.moodtools.hub.modules.ModuleRepository
 import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
+import com.moodtools.hub.modules.ModuleTransferIntent
 import com.moodtools.hub.modules.NonRootMethod
 import com.moodtools.hub.modules.PlayStoreVersionStatus
 import com.moodtools.hub.modules.SecureTransferStage
@@ -66,7 +67,6 @@ import com.moodtools.hub.networking.LauncherUpdateClient
 import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
 import com.moodtools.hub.networking.ModuleDownloadAuthorizationExpired
-import com.moodtools.hub.networking.LauncherServiceException
 import com.moodtools.hub.networking.PlayStoreVersionClient
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
@@ -670,7 +670,8 @@ class LauncherActivity : ComponentActivity() {
                 viewModel.onPackageReplacementFailed(
                     error.message?.take(220)?.takeIf { it.isNotBlank() }
                                 ?: "The ${game.module.title} package could not be prepared.",
-                    game.module.title
+                    game.module.title,
+                    error
                 )
             }
         }
@@ -773,7 +774,8 @@ class LauncherActivity : ComponentActivity() {
                     if (pendingPackageReplacement === request) {
                         finishPackageReplacementWithFailure(
                             error.message?.take(220)?.takeIf { it.isNotBlank() }
-                                ?: "Android could not start the ${request.title} installation."
+                                ?: "Android could not start the ${request.title} installation.",
+                            error
                         )
                     }
                 }
@@ -882,7 +884,7 @@ class LauncherActivity : ComponentActivity() {
         viewModel.onPackageReplacementInstalled(request)
     }
 
-    private fun finishPackageReplacementWithFailure(detail: String) {
+    private fun finishPackageReplacementWithFailure(detail: String, error: Throwable? = null) {
         val title = pendingPackageReplacement?.title ?: "Game"
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
@@ -892,7 +894,7 @@ class LauncherActivity : ComponentActivity() {
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
         viewModel.hideDirectPatchPrompt()
-        viewModel.onPackageReplacementFailed(detail, title)
+        viewModel.onPackageReplacementFailed(detail, title, error)
     }
 
     private fun cancelPackageReplacement() {
@@ -1171,6 +1173,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private var launcherUpdateCancellation: SecureTransferCancellation? = null
     @Volatile
     private var moduleTransferCancellation: SecureTransferCancellation? = null
+    @Volatile
+    private var moduleUpdateCheckCancellation: SecureTransferCancellation? = null
+    @Volatile
+    private var moduleUpdateCheckJob: Job? = null
     @Volatile
     private var installedModuleUpdateCancellation: SecureTransferCancellation? = null
     private var privateAccessExpiryByScope: Map<String, Long> = emptyMap()
@@ -1785,8 +1791,15 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                                 detail = if (accessInterrupted) {
                                     "Unlock launcher access, then retry this update."
                                 } else {
-                                    moduleDownloadFailureDetail(error)
-                                }
+                                    TransferFailurePolicy.present(
+                                        error,
+                                        TransferFailureOperation.ADD_ON_UPDATE
+                                    ).detail
+                                },
+                                diagnostics = appendDiagnostic(
+                                    previous.diagnostics,
+                                    "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
+                                )
                             )
                         }
                     }
@@ -2009,7 +2022,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 }
                 android.util.Log.e("JesterMoodsLauncherUpdate", "Launcher update failed", error)
                 val state = _launcherUpdateState.value
-                val downloaded = launcherUpdateClient.isDownloaded(release)
+                val downloaded = runCatching { launcherUpdateClient.isDownloaded(release) }
+                    .getOrDefault(false)
+                val presentation = TransferFailurePolicy.present(
+                    error = error,
+                    operation = TransferFailureOperation.LAUNCHER_UPDATE,
+                    verifiedPackageAvailable = downloaded
+                )
                 _launcherUpdateState.value = state.copy(
                     inProgress = false,
                     installing = false,
@@ -2017,12 +2036,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     failed = true,
                     stage = SecureTransferStage.FAILED,
                     stageProgress = null,
-                    headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the update",
-                    detail = if (downloaded) {
-                        "Android couldn't open its app installer. The verified update is still saved, so you can restart the device and try again."
-                    } else {
-                        "Check your connection and available storage, then try again."
-                    }
+                    headline = presentation.headline,
+                    detail = presentation.detail,
+                    diagnostics = appendDiagnostic(
+                        state.diagnostics,
+                        "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
+                    )
                 )
             }
         }
@@ -2529,6 +2548,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 val downloaded = runCatching { gameInstallClient.isDownloaded(listing.catalog) }
                     .getOrDefault(false)
                 val progress = _gameInstallState.value
+                val presentation = TransferFailurePolicy.present(
+                    error = error,
+                    operation = TransferFailureOperation.GAME_DOWNLOAD,
+                    verifiedPackageAvailable = downloaded
+                )
                 _gameInstallState.value = progress.copy(
                     visible = true,
                     inProgress = false,
@@ -2539,12 +2563,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     cancelled = false,
                     stage = GameInstallStage.FAILED,
                     stageProgress = null,
-                    headline = if (downloaded) "Couldn't open the installer" else "Couldn't download the game",
-                    detail = if (downloaded) {
-                        "Allow Jester Mods to install apps in Android settings, then try again."
-                    } else {
-                        "Check your connection and available storage, then try again."
-                    },
+                    headline = presentation.headline,
+                    detail = presentation.detail,
                     downloadedBytes = progress.downloadedBytes,
                     totalBytes = source.size,
                     diagnostics = appendDiagnostic(
@@ -3091,7 +3111,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
-    fun onPackageReplacementFailed(detail: String, title: String) {
+    fun onPackageReplacementFailed(detail: String, title: String, error: Throwable? = null) {
+        val presentation = error?.let {
+            TransferFailurePolicy.present(
+                error = it,
+                operation = TransferFailureOperation.PACKAGE_SETUP,
+                fallbackDetail = detail
+            )
+        }
         _packageSetupState.update { current ->
             current.copy(
                 visible = true,
@@ -3100,14 +3127,19 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 stage = SecureTransferStage.FAILED,
                 stageProgress = null,
                 title = title,
-                headline = "$title setup failed",
-                detail = detail,
-                diagnostics = appendDiagnostic(current.diagnostics, "Setup failed: $detail")
+                headline = presentation?.headline ?: "$title setup failed",
+                detail = presentation?.detail ?: detail,
+                diagnostics = appendDiagnostic(
+                    current.diagnostics,
+                    error?.let {
+                        "Setup failed: ${it.javaClass.simpleName}: ${it.message?.take(240) ?: detail}"
+                    } ?: "Setup failed: $detail"
+                )
             )
         }
         _launchState.value = LaunchUiState(
-            headline = "$title setup failed",
-            detail = detail,
+            headline = presentation?.headline ?: "$title setup failed",
+            detail = presentation?.detail ?: detail,
             failed = true
         )
         viewModelScope.launch(Dispatchers.IO) {
@@ -3347,38 +3379,88 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             downloadModuleUpdate(game)
             return
         }
+        val cancellation = SecureTransferCancellation()
+        moduleTransferCancellation = cancellation
+        moduleUpdateCheckCancellation = cancellation
         val expectedBytes = moduleDownloadSize(game.packageName, game.abi)
+        val knownModuleVersion = listingForModule(game.packageName, game.module.catalogSlug)
+            ?.catalog
+            ?.version
+            .orEmpty()
         _updateState.value = ModuleUpdateUiState(
+            visible = true,
             inProgress = true,
+            stage = SecureTransferStage.PREPARING,
+            stageProgress = null,
+            title = game.module.title,
+            packageName = game.packageName,
+            targetVersion = knownModuleVersion,
+            actionLabel = "Update check",
+            intent = ModuleTransferIntent.UPDATE_CHECK,
             headline = "Checking for updates",
             detail = "Comparing your installed version with the latest available version.",
-            totalBytes = expectedBytes
+            totalBytes = expectedBytes,
+            diagnostics = listOf("Started secure add-on update check")
         )
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                catalogClient.refresh()
-            }.onSuccess { catalog ->
+        moduleUpdateCheckJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val catalog = catalogClient.refresh()
+                if (cancellation.cancelled) return@launch
                 publishGames(catalog, forceGameScan = false)
                 val listing = listingForModule(game.packageName, game.module.catalogSlug)
                 if (listing != null && listing.installedBuild < listing.catalog.build) {
-                    publishModuleUpdateOffer(listing)
+                    publishModuleUpdateOffer(listing) { cancellation.cancelled }
                 } else {
                     _updateState.value = ModuleUpdateUiState(
+                        visible = true,
+                        stage = SecureTransferStage.COMPLETED,
+                        stageProgress = 1f,
+                        title = game.module.title,
+                        packageName = game.packageName,
+                        targetVersion = listing?.catalog?.version ?: knownModuleVersion,
+                        actionLabel = "Update check",
+                        intent = ModuleTransferIntent.UPDATE_CHECK,
                         headline = "You're up to date",
                         detail = listing?.catalog?.version?.let {
                             "Version $it is the latest available version."
                         } ?: "No newer version is available for this game.",
-                        completed = true
+                        completed = true,
+                        diagnostics = listOf("Catalog refreshed", "Installed add-on is current")
                     )
                 }
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                if (!cancellation.cancelled) throw error
+            } catch (error: Throwable) {
+                if (cancellation.cancelled) return@launch
                 android.util.Log.e("JesterMoodsUpdate", "Update check failed", error)
-                _updateState.value = ModuleUpdateUiState(
-                    headline = "Couldn't check for updates",
-                    detail = "Check your connection, then try again.",
-                    failed = true,
-                    totalBytes = expectedBytes
+                val presentation = TransferFailurePolicy.present(
+                    error,
+                    TransferFailureOperation.UPDATE_CHECK
                 )
+                _updateState.value = ModuleUpdateUiState(
+                    visible = true,
+                    stage = SecureTransferStage.FAILED,
+                    title = game.module.title,
+                    packageName = game.packageName,
+                    targetVersion = knownModuleVersion,
+                    actionLabel = "Update check",
+                    intent = ModuleTransferIntent.UPDATE_CHECK,
+                    headline = presentation.headline,
+                    detail = presentation.detail,
+                    failed = true,
+                    totalBytes = expectedBytes,
+                    diagnostics = listOf(
+                        "Update check failed: ${error.message ?: error.javaClass.simpleName}"
+                    )
+                )
+            } finally {
+                if (moduleUpdateCheckCancellation === cancellation) {
+                    moduleUpdateCheckCancellation = null
+                    moduleUpdateCheckJob = null
+                }
+                if (moduleTransferCancellation === cancellation) {
+                    moduleTransferCancellation = null
+                }
             }
         }
     }
@@ -3469,13 +3551,61 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             else -> "download"
         }
         if (action == "update" && !_updateState.value.updateAvailable) {
+            val cancellation = SecureTransferCancellation()
+            moduleTransferCancellation = cancellation
+            moduleUpdateCheckCancellation = cancellation
             _updateState.value = ModuleUpdateUiState(
+                visible = true,
                 inProgress = true,
+                stage = SecureTransferStage.PREPARING,
+                stageProgress = null,
+                title = game.module.title,
+                packageName = game.packageName,
+                targetVersion = listing.catalog.version,
+                actionLabel = "Update check",
+                intent = ModuleTransferIntent.UPDATE_CHECK,
                 headline = "Loading update details",
                 detail = "Verifying the changelog for ${game.module.title}.",
-                totalBytes = moduleDownloadSize(listing)
+                totalBytes = moduleDownloadSize(listing),
+                diagnostics = listOf("Loading verified update details")
             )
-            viewModelScope.launch(Dispatchers.IO) { publishModuleUpdateOffer(listing) }
+            moduleUpdateCheckJob = viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    if (!cancellation.cancelled) {
+                        publishModuleUpdateOffer(listing) { cancellation.cancelled }
+                    }
+                } catch (error: CancellationException) {
+                    if (!cancellation.cancelled) throw error
+                } catch (error: Throwable) {
+                    if (!cancellation.cancelled) {
+                        android.util.Log.e("JesterMoodsUpdate", "Update detail check failed", error)
+                        val current = _updateState.value
+                        val presentation = TransferFailurePolicy.present(
+                            error,
+                            TransferFailureOperation.UPDATE_CHECK
+                        )
+                        _updateState.value = current.copy(
+                            inProgress = false,
+                            stage = SecureTransferStage.FAILED,
+                            failed = true,
+                            headline = presentation.headline,
+                            detail = presentation.detail,
+                            diagnostics = appendDiagnostic(
+                                current.diagnostics,
+                                "Update detail check failed: ${error.message ?: error.javaClass.simpleName}"
+                            )
+                        )
+                    }
+                } finally {
+                    if (moduleUpdateCheckCancellation === cancellation) {
+                        moduleUpdateCheckCancellation = null
+                        moduleUpdateCheckJob = null
+                    }
+                    if (moduleTransferCancellation === cancellation) {
+                        moduleTransferCancellation = null
+                    }
+                }
+            }
             return
         }
         val offeredState = _updateState.value
@@ -3565,6 +3695,23 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         val cancellation = moduleTransferCancellation ?: return
         cancellation.cancelled = true
+        if (current.intent == ModuleTransferIntent.UPDATE_CHECK) {
+            moduleUpdateCheckJob?.cancel()
+            _updateState.value = current.copy(
+                inProgress = false,
+                cancelling = false,
+                cancelled = true,
+                completed = false,
+                failed = false,
+                updateAvailable = false,
+                stage = SecureTransferStage.CANCELLED,
+                stageProgress = null,
+                headline = "Update check cancelled",
+                detail = "Nothing was downloaded or changed. Check again whenever you're ready.",
+                diagnostics = appendDiagnostic(current.diagnostics, "Cancelled by the user")
+            )
+            return
+        }
         _updateState.value = current.copy(
             cancelling = true,
             headline = "Stopping safely",
@@ -3597,17 +3744,46 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         )
     }
 
-    private fun publishModuleUpdateOffer(listing: ModuleListing) {
+    private fun publishModuleUpdateOffer(
+        listing: ModuleListing,
+        isCancelled: () -> Boolean = { false }
+    ) {
+        if (isCancelled()) return
+        val preparing = _updateState.value
+        _updateState.value = preparing.copy(
+            inProgress = true,
+            stage = SecureTransferStage.VERIFYING,
+            stageProgress = null,
+            headline = "Reviewing update",
+            detail = "Loading the signed release notes for ${listing.catalog.config.title}.",
+            diagnostics = appendDiagnostic(preparing.diagnostics, "Verified catalog update found")
+        )
         val history = moduleChangelogClient.load(listing.catalog)
         val newEntries = history.entries.filter {
             it.build > listing.installedBuild && it.build <= listing.catalog.build
         }.ifEmpty { moduleChangelogClient.summary(listing.catalog).entries }
-        _updateState.value = ModuleUpdateUiState(
+        if (isCancelled()) return
+        val current = _updateState.value
+        _updateState.value = current.copy(
+            visible = true,
+            inProgress = false,
+            cancelling = false,
+            cancelled = false,
+            stage = SecureTransferStage.COMPLETED,
+            stageProgress = 1f,
+            title = listing.catalog.config.title,
+            packageName = listing.catalog.config.packageName,
+            targetVersion = listing.catalog.version,
+            actionLabel = "Update check",
+            intent = ModuleTransferIntent.UPDATE_CHECK,
             headline = "Update available",
             detail = "Version ${listing.catalog.version} is ready. Review everything that changed before downloading.",
             updateAvailable = true,
+            completed = false,
+            failed = false,
             changelog = newEntries,
-            totalBytes = moduleDownloadSize(listing)
+            totalBytes = moduleDownloadSize(listing),
+            diagnostics = appendDiagnostic(current.diagnostics, "Verified update offer loaded")
         )
     }
 
@@ -4171,13 +4347,17 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (error is NewSessionAccessBoundaryException) return
         android.util.Log.e("JesterMoodsUpdate", "Update failed", error)
         val progress = _updateState.value
+        val presentation = TransferFailurePolicy.present(
+            error,
+            TransferFailureOperation.ADD_ON_UPDATE
+        )
         _updateState.value = progress.copy(
             visible = true,
             inProgress = false,
             cancelling = false,
             cancelled = false,
-            headline = "Couldn't finish the update",
-            detail = "Please try again. If it keeps happening, restart Jester Mods.",
+            headline = presentation.headline,
+            detail = presentation.detail,
             failed = true,
             stage = SecureTransferStage.FAILED,
             stageProgress = null,
@@ -4193,18 +4373,21 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (error is NewSessionAccessBoundaryException) return
         android.util.Log.e("JesterMoodsDownload", "Game support $action failed", error)
         val progress = _updateState.value
-        val detail = moduleDownloadFailureDetail(error)
+        val presentation = TransferFailurePolicy.present(
+            error,
+            when (action) {
+                "update" -> TransferFailureOperation.ADD_ON_UPDATE
+                "repair" -> TransferFailureOperation.ADD_ON_REPAIR
+                else -> TransferFailureOperation.ADD_ON_DOWNLOAD
+            }
+        )
         _updateState.value = progress.copy(
             visible = true,
             inProgress = false,
             cancelling = false,
             cancelled = false,
-            headline = when (action) {
-                "update" -> "Couldn't update add-on"
-                "repair" -> "Couldn't repair add-on"
-                else -> "Couldn't download add-on"
-            },
-            detail = detail,
+            headline = presentation.headline,
+            detail = presentation.detail,
             failed = true,
             updateAvailable = action == "update",
             stage = SecureTransferStage.FAILED,
@@ -4214,26 +4397,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 "${error.javaClass.simpleName}: ${error.message?.take(240) ?: "No detail provided"}"
             )
         )
-    }
-
-    private fun moduleDownloadFailureDetail(error: Throwable): String {
-        val serviceError = generateSequence(error) { it.cause }
-            .filterIsInstance<LauncherServiceException>()
-            .firstOrNull()
-        return when (serviceError?.code) {
-            "ACCESS_REQUIRED", "ACCESS_EXPIRED" ->
-                "Your launcher access has expired. Unlock the launcher again, then retry."
-            "LAUNCHER_UPDATE_REQUIRED" ->
-                "Install the latest Jester Mods Launcher update, then retry."
-            "PROOF_KEY_REQUIRED", "PROOF_REJECTED" ->
-                "The server could not verify this launcher session. Restart the launcher or unlock it again."
-            "ATTESTATION_REQUIRED" ->
-                "This device could not complete the security check required for this add-on."
-            "MODULE_UNAVAILABLE" ->
-                "This add-on is not available for your device architecture or launcher version."
-            else -> serviceError?.message
-                ?: "Check your connection and available storage, then try again."
-        }
     }
 
     private fun refreshGames(
