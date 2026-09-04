@@ -50,6 +50,20 @@ complete examples from [`examples/config.injection.json`](examples/config.inject
 [`examples/config.identity-shell.json`](examples/config.identity-shell.json), then
 replace all placeholder package, title, version, and entry-point values.
 
+Games with strict package/UID kernel checks may offer both exact-package shell and direct patch.
+Keep `nonroot_method` as the recommended default and add the same method first in the ordered list:
+
+```json
+"nonroot_method": "identity_shell",
+"nonroot_methods": ["identity_shell", "direct_patch"]
+```
+
+Only Shell and Patch may be offered together. The launcher remembers the player's choice per
+add-on and always honors the method detected in an already-installed replacement. This prevents
+an existing shell from being patched or an existing patch from being mistaken for the original
+game. Do not offer both unless both paths have been tested for that game and the module retains
+the guarded direct-patch entry points.
+
 ### Injection
 
 Use BlackBox injection when the original installed game can run in the managed
@@ -139,9 +153,11 @@ flow. Keep `kPackageIdentityExamplesConfigured` false until every placeholder ha
 from a supported game binary.
 
 The discovery ladder intentionally tries a strict signature, a relaxed signature, a verified
-direct-call target, and finally a fixed RVA with byte validation. It scans both readable executable
-process maps and executable ELF segments so split APK-backed and native-bridge mappings are not
-missed. Every result must be unique and its original instructions must match before it can be used.
+direct-call target, and finally a fixed RVA with byte validation. It scans executable process maps
+and ELF segments so split APK-backed and native-bridge mappings are not missed. For execute-only
+memory, it requests temporary read access and restores the exact original protection; gate this on
+the kernel result, never a hard-coded Android version or device brand. Every result must be unique
+and its original instructions must match before it can be used.
 
 Treat required startup compatibility separately from optional feature groups:
 
@@ -172,8 +188,9 @@ regions; it never justifies writing to an address whose expected original bytes 
 4. Keep `entry_point` as `com.android.support.Main` unless every shared Java and
    JNI class reference has intentionally been migrated to a new namespace.
 5. Set the supported game versions and ABIs in `config.json`.
-6. Select `injection`, `direct_patch`, or `identity_shell` explicitly; never infer the active
-   runtime in native code.
+6. Select `injection`, `direct_patch`, or `identity_shell` explicitly. For a verified strict-UID
+   fallback, declare the ordered `nonroot_methods` Shell/Patch pair; never infer the active runtime
+   in native code.
 7. Replace the disabled native examples and compatibility placeholders in `cpp/Main.cpp` with
    verified, version-specific targets.
 8. Keep the compatibility descriptor as the first native feature row.

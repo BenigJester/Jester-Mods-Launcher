@@ -3,6 +3,7 @@ package com.moodtools.hub.identity
 import com.moodtools.hub.soulpatch.BinaryXmlStringPool
 import java.io.File
 import java.util.zip.ZipFile
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -50,6 +51,10 @@ class IdentityShellTemplateTest {
             assertTrue(
                 "Identity-shell compatibility-only entry was stripped",
                 dex.contains("loadNativeForIdentityShellCompatibility")
+            )
+            assertFalse(
+                "Identity shell must not start an automatic public logcat capture",
+                dex.contains("_logcat.txt") || dex.contains("Download/logs")
             )
         }
     }

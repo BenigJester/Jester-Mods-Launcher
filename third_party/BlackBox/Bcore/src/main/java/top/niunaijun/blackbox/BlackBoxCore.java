@@ -15,7 +15,6 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -56,7 +55,6 @@ import top.niunaijun.blackbox.fake.frameworks.BUserManager;
 import top.niunaijun.blackbox.fake.hook.HookManager;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.utils.BzFileUtils;
-import top.niunaijun.blackbox.utils.ShellUtils;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.SimpleCrashFix;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -831,6 +829,57 @@ public class BlackBoxCore extends ClientConfiguration {
         }
     }
 
+    /**
+     * Waits for a real remote package-manager Binder instead of treating a declared provider or
+     * an empty fallback map as a usable BlackBox runtime. Slow OEM process starts are retried with
+     * a bounded backoff; callers receive one actionable failure instead of a later RemoteException.
+     */
+    public void ensureBlackProcessReady(long timeoutMs) {
+        if (!isMainProcess()) {
+            return;
+        }
+        final long boundedTimeout = Math.max(1000L, Math.min(timeoutMs, 20000L));
+        final long deadline = android.os.SystemClock.elapsedRealtime() + boundedTimeout;
+        long delayMs = 100L;
+        int attempt = 0;
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            attempt++;
+            if (isRemoteServiceHealthy(ServiceManager.PACKAGE_MANAGER)) {
+                Slog.i(TAG, "BlackBox package service ready after " + attempt + " probe(s)");
+                return;
+            }
+            if (attempt == 1 || attempt == 4 || attempt == 8) {
+                startBlackProcess();
+            }
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Game setup was interrupted while starting the compatibility service", interrupted);
+            }
+            delayMs = Math.min(delayMs * 2L, 1000L);
+        }
+        throw new IllegalStateException(
+                "The compatibility service did not become ready within " + boundedTimeout + " ms");
+    }
+
+    private boolean isRemoteServiceHealthy(String name) {
+        try {
+            Bundle request = new Bundle();
+            request.putString("_B_|_server_name_", name);
+            Bundle response = ProviderCall.callSafely(
+                    ProxyManifest.getBindProvider(), "VM", null, request);
+            if (response == null || response.getString("error") != null) {
+                return false;
+            }
+            IBinder binder = BundleCompat.getBinder(response, "_B_|_server_");
+            return binder != null && binder.isBinderAlive() && binder.pingBinder();
+        } catch (Throwable error) {
+            Slog.w(TAG, "BlackBox service health probe failed: " + error.getMessage());
+            return false;
+        }
+    }
+
     public void doAttachBaseContext(Context context,
                                    ClientConfiguration clientConfiguration) {
         sContext = context;
@@ -840,7 +889,9 @@ public class BlackBoxCore extends ClientConfiguration {
         mProcessName = processName;
         if (processName.equals(BlackBoxCore.getHostPkg())) {
             mProcessType = ProcessType.Main;
-            startLogcat();
+            // Keep diagnostics inside logcat until the user explicitly asks to export them.
+            // Starting a MediaStore-backed capture here created a new, unbounded file in
+            // Download/logs every time an exact-package shell process was recreated.
         } else if (processName.endsWith(getContext().getString(R.string.black_box_service_name))) {
             mProcessType = ProcessType.Server;
         } else {
@@ -1291,56 +1342,6 @@ public class BlackBoxCore extends ClientConfiguration {
         return mClientConfiguration.requestInstallPackage(file, userId);
     }
 
-    private void startLogcat() {
-        new Thread(() -> {
-            File logFile = null;
-            Context context = getContext();
-            String fileName = context.getPackageName() + "_logcat.txt";
-            boolean useMediaStore = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
-            
-            
-            logDeviceInfo();
-            
-            try {
-                if (useMediaStore) {
-                    
-                    android.content.ContentValues values = new android.content.ContentValues();
-                    values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName);
-                    values.put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain");
-                    values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/logs");
-                    android.net.Uri uri = context.getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                    if (uri != null) {
-                        try (java.io.OutputStream out = context.getContentResolver().openOutputStream(uri)) {
-                            
-                            ShellUtils.execCommand("logcat -c", false);
-                            java.lang.Process process = Runtime.getRuntime().exec("logcat");
-                            try (java.io.InputStream in = process.getInputStream()) {
-                                byte[] buffer = new byte[4096];
-                                int len;
-                                while ((len = in.read(buffer)) != -1) {
-                                    out.write(buffer, 0, len);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    
-                    File docuentsdir = new File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "logs");
-                    if (!docuentsdir.exists()) {
-                        docuentsdir.mkdirs();
-                    }
-                    logFile = new File(docuentsdir, fileName);
-                    BzFileUtils.deleteDir(logFile);
-                    ShellUtils.execCommand("logcat -c", false);
-                    ShellUtils.execCommand("logcat -f " + logFile.getAbsolutePath(), false);
-                }
-            } catch (Exception e) {
-                Slog.e(TAG, "Failed to save logcat: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    
     private void logDeviceInfo() {
         try {
             Slog.i(TAG, "╔══════════════════════════════════════════════════════════════╗");

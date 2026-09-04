@@ -84,6 +84,12 @@ class ModuleIntegrityVerifier(
             signedConfig.optString("nonrootMethod").takeIf { it.isNotBlank() },
             module.packageName
         )
+        val nonRootMethods = NonRootMethod.choicesFromJson(
+            signedConfig.optJSONArray("nonrootMethods")?.let { values ->
+                List(values.length()) { index -> values.getString(index) }
+            },
+            nonRootMethod
+        )
         require(supportedVersions.isNotEmpty() && supportedAbis.isNotEmpty())
         require(supportedAbis.all { it == "arm64-v8a" || it == "armeabi-v7a" })
         require(abi in supportedAbis) { "Signed module does not support the installed game ABI" }
@@ -91,6 +97,7 @@ class ModuleIntegrityVerifier(
         require(module.title == title && module.entryPoint == entryPoint)
         require(module.supportedVersions == supportedVersions && module.supportedAbis == supportedAbis)
         require(module.nonRootMethod == nonRootMethod)
+        require(module.nonRootMethods == nonRootMethods)
         require(module.dexFile == DEX_FILE && module.nativeFile == NATIVE_FILE && module.iconFile == null)
 
         val expectedConfig = JSONObject()
@@ -105,6 +112,12 @@ class ModuleIntegrityVerifier(
             .also {
                 if (signedConfig.has("nonrootMethod")) {
                     it.put("nonroot_method", nonRootMethod.jsonValue)
+                }
+                if (signedConfig.has("nonrootMethods")) {
+                    it.put(
+                        "nonroot_methods",
+                        JSONArray(nonRootMethods.map(NonRootMethod::jsonValue))
+                    )
                 }
             }
             .toString()
@@ -169,11 +182,20 @@ class ModuleIntegrityVerifier(
             "Local test module configuration size is invalid"
         }
         val config = JSONObject(configFile.readText(Charsets.UTF_8))
-        require(NonRootMethod.fromJson(
+        val configuredMethod = NonRootMethod.fromJson(
             config.optString("nonroot_method").takeIf { it.isNotBlank() },
             module.packageName
-        ) == module.nonRootMethod) {
+        )
+        require(configuredMethod == module.nonRootMethod) {
             "Local test module configuration does not match its non-root method"
+        }
+        require(NonRootMethod.choicesFromJson(
+            config.optJSONArray("nonroot_methods")?.let { values ->
+                List(values.length()) { index -> values.getString(index) }
+            },
+            configuredMethod
+        ) == module.nonRootMethods) {
+            "Local test module configuration does not match its non-root method choices"
         }
         require(config.optString("package_name", config.optString("target_package")) == module.packageName) {
             "Local test module configuration belongs to another package"

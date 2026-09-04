@@ -26,7 +26,7 @@ object ExecutionModeLaunchBridge {
     }
 
     fun removeLibraryGameData(context: Context, game: LibraryGame) {
-        when (game.module.nonRootMethod) {
+        when (game.module.effectiveNonRootMethod) {
             NonRootMethod.INJECTION -> NonRootBlackBoxRuntime.removePackage(context, game.packageName)
             NonRootMethod.IDENTITY_SHELL -> {
                 val manager = identityShellManager(context, game.packageName)
@@ -40,11 +40,11 @@ object ExecutionModeLaunchBridge {
     }
 
     fun isInstalledIdentityShell(context: Context, game: LibraryGame): Boolean =
-        game.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL &&
+        game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL &&
             identityShellManager(context, game.packageName).isInstalledShell()
 
     fun requiresOfficialRestoreBeforeIdentityShell(context: Context, game: InstalledGame): Boolean =
-        game.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL &&
+        game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL &&
             !identityShellManager(context, game.packageName).isInstalledShell() &&
             directPatchManager(context, game.packageName).isPatchedInstallation()
 
@@ -53,14 +53,14 @@ object ExecutionModeLaunchBridge {
     }
 
     fun clearLibraryGameData(context: Context, game: LibraryGame) {
-        require(game.module.nonRootMethod == NonRootMethod.INJECTION) {
+        require(game.module.effectiveNonRootMethod == NonRootMethod.INJECTION) {
             "Only managed BlackBox games have clearable sandbox data"
         }
         NonRootBlackBoxRuntime.removePackage(context, game.packageName)
     }
 
     fun requiresPackageReplacement(context: Context, game: InstalledGame): Boolean {
-        return when (game.module.nonRootMethod) {
+        return when (game.module.effectiveNonRootMethod) {
             NonRootMethod.INJECTION -> false
             NonRootMethod.DIRECT_PATCH -> directPatchManager(context, game.packageName)
                 .requiresReplacement(game)
@@ -70,7 +70,7 @@ object ExecutionModeLaunchBridge {
     }
 
     fun libraryLaunchAction(context: Context, game: InstalledGame): LibraryLaunchAction {
-        return when (game.module.nonRootMethod) {
+        return when (game.module.effectiveNonRootMethod) {
             NonRootMethod.INJECTION -> LibraryLaunchAction.PLAY
             NonRootMethod.DIRECT_PATCH -> {
                 val patcher = directPatchManager(context, game.packageName)
@@ -92,10 +92,10 @@ object ExecutionModeLaunchBridge {
         game: InstalledGame,
         onProgress: ((headline: String, detail: String) -> Unit)? = null
     ): PackageReplacementRequest {
-        require(game.module.nonRootMethod != NonRootMethod.INJECTION) {
+        require(game.module.effectiveNonRootMethod != NonRootMethod.INJECTION) {
             "This add-on does not replace its outer package"
         }
-        return when (game.module.nonRootMethod) {
+        return when (game.module.effectiveNonRootMethod) {
             NonRootMethod.DIRECT_PATCH -> directPatchManager(context, game.packageName)
                 .prepare(game, onProgress)
             NonRootMethod.IDENTITY_SHELL -> {
@@ -184,9 +184,9 @@ object ExecutionModeLaunchBridge {
             )
             return false
         }
-        if (game.module.nonRootMethod != NonRootMethod.INJECTION) {
+        if (game.module.effectiveNonRootMethod != NonRootMethod.INJECTION) {
             val patcher = directPatchManager(context, game.packageName)
-            val ready = when (game.module.nonRootMethod) {
+            val ready = when (game.module.effectiveNonRootMethod) {
                 NonRootMethod.DIRECT_PATCH -> patcher.isPatchedInstallation()
                 NonRootMethod.IDENTITY_SHELL -> identityShellManager(context, game.packageName)
                     .isInstalledShell()
@@ -206,7 +206,7 @@ object ExecutionModeLaunchBridge {
                 return false
             }
             return runCatching {
-                when (game.module.nonRootMethod) {
+                when (game.module.effectiveNonRootMethod) {
                     NonRootMethod.DIRECT_PATCH -> patcher.authorizeLaunch(intent)
                     NonRootMethod.IDENTITY_SHELL ->
                         identityShellManager(context, game.packageName).authorizeLaunch(intent)
@@ -244,8 +244,14 @@ object ExecutionModeLaunchBridge {
     private fun identityShellManager(context: Context, packageName: String) =
         IdentityShellManager(context, packageName)
 
+    fun installedNonRootMethod(context: Context, packageName: String): NonRootMethod? = when {
+        identityShellManager(context, packageName).isInstalledShell() -> NonRootMethod.IDENTITY_SHELL
+        directPatchManager(context, packageName).isPatchedInstallation() -> NonRootMethod.DIRECT_PATCH
+        else -> null
+    }
+
     private fun com.moodtools.hub.modules.ModuleConfig.displayNameForSetup(): String =
-        if (nonRootMethod == NonRootMethod.IDENTITY_SHELL) "exact-package shell" else "patched game"
+        if (effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL) "exact-package shell" else "patched game"
 }
 
 object ExecutionModeStartupGate {

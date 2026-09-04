@@ -207,6 +207,9 @@ internal class IdentityShellManager(
         incoming.delete()
         ZipOutputStream(FileOutputStream(incoming).buffered()).use { zip ->
             zip.setLevel(1)
+            zip.putNextEntry(ZipEntry(DEVICE_SPLIT_SET_MARKER).apply { time = PATCH_TIMESTAMP })
+            zip.write("schema=1\nsource=installed-package-manager\n".toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
             sources.forEach { source ->
                 zip.putNextEntry(ZipEntry(source.name).apply { time = source.file.lastModified() })
                 source.file.inputStream().buffered().use { it.copyTo(zip, COPY_BUFFER_SIZE) }
@@ -541,6 +544,7 @@ internal class IdentityShellManager(
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"
         private const val LABEL_MARKER = "__IDENTITY_SHELL_LABEL__"
         private const val GAME_PAYLOAD = "game.apks"
+        private const val DEVICE_SPLIT_SET_MARKER = "META-INF/jester-installed-split-set-v1"
         private const val MANIFEST_ENTRY = "AndroidManifest.xml"
         private const val LEGACY_ICON_RESOURCE = "identity_shell_icon"
         private const val FOREGROUND_ICON_RESOURCE = "identity_shell_icon_foreground_bitmap"

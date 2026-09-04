@@ -43,11 +43,13 @@ import com.moodtools.hub.modules.LauncherUpdateUiState
 import com.moodtools.hub.modules.InstalledModuleUpdatesUiState
 import com.moodtools.hub.modules.InstalledModuleUpdateItemStatus
 import com.moodtools.hub.modules.InstalledModuleUpdateItemUiState
+import com.moodtools.hub.modules.installedModuleConfig
 import com.moodtools.hub.modules.ModuleRepository
 import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
 import com.moodtools.hub.modules.ModuleTransferIntent
 import com.moodtools.hub.modules.NonRootMethod
+import com.moodtools.hub.modules.resolveNonRootMethodChoice
 import com.moodtools.hub.modules.PlayStoreVersionStatus
 import com.moodtools.hub.modules.SecureTransferStage
 import com.moodtools.hub.modules.installedModuleUpdates
@@ -229,6 +231,7 @@ class LauncherActivity : ComponentActivity() {
                     onUpdate = viewModel::updateLibraryGame,
                     onVerify = ::openTrustedWebPage,
                     onLaunch = ::launchLibraryGame,
+                    onSelectNonRootMethod = viewModel::selectNonRootMethod,
                     onConfirmDirectPatch = ::confirmPackageSetupPrompt,
                     onDismissDirectPatch = ::dismissPackageSetupPrompt,
                     onCancelPackageSetup = ::cancelActivePackageSetup,
@@ -401,7 +404,7 @@ class LauncherActivity : ComponentActivity() {
             )
             if (shouldUninstallIdentityShellBeforeRemoving(
                     BuildConfig.IS_ROOT_MODE,
-                    entry.module.nonRootMethod,
+                    entry.module.effectiveNonRootMethod,
                     installedIdentityShell
                 )) {
                 identityShellRemovalQueue.addLast(entry)
@@ -639,7 +642,7 @@ class LauncherActivity : ComponentActivity() {
         val updatingPatchedInstall = entry.launchAction == LibraryLaunchAction.UPDATE_PATCHED_INSTALL
         viewModel.onPackageReplacementProgress(
             "Preparing ${game.module.title}",
-            if (game.module.nonRootMethod == com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL) {
+            if (game.module.effectiveNonRootMethod == com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL) {
                 "Preserving the untouched game and creating its exact-package compatibility shell."
             } else if (updatingPatchedInstall) {
                 "Creating an in-place patch update that keeps the installed game's local data."
@@ -2845,7 +2848,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun authorizePackageReplacement(game: InstalledGame, onAuthorized: () -> Unit) {
         if (!game.moduleSupported || _launchState.value.inProgress || _updateState.value.inProgress) return
-        val kind = if (game.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL) {
+        val kind = if (game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL) {
             PackageReplacementKind.IDENTITY_SHELL
         } else {
             PackageReplacementKind.DIRECT_PATCH
@@ -2869,7 +2872,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _launchState.value = LaunchUiState(
             inProgress = true,
             headline = "Checking access",
-            detail = if (game.module.nonRootMethod ==
+            detail = if (game.module.effectiveNonRootMethod ==
                 com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL) {
                 "Verifying this add-on before preparing the exact-package shell."
             } else {
@@ -4607,7 +4610,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val application = getApplication<android.app.Application>()
         if (refreshRemoteMetadata) resolvePrivateAccessExpiries(catalog)
         if (catalog.isEmpty()) {
-            val localConfigs = repository.loadModules().filter { repository.isInLibrary(it.packageName) }
+            val localConfigs = repository.loadModules()
+                .filter { repository.isInLibrary(it.packageName) }
+                .map(::resolveNonRootMethodChoice)
             val local = scanGames(localConfigs, forceGameScan)
             _games.value = local
             _availableModules.value = emptyList()
@@ -4626,23 +4631,37 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     launchAction = game?.let {
                         ExecutionModeLaunchBridge.libraryLaunchAction(application, it)
                     } ?: LibraryLaunchAction.PLAY,
+                    installedNonRootMethod = ExecutionModeLaunchBridge.installedNonRootMethod(
+                        application,
+                        config.packageName
+                    ),
                     privateScope = repository.privateScope(config.packageName),
                     privateAccessExpiresAtEpochSeconds = repository.privateScope(config.packageName)
                         ?.let(privateAccessExpiryByScope::get)
                 )
             })
         } else {
-            val localConfigs = repository.loadModules().filter {
-                repository.isInLibrary(it.packageName)
+            val resolvedCatalog = catalog.map { item ->
+                item.copy(config = resolveNonRootMethodChoice(item.config))
             }
-            val catalogSlugs = catalog.mapTo(hashSetOf()) { it.slug }
-            val scanConfigs = catalog.map { it.config } + localConfigs.filter {
-                it.catalogSlug == null || it.catalogSlug !in catalogSlugs
+            val localConfigs = repository.loadModules()
+                .filter { repository.isInLibrary(it.packageName) }
+                .map(::resolveNonRootMethodChoice)
+            val localConfigsByPackage = localConfigs.associateBy { it.packageName }
+            val localTestPackages = localConfigs
+                .mapNotNullTo(hashSetOf()) { config ->
+                    config.packageName.takeIf(repository::isLocalTest)
+                }
+            val catalogSlugs = resolvedCatalog.mapTo(hashSetOf()) { it.slug }
+            val scanConfigs = resolvedCatalog.map { it.config } + localConfigs.filter {
+                it.packageName in localTestPackages ||
+                    it.catalogSlug == null ||
+                    it.catalogSlug !in catalogSlugs
             }
             val playStoreStatuses = if (refreshRemoteMetadata) {
-                playStoreStatusesFor(catalog)
+                playStoreStatusesFor(resolvedCatalog)
             } else {
-                cachedPlayStoreStatusesFor(catalog)
+                cachedPlayStoreStatusesFor(resolvedCatalog)
             }
             val detected = scanGames(scanConfigs, forceGameScan)
             val detectedByIdentity = detected.associateBy {
@@ -4654,7 +4673,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             val installedScopeByPackage = localConfigs.associate { config ->
                 config.packageName to repository.privateScope(config.packageName)
             }
-            val catalogCountByPackage = catalog.groupingBy { it.config.packageName }.eachCount()
+            val catalogCountByPackage = resolvedCatalog.groupingBy { it.config.packageName }.eachCount()
             fun isInstalledPublication(item: com.moodtools.hub.modules.CatalogModule): Boolean {
                 val packageName = item.config.packageName
                 return com.moodtools.hub.modules.isInstalledCatalogPublication(
@@ -4665,7 +4684,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     packagePublicationCount = catalogCountByPackage[packageName] ?: 0
                 )
             }
-            val listings = catalog.map { item ->
+            val listings = resolvedCatalog.map { item ->
                 val installedPublication = isInstalledPublication(item)
                 ModuleListing(
                     catalog = item,
@@ -4685,19 +4704,37 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 .filter { isInstalledPublication(it.catalog) }
                 .map { listing ->
                     val packageName = listing.catalog.config.packageName
+                    val localTest = packageName in localTestPackages
+                    // A staged TEST module is the executable artifact being exercised. Its
+                    // config must therefore win over an older live-catalog config, while the
+                    // listing continues to carry catalog-only access and download metadata.
+                    val module = installedModuleConfig(
+                        catalogConfig = listing.catalog.config,
+                        localConfig = localConfigsByPackage[packageName],
+                        localTest = localTest
+                    )
+                    val game = if (localTest) {
+                        detected.firstOrNull { it.module == module } ?: listing.game
+                    } else {
+                        listing.game
+                    }
                     LibraryGame(
-                        module = listing.catalog.config,
-                        game = listing.game,
+                        module = module,
+                        game = game,
                         listing = listing,
                         installedBuild = listing.installedBuild,
                         installedComplete = listing.installedComplete,
-                        localTest = repository.isLocalTest(packageName),
+                        localTest = localTest,
                         lastLaunchedAtEpochMillis = libraryPreferences.getLong(lastLaunchKey(packageName), 0L),
-                        running = listing.game != null &&
+                        running = game != null &&
                             ExecutionModeLaunchBridge.isGameRunning(application, packageName),
-                        launchAction = listing.game?.let {
+                        launchAction = game?.let {
                             ExecutionModeLaunchBridge.libraryLaunchAction(application, it)
                         } ?: LibraryLaunchAction.PLAY,
+                        installedNonRootMethod = ExecutionModeLaunchBridge.installedNonRootMethod(
+                            application,
+                            packageName
+                        ),
                         playStoreVersionStatus = listing.playStoreVersionStatus
                     )
                 }
@@ -4725,6 +4762,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         launchAction = game?.let {
                             ExecutionModeLaunchBridge.libraryLaunchAction(application, it)
                         } ?: LibraryLaunchAction.PLAY,
+                        installedNonRootMethod = ExecutionModeLaunchBridge.installedNonRootMethod(
+                            application,
+                            config.packageName
+                        ),
                         privateScope = repository.privateScope(config.packageName),
                         privateAccessExpiresAtEpochSeconds = repository.privateScope(config.packageName)
                             ?.let(privateAccessExpiryByScope::get)
@@ -4753,6 +4794,63 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
         }
     }
+
+    private fun resolveNonRootMethodChoice(
+        config: com.moodtools.hub.modules.ModuleConfig
+    ): com.moodtools.hub.modules.ModuleConfig {
+        if (BuildConfig.IS_ROOT_MODE || !config.offersNonRootMethodChoice) {
+            return config.copy(selectedNonRootMethod = null)
+        }
+        val installed = ExecutionModeLaunchBridge.installedNonRootMethod(
+            getApplication(),
+            config.packageName
+        )?.takeIf(config.nonRootMethods::contains)
+        val saved = libraryPreferences.getString(nonRootMethodChoiceKey(config), null)
+            ?.let { value -> runCatching { NonRootMethod.fromJson(value) }.getOrNull() }
+            ?.takeIf(config.nonRootMethods::contains)
+        return config.copy(
+            selectedNonRootMethod = resolveNonRootMethodChoice(config, saved, installed)
+        )
+    }
+
+    fun selectNonRootMethod(game: LibraryGame, method: NonRootMethod) {
+        if (BuildConfig.IS_ROOT_MODE || method !in game.module.nonRootMethods) return
+        val installed = ExecutionModeLaunchBridge.installedNonRootMethod(
+            getApplication(),
+            game.packageName
+        )
+        if (installed != null && installed != method) {
+            _launchState.value = LaunchUiState(
+                headline = "${installed.displayName} is currently installed",
+                detail = "Restore the original game before changing this device to ${method.displayName}.",
+                failed = true
+            )
+            return
+        }
+        if (installed == null && game.module.effectiveNonRootMethod != method) {
+            when (game.module.effectiveNonRootMethod) {
+                NonRootMethod.IDENTITY_SHELL -> ExecutionModeLaunchBridge.discardPreparedIdentityShell(
+                    getApplication(),
+                    game.packageName
+                )
+                NonRootMethod.DIRECT_PATCH -> storageManager.onDirectPatchMigrationSucceeded(
+                    game.packageName
+                )
+                NonRootMethod.INJECTION -> Unit
+            }
+        }
+        libraryPreferences.edit()
+            .putString(nonRootMethodChoiceKey(game.module), method.jsonValue)
+            .apply()
+        _packageSetupState.value = PackageSetupUiState()
+        _directPatchPromptState.value = DirectPatchPromptUiState()
+        _launchState.value = LaunchUiState()
+        scannedConfigs = null
+        refreshGames(forceGameScan = true)
+    }
+
+    private fun nonRootMethodChoiceKey(config: com.moodtools.hub.modules.ModuleConfig): String =
+        NON_ROOT_METHOD_CHOICE_PREFIX + (config.catalogSlug ?: config.packageName)
 
     private fun syncInstalledModuleUpdatePrompt() {
         if (BuildConfig.DEBUG && moduleUpdatesTestPreviewActive) {
@@ -4930,6 +5028,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_LISTING_UPDATED_AT_PREFIX = "listing_updated_at_"
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
+        private const val NON_ROOT_METHOD_CHOICE_PREFIX = "non_root_method_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_INTERNET_TRANSITION_MS = 2_000L
         private const val LAUNCHER_INSTALLER_RECOVERY_DELAY_MS = 20_000L

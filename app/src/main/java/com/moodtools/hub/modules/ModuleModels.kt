@@ -13,9 +13,35 @@ data class ModuleConfig(
     val nativeFile: String,
     val iconFile: String?,
     val nonRootMethod: NonRootMethod = NonRootMethod.INJECTION,
+    /** Ordered, signed setup choices. The first item is the maintainer recommendation. */
+    val nonRootMethods: List<NonRootMethod> = listOf(nonRootMethod),
+    /** Device-local choice; never serialized into or trusted as module metadata. */
+    val selectedNonRootMethod: NonRootMethod? = null,
     /** Stable catalog identity. Null only for legacy/local modules that predate slug storage. */
     val catalogSlug: String? = null
-)
+) {
+    val effectiveNonRootMethod: NonRootMethod
+        get() = selectedNonRootMethod?.takeIf(nonRootMethods::contains) ?: nonRootMethod
+
+    val offersNonRootMethodChoice: Boolean
+        get() = nonRootMethods.size > 1
+
+    init {
+        require(nonRootMethods.isNotEmpty()) { "At least one non-root method is required" }
+        require(nonRootMethods.distinct().size == nonRootMethods.size) {
+            "Non-root methods must be unique"
+        }
+        require(nonRootMethods.first() == nonRootMethod) {
+            "The recommended non-root method must be first"
+        }
+        require(nonRootMethods.size == 1 || nonRootMethods.toSet() == setOf(
+            NonRootMethod.IDENTITY_SHELL,
+            NonRootMethod.DIRECT_PATCH
+        )) {
+            "Multiple non-root methods are reserved for Shell and Patch compatibility"
+        }
+    }
+}
 
 enum class NonRootMethod(val jsonValue: String, val displayName: String) {
     INJECTION("injection", "Injection"),
@@ -33,9 +59,36 @@ enum class NonRootMethod(val jsonValue: String, val displayName: String) {
                 ?: throw IllegalArgumentException("Unsupported non-root method: $value")
         }
 
+        fun choicesFromJson(
+            values: List<String>?,
+            recommended: NonRootMethod
+        ): List<NonRootMethod> {
+            if (values == null) return listOf(recommended)
+            require(values.isNotEmpty()) { "Non-root method choices must not be empty" }
+            val choices = values.map { fromJson(it) }
+            require(choices.distinct().size == choices.size) {
+                "Non-root method choices must be unique"
+            }
+            require(choices.first() == recommended) {
+                "The recommended non-root method must be the first choice"
+            }
+            require(choices.size == 1 || choices.toSet() == setOf(IDENTITY_SHELL, DIRECT_PATCH)) {
+                "Only Shell and Patch may be offered together"
+            }
+            return choices
+        }
+
         private const val LEGACY_DIRECT_PATCH_PACKAGE = "com.ChillyRoom.DungeonShooter"
     }
 }
+
+internal fun resolveNonRootMethodChoice(
+    module: ModuleConfig,
+    saved: NonRootMethod?,
+    installed: NonRootMethod?
+): NonRootMethod = installed?.takeIf(module.nonRootMethods::contains)
+    ?: saved?.takeIf(module.nonRootMethods::contains)
+    ?: module.nonRootMethod
 
 data class LauncherMethodPresentation(
     val method: NonRootMethod,
@@ -311,6 +364,8 @@ data class LibraryGame(
     val lastLaunchedAtEpochMillis: Long = 0L,
     val running: Boolean = false,
     val launchAction: LibraryLaunchAction = LibraryLaunchAction.PLAY,
+    /** Detects the replacement currently installed on Android, independent of saved preference. */
+    val installedNonRootMethod: NonRootMethod? = null,
     val playStoreVersionStatus: PlayStoreVersionStatus? = listing?.playStoreVersionStatus,
     val privateScope: String? = listing?.catalog?.privateScope,
     val privateAccessExpiresAtEpochSeconds: Long? = listing?.privateAccessExpiresAtEpochSeconds
@@ -391,6 +446,15 @@ internal fun mergeCatalogAndLocalModuleConfigs(
     return catalogConfigs.map { localByPackage[it.packageName] ?: it } +
         localConfigs.filter { it.packageName !in catalogPackages }
 }
+
+/** Local TEST metadata describes the artifact under test and takes precedence over the catalog. */
+internal fun installedModuleConfig(
+    catalogConfig: ModuleConfig,
+    localConfig: ModuleConfig?,
+    localTest: Boolean
+): ModuleConfig = localConfig
+    ?.takeIf { localTest && it.packageName == catalogConfig.packageName }
+    ?: catalogConfig
 
 internal fun toggleLibrarySelection(selected: Set<String>, packageName: String): Set<String> =
     if (packageName in selected) selected - packageName else selected + packageName

@@ -305,9 +305,10 @@ tasks.configureEach { task ->
 
 dependencies {
     nonrootImplementation project(':Bcore')
-    // Direct-patch modules preserve existing split contents/alignment while replacing the
-    // Play signature as one launcher-signed APK cluster.
-    nonrootImplementation 'com.android.tools.build:apksig:9.0.1'
+    // Verify downloaded companion games from their APK bytes instead of relying on OEM
+    // PackageManager archive signer metadata, which can be empty or stale on some devices.
+    // Non-root direct-patch modules also use this to verify their signed APK clusters.
+    implementation 'com.android.tools.build:apksig:9.0.1'
 
     implementation platform('androidx.compose:compose-bom:2024.09.03')
     implementation 'androidx.activity:activity-compose:1.9.2'

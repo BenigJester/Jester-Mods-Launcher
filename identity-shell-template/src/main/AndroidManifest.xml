@@ -25,6 +25,7 @@
 
         <activity
             android:name=".IdentityShellActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
             android:taskAffinity="${applicationId}.game"

@@ -508,6 +508,7 @@ fun GameHubScreen(
     onUpdate: (LibraryGame) -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: (LibraryGame) -> Unit,
+    onSelectNonRootMethod: (LibraryGame, NonRootMethod) -> Unit,
     onConfirmDirectPatch: () -> Unit,
     onDismissDirectPatch: () -> Unit,
     onCancelPackageSetup: () -> Unit,
@@ -649,6 +650,9 @@ fun GameHubScreen(
                                     onUpdate = { onUpdate(visiblePage.game) },
                                     onVerify = onVerify,
                                     onLaunch = { onLaunch(visiblePage.game) },
+                                    onSelectNonRootMethod = { method ->
+                                        onSelectNonRootMethod(visiblePage.game, method)
+                                    },
                                     onRemoveFromLibrary = { onRemoveFromLibrary(visiblePage.game) },
                                     onClearGameData = { onClearGameData(visiblePage.game) },
                                     onRefresh = onRefreshCatalog,
@@ -874,6 +878,16 @@ fun GameHubScreen(
             LauncherOverlay.PACKAGE_SETUP -> PackageSetupDialog(
                 state = packageSetup,
                 canRetry = selected?.game != null,
+                alternativeMethod = selected
+                    ?.takeIf {
+                        it.module.offersNonRootMethodChoice && it.installedNonRootMethod == null
+                    }
+                    ?.module
+                    ?.nonRootMethods
+                    ?.firstOrNull { it != selected?.module?.effectiveNonRootMethod },
+                onTryAlternative = { method ->
+                    selected?.let { onSelectNonRootMethod(it, method) }
+                },
                 onRetry = onRetryPackageSetup,
                 onCancel = onCancelPackageSetup,
                 onDismiss = onDismissPackageSetup
@@ -3033,6 +3047,8 @@ private fun GameInstallDialog(
 private fun PackageSetupDialog(
     state: PackageSetupUiState,
     canRetry: Boolean,
+    alternativeMethod: NonRootMethod?,
+    onTryAlternative: (NonRootMethod) -> Unit,
     onRetry: () -> Unit,
     onCancel: () -> Unit,
     onDismiss: () -> Unit
@@ -3238,22 +3254,38 @@ private fun PackageSetupDialog(
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
                     ) { Text("Done", fontWeight = FontWeight.Bold) }
-                    else -> Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            border = BorderStroke(1.dp, Hairline),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
-                        ) { Text("Close") }
-                        Button(
-                            onClick = onRetry,
-                            enabled = canRetry,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Ink)
-                        ) { Text("Try again", fontWeight = FontWeight.Bold) }
+                    else -> Column(Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, Hairline),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
+                            ) { Text("Close") }
+                            Button(
+                                onClick = onRetry,
+                                enabled = canRetry,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Ink)
+                            ) { Text("Try again", fontWeight = FontWeight.Bold) }
+                        }
+                        if (alternativeMethod != null && (state.failed || state.cancelled)) {
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { onTryAlternative(alternativeMethod) },
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, Accent.copy(alpha = 0.58f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                            ) {
+                                Text(
+                                    "Use ${alternativeMethod.displayName} instead",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -4733,12 +4765,25 @@ private fun ModuleDownloadScreen(
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
                 Spacer(Modifier.height(12.dp))
                 val methodPresentation = launcherMethodPresentation(
-                    listing.catalog.config.nonRootMethod,
+                    listing.catalog.config.effectiveNonRootMethod,
                     BuildConfig.IS_ROOT_MODE
                 )
                 InformationGroupLabel(methodPresentation.setupLabel)
                 Spacer(Modifier.height(8.dp))
-                DownloadInfoRow(methodPresentation.fieldLabel, methodPresentation.method.displayName)
+                DownloadInfoRow(
+                    if (listing.catalog.config.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
+                        "Recommended method"
+                    } else {
+                        methodPresentation.fieldLabel
+                    },
+                    methodPresentation.method.displayName
+                )
+                if (listing.catalog.config.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
+                    DownloadInfoRow(
+                        "Available methods",
+                        listing.catalog.config.nonRootMethods.joinToString(" + ") { it.displayName }
+                    )
+                }
                 DownloadInfoRow(
                     "Google Play",
                     playStoreStatus?.let { status ->
@@ -5424,7 +5469,7 @@ private fun ModuleListingCard(
                 Spacer(Modifier.height(7.dp))
                 LauncherMethodBadge(
                     launcherMethodPresentation(
-                        listing.catalog.config.nonRootMethod,
+                        listing.catalog.config.effectiveNonRootMethod,
                         BuildConfig.IS_ROOT_MODE
                     )
                 )
@@ -5720,7 +5765,7 @@ private fun LibraryScreen(
                 game.title.lowercase(Locale.US).contains(needle) ||
                     game.packageName.lowercase(Locale.US).contains(needle) ||
                     launcherMethodPresentation(
-                        game.module.nonRootMethod,
+                        game.module.effectiveNonRootMethod,
                         BuildConfig.IS_ROOT_MODE
                     ).method.displayName.lowercase(Locale.US).contains(needle) ||
                     libraryStatusLabel(game).lowercase(Locale.US).contains(needle)
@@ -5969,13 +6014,13 @@ private fun LibraryScreen(
             },
             text = {
                 val removesManagedCopies = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
-                    it.module.nonRootMethod == NonRootMethod.INJECTION
+                    it.module.effectiveNonRootMethod == NonRootMethod.INJECTION
                 }
                 val keepsPatchedInstalls = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
-                    it.module.nonRootMethod == NonRootMethod.DIRECT_PATCH
+                    it.module.effectiveNonRootMethod == NonRootMethod.DIRECT_PATCH
                 }
                 val removesIdentityShells = !BuildConfig.IS_ROOT_MODE && selectedGames.any {
-                    it.module.nonRootMethod == NonRootMethod.IDENTITY_SHELL
+                    it.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL
                 }
                 Text(
                     when {
@@ -6204,7 +6249,7 @@ private fun CompactGameCard(
                 )
                 Spacer(Modifier.height(7.dp))
                 LauncherMethodBadge(
-                    launcherMethodPresentation(game.module.nonRootMethod, BuildConfig.IS_ROOT_MODE)
+                    launcherMethodPresentation(game.module.effectiveNonRootMethod, BuildConfig.IS_ROOT_MODE)
                 )
             }
             Spacer(Modifier.width(10.dp))
@@ -6265,6 +6310,7 @@ private fun ModuleScreen(
     onUpdate: () -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: () -> Unit,
+    onSelectNonRootMethod: (NonRootMethod) -> Unit,
     onRemoveFromLibrary: () -> Unit,
     onClearGameData: () -> Unit,
     onRefresh: () -> Unit,
@@ -6343,7 +6389,11 @@ private fun ModuleScreen(
             }
         }
         item {
-            ModuleCompatibilityCard(game = game)
+            ModuleCompatibilityCard(
+                game = game,
+                selectionEnabled = !update.inProgress && !launch.inProgress,
+                onSelectNonRootMethod = onSelectNonRootMethod
+            )
         }
         item {
             Column(
@@ -6553,7 +6603,7 @@ private fun ModuleScreen(
         val canClearGameData = if (BuildConfig.IS_ROOT_MODE) {
             game.game != null
         } else {
-            game.module.nonRootMethod == NonRootMethod.INJECTION
+            game.module.effectiveNonRootMethod == NonRootMethod.INJECTION
         }
         if (canClearGameData) {
             item {
@@ -6610,7 +6660,7 @@ private fun ModuleScreen(
             text = {
                 Text(
                     when (launcherMethodPresentation(
-                        game.module.nonRootMethod,
+                        game.module.effectiveNonRootMethod,
                         BuildConfig.IS_ROOT_MODE
                     ).method) {
                         NonRootMethod.DIRECT_PATCH ->
@@ -6682,10 +6732,14 @@ private fun ModuleScreen(
 }
 
 @Composable
-private fun ModuleCompatibilityCard(game: LibraryGame) {
+private fun ModuleCompatibilityCard(
+    game: LibraryGame,
+    selectionEnabled: Boolean,
+    onSelectNonRootMethod: (NonRootMethod) -> Unit
+) {
     val installedGame = game.game
     val methodPresentation = launcherMethodPresentation(
-        game.module.nonRootMethod,
+        game.module.effectiveNonRootMethod,
         BuildConfig.IS_ROOT_MODE
     )
     val ready = installedGame?.moduleSupported == true && game.installedComplete &&
@@ -6779,7 +6833,14 @@ private fun ModuleCompatibilityCard(game: LibraryGame) {
         Spacer(Modifier.height(10.dp))
         InformationGroupLabel(methodPresentation.setupLabel)
         Spacer(Modifier.height(6.dp))
-        DownloadInfoRow(methodPresentation.fieldLabel, methodPresentation.method.displayName)
+        DownloadInfoRow(
+            if (game.module.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
+                "Selected method"
+            } else {
+                methodPresentation.fieldLabel
+            },
+            methodPresentation.method.displayName
+        )
         if (game.listing?.catalog?.installSource is GameInstallSource.PlayStore) {
             DownloadInfoRow(
                 "Google Play",
@@ -6793,7 +6854,124 @@ private fun ModuleCompatibilityCard(game: LibraryGame) {
                 } ?: "Check temporarily unavailable"
             )
         }
-        LauncherMethodNotice(methodPresentation)
+        if (game.module.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
+            Spacer(Modifier.height(10.dp))
+            CompatibilityMethodSelector(
+                methods = game.module.nonRootMethods,
+                selected = game.module.effectiveNonRootMethod,
+                recommended = game.module.nonRootMethod,
+                installed = game.installedNonRootMethod,
+                enabled = selectionEnabled && game.installedNonRootMethod == null,
+                onSelect = onSelectNonRootMethod
+            )
+        } else {
+            LauncherMethodNotice(methodPresentation)
+        }
+    }
+}
+
+@Composable
+private fun CompatibilityMethodSelector(
+    methods: List<NonRootMethod>,
+    selected: NonRootMethod,
+    recommended: NonRootMethod,
+    installed: NonRootMethod?,
+    enabled: Boolean,
+    onSelect: (NonRootMethod) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(AccentBlue.copy(alpha = 0.08f))
+            .border(
+                BorderStroke(1.dp, AccentBlue.copy(alpha = 0.24f)),
+                RoundedCornerShape(20.dp)
+            )
+            .padding(14.dp)
+    ) {
+        Text(
+            "DEVICE SETUP",
+            color = AccentBlue,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            "Choose what works on this device",
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            "Device security and game kernels behave differently. Start with the recommended route, " +
+                "then use the alternative if setup is blocked or the game closes during startup.",
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+        methods.forEachIndexed { index, method ->
+            val chosen = method == selected
+            val color = if (chosen) Accent else AccentBlue
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (chosen) color.copy(alpha = 0.12f) else SurfaceDark.copy(alpha = 0.68f))
+                    .border(
+                        BorderStroke(1.dp, if (chosen) color.copy(alpha = 0.62f) else Hairline),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .clickable(enabled = enabled && !chosen) { onSelect(method) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            method.displayName,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            when (method) {
+                                NonRootMethod.IDENTITY_SHELL ->
+                                    "Keeps the untouched game as a private payload and runs it through its exact package identity."
+                                NonRootMethod.DIRECT_PATCH ->
+                                    "Builds a signed replacement with the add-on embedded for devices that reject the shell route."
+                                NonRootMethod.INJECTION ->
+                                    "Runs the original game inside the managed non-root environment."
+                            },
+                            color = Muted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        when {
+                            installed == method -> "ACTIVE"
+                            chosen && method == recommended -> "RECOMMENDED"
+                            chosen -> "SELECTED"
+                            method == recommended -> "RECOMMENDED"
+                            else -> "ALTERNATIVE"
+                        },
+                        color = color,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            if (index != methods.lastIndex) Spacer(Modifier.height(9.dp))
+        }
+        if (installed != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "The installed ${installed.displayName.lowercase()} is locked in for safety. " +
+                    "Restore the original game before choosing another route.",
+                color = Accent,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 

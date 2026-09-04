@@ -203,6 +203,16 @@ class ModuleCatalogClient(
                     }
                     ModuleAccess.PRIVATE
                 }
+                val nonRootMethod = NonRootMethod.fromJson(
+                    item.optString("nonrootMethod").takeIf { it.isNotBlank() },
+                    packageName
+                )
+                val nonRootMethods = NonRootMethod.choicesFromJson(
+                    item.optJSONArray("nonrootMethods")?.let { values ->
+                        List(values.length()) { index -> values.getString(index) }
+                    },
+                    nonRootMethod
+                )
                 add(
                     CatalogModule(
                         config = ModuleConfig(
@@ -214,10 +224,8 @@ class ModuleCatalogClient(
                             dexFile = "classes.dex",
                             nativeFile = "libmenu_native.so",
                             iconFile = null,
-                            nonRootMethod = NonRootMethod.fromJson(
-                                item.optString("nonrootMethod").takeIf { it.isNotBlank() },
-                                packageName
-                            ),
+                            nonRootMethod = nonRootMethod,
+                            nonRootMethods = nonRootMethods,
                             catalogSlug = slug
                         ),
                         slug = slug,

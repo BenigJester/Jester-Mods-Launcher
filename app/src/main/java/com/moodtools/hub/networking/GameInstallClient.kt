@@ -4,12 +4,12 @@ import android.app.PendingIntent
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.android.apksig.ApkVerifier
 import com.moodtools.hub.modules.CatalogModule
 import com.moodtools.hub.modules.GameInstallSource
 import com.moodtools.hub.modules.GamePackageFormat
@@ -354,7 +354,7 @@ class GameInstallClient(private val context: Context) {
         require(archiveVersion == source.versionCode) {
             "The downloaded game version does not match its signed catalog entry"
         }
-        require(source.signingCertificateSha256 in signingDigests(archive)) {
+        require(source.signingCertificateSha256 in verifiedSigningDigests(apk)) {
             "The downloaded game has an unexpected signing certificate"
         }
     }
@@ -387,15 +387,17 @@ class GameInstallClient(private val context: Context) {
         .replace(Regex("[^A-Za-z0-9_.-]"), "_")
         .take(120)
 
-    private fun signingDigests(info: PackageInfo): Set<String> {
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            info.signingInfo?.apkContentsSigners ?: error("Game signing information is unavailable")
-        } else {
-            @Suppress("DEPRECATION") info.signatures
+    private fun verifiedSigningDigests(apk: File): Set<String> {
+        val verification = ApkVerifier.Builder(apk)
+            .setMinCheckedPlatformVersion(Build.VERSION.SDK_INT)
+            .build()
+            .verify()
+        require(verification.isVerified) {
+            "The downloaded game's Android signature could not be verified"
         }
-        return signatures.orEmpty().mapTo(mutableSetOf()) { signature ->
+        return verification.signerCertificates.mapTo(mutableSetOf()) { certificate ->
             MessageDigest.getInstance("SHA-256")
-                .digest(signature.toByteArray())
+                .digest(certificate.encoded)
                 .joinToString("") { "%02x".format(it) }
         }
     }

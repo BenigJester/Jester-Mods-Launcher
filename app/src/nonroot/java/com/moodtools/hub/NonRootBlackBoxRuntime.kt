@@ -16,6 +16,7 @@ import top.niunaijun.blackbox.core.env.BEnvironment
 object NonRootBlackBoxRuntime {
     private const val TAG = "NonRootBlackBox"
     private const val DEFAULT_USER_ID = 0
+    private const val SERVICE_READY_TIMEOUT_MS = 12_000L
     private const val SESSION_PREFERENCES = "nonroot_blackbox_session"
     private const val ACTIVE_PACKAGE_KEY = "active_package"
     private const val KINGDOM_ADVENTURERS_PACKAGE = "net.kairosoft.android.kingdom_en"
@@ -44,7 +45,7 @@ object NonRootBlackBoxRuntime {
         require(packagePattern.matches(packageName)) { "Invalid game package name" }
         val appContext = context.applicationContext
         val core = BlackBoxCore.get()
-        core.ensureBlackProcessInitialized()
+        core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS)
 
         val wasActive = activePackage(appContext) == packageName
         val wasRunning = BlackBoxCore.isRunningApplication(packageName, DEFAULT_USER_ID)
@@ -121,7 +122,7 @@ object NonRootBlackBoxRuntime {
         return runCatching {
             require(packagePattern.matches(game.packageName)) { "Invalid game package name" }
             val core = BlackBoxCore.get()
-            core.ensureBlackProcessInitialized()
+            core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS)
             val userId = DEFAULT_USER_ID
 
             prepareGuestSwitch(context, core, game.packageName, userId)

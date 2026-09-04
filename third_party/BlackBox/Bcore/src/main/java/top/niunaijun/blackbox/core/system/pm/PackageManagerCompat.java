@@ -191,9 +191,17 @@ public class PackageManagerCompat {
             }
         }
         PackageInfo base = null;
-        try {
-            base = BlackBoxCore.getContext().getPackageManager().getPackageInfo(p.packageName, flags);
-        } catch (PackageManager.NameNotFoundException ignored) {
+        // An exact-package identity shell deliberately has the same physical package name as its
+        // virtual guest. Returning the physical package's signer here exposes the generated shell
+        // certificate to the game and defeats the preserved Play-signed package identity. Normal
+        // BlackBox hosts keep the legacy physical-package fallback for system compatibility.
+        final boolean exactPackageGuest = p.packageName.equals(BlackBoxCore.getHostPkg())
+                && BlackBoxCore.get().isHostPackageVirtualizationEnabled();
+        if (!exactPackageGuest) {
+            try {
+                base = BlackBoxCore.getContext().getPackageManager().getPackageInfo(p.packageName, flags);
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
         }
         if ((flags & PackageManager.GET_SIGNATURES) != 0) {
             if (base == null) {

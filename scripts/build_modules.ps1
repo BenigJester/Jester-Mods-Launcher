@@ -265,7 +265,21 @@ foreach ($moduleDir in $moduleDirectories) {
     if ($moduleConfig.nonroot_method -notin @('injection', 'direct_patch', 'identity_shell')) {
         throw "Module ${name} must declare nonroot_method as 'injection', 'direct_patch', or 'identity_shell'."
     }
-    if ($moduleConfig.nonroot_method -eq 'direct_patch') {
+    [string[]] $nonRootMethods = if ($null -eq $moduleConfig.nonroot_methods) {
+        @([string]$moduleConfig.nonroot_method)
+    } else {
+        @($moduleConfig.nonroot_methods | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    }
+    if ($nonRootMethods.Count -eq 0 -or $nonRootMethods[0] -cne [string]$moduleConfig.nonroot_method -or
+            @($nonRootMethods | Select-Object -Unique).Count -ne $nonRootMethods.Count -or
+            @($nonRootMethods | Where-Object { $_ -notin @('injection', 'direct_patch', 'identity_shell') }).Count -gt 0) {
+        throw "Module ${name} nonroot_methods must be unique, valid, and begin with nonroot_method."
+    }
+    if ($nonRootMethods.Count -gt 1 -and
+            (Compare-Object @('direct_patch', 'identity_shell') @($nonRootMethods | Sort-Object -Unique) -SyncWindow 0).Count -gt 0) {
+        throw "Module ${name} may only offer identity_shell and direct_patch together."
+    }
+    if ($nonRootMethods -contains 'direct_patch') {
         $launchGuard = Join-Path $java "DirectLaunchGuard.java"
         $componentFactory = Join-Path $java "ModComponentFactory.java"
         if (-not ((Test-Path -LiteralPath $launchGuard -PathType Leaf) -and

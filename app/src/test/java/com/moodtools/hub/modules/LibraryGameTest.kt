@@ -61,6 +61,24 @@ class LibraryGameTest {
     }
 
     @Test
+    fun stagedTestMetadataWinsOverAnOlderCatalogConfig() {
+        val catalog = module("com.example.strict", "Published").copy(
+            nonRootMethod = NonRootMethod.IDENTITY_SHELL,
+            nonRootMethods = listOf(NonRootMethod.IDENTITY_SHELL)
+        )
+        val staged = catalog.copy(
+            title = "Staged test",
+            nonRootMethods = listOf(
+                NonRootMethod.IDENTITY_SHELL,
+                NonRootMethod.DIRECT_PATCH
+            )
+        )
+
+        assertEquals(staged, installedModuleConfig(catalog, staged, localTest = true))
+        assertEquals(catalog, installedModuleConfig(catalog, staged, localTest = false))
+    }
+
+    @Test
     fun libraryCarriesTheResolvedPrimaryLaunchAction() {
         val entry = libraryGame("Patch").copy(
             launchAction = LibraryLaunchAction.PATCH_AND_INSTALL

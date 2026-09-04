@@ -2,6 +2,7 @@ package com.moodtools.identity;
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,6 +15,10 @@ import android.widget.TextView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.core.env.BEnvironment;
@@ -27,12 +32,18 @@ public final class IdentityShellActivity extends Activity {
     private static final String METHOD_GAME_IMPORT_SUCCEEDED =
             "identity_game_import_succeeded";
     private static final int USER_ID = 0;
+    private static final long SERVICE_READY_TIMEOUT_MS = 12000L;
+    private static final AtomicBoolean SETUP_IN_PROGRESS = new AtomicBoolean(false);
     private TextView status;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         showLoadingView();
+        if (!SETUP_IN_PROGRESS.compareAndSet(false, true)) {
+            updateStatus("Game setup is already running…");
+            return;
+        }
         boolean fullModuleAuthorized = IdentityLaunchGuard.authorize(this, getIntent());
         Thread worker = new Thread(
                 () -> prepareAndLaunch(fullModuleAuthorized), "identity-shell-launch");
@@ -63,7 +74,8 @@ public final class IdentityShellActivity extends Activity {
         String targetPackage = getPackageName();
         try {
             BlackBoxCore core = BlackBoxCore.get();
-            core.ensureBlackProcessInitialized();
+            updateStatus("Starting compatibility service…");
+            core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
             if (!core.isInstalled(targetPackage, USER_ID)) {
                 updateStatus("Importing original game…");
                 importOriginalGame(core, targetPackage);
@@ -85,6 +97,8 @@ public final class IdentityShellActivity extends Activity {
         } catch (Throwable error) {
             Log.e(TAG, "Identity-shell launch failed", error);
             showFailure(error.getMessage());
+        } finally {
+            SETUP_IN_PROGRESS.set(false);
         }
     }
 
@@ -109,12 +123,13 @@ public final class IdentityShellActivity extends Activity {
             }
 
             InstallResult lastResult = null;
+            final int expectedSplitCount = countPayloadSplits(stagedPayload);
             for (int attempt = 0; attempt < 2; attempt++) {
-                core.ensureBlackProcessInitialized();
+                core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
                 lastResult = core.installPackageAsUser(stagedPayload, USER_ID);
                 boolean recoverable = isRecoverableInstallFailure(lastResult.msg);
                 if ((lastResult.success || recoverable)
-                        && waitForImportedGame(core, targetPackage)) return;
+                        && waitForImportedGame(core, targetPackage, expectedSplitCount)) return;
                 if (attempt == 0 && (lastResult.success || recoverable)) {
                     updateStatus("Recovering game setup…");
                     Thread.sleep(750L);
@@ -125,7 +140,7 @@ public final class IdentityShellActivity extends Activity {
 
             String detail = lastResult == null ? null : lastResult.msg;
             if (lastResult != null && lastResult.success) {
-                detail = "The original game import could not be verified";
+                detail = "The original game's installed split set could not be preserved";
             }
             throw new IllegalStateException(detail == null || detail.trim().isEmpty()
                     ? "The original game payload could not be imported"
@@ -137,13 +152,40 @@ public final class IdentityShellActivity extends Activity {
         }
     }
 
-    private boolean waitForImportedGame(BlackBoxCore core, String targetPackage)
+    private boolean waitForImportedGame(BlackBoxCore core, String targetPackage,
+                                        int expectedSplitCount)
             throws InterruptedException {
         for (int check = 0; check < 8; check++) {
-            if (core.isInstalled(targetPackage, USER_ID)) return true;
+            if (core.isInstalled(targetPackage, USER_ID)) {
+                ApplicationInfo info = core.getBPackageManager()
+                        .getApplicationInfo(targetPackage, 0, USER_ID);
+                int importedSplitCount = info == null || info.splitSourceDirs == null
+                        ? 0 : info.splitSourceDirs.length;
+                if (importedSplitCount == expectedSplitCount) return true;
+                Log.w(TAG, "Imported split-set incomplete: expected=" + expectedSplitCount
+                        + " actual=" + importedSplitCount);
+            }
             Thread.sleep(250L);
         }
         return false;
+    }
+
+    private int countPayloadSplits(File payload) throws Exception {
+        int apkCount = 0;
+        try (ZipFile zip = new ZipFile(payload)) {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (!entry.isDirectory() && entry.getName().toLowerCase(java.util.Locale.US)
+                        .endsWith(".apk")) {
+                    apkCount++;
+                }
+            }
+        }
+        if (apkCount == 0) {
+            throw new IllegalStateException("The preserved original game contains no APK files");
+        }
+        return apkCount - 1;
     }
 
     private boolean isRecoverableInstallFailure(String detail) {
@@ -206,9 +248,16 @@ public final class IdentityShellActivity extends Activity {
         if (!copiedAny) {
             for (String name : files) {
                 if (!new File(directory, name).isFile()) {
-                    Log.w(TAG, "No staged module payload; launching the original game only");
-                    return;
+                    throw new IllegalStateException(
+                            "The add-on payload is incomplete. Open Jester Mods and update or reinstall this add-on");
                 }
+            }
+        }
+        for (String name : files) {
+            File payload = new File(directory, name);
+            if (!payload.isFile() || payload.length() <= 0L) {
+                throw new IllegalStateException(
+                        "The add-on payload is incomplete. Open Jester Mods and update or reinstall this add-on");
             }
         }
     }

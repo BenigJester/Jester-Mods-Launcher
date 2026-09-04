@@ -50,6 +50,17 @@ class ModuleRepository(private val context: Context) {
             require(packageName.isNotBlank()) { "Module package name is required" }
             require(packageName == directory.name) { "Module directory must match package_name" }
 
+            val nonRootMethod = NonRootMethod.fromJson(
+                json.optString("nonroot_method").takeIf { it.isNotBlank() },
+                packageName
+            )
+            val nonRootMethods = NonRootMethod.choicesFromJson(
+                json.optJSONArray("nonroot_methods")?.let { values ->
+                    List(values.length()) { index -> values.getString(index) }
+                },
+                nonRootMethod
+            )
+
             ModuleConfig(
                 packageName = packageName,
                 title = json.optString("title", json.optString("game_name", packageName)),
@@ -62,10 +73,8 @@ class ModuleRepository(private val context: Context) {
                 dexFile = json.optString("dex_file", "classes.dex"),
                 nativeFile = json.optString("native_file", "libmenu_native.so"),
                 iconFile = json.optString("icon_file").takeIf { it.isNotBlank() },
-                nonRootMethod = NonRootMethod.fromJson(
-                    json.optString("nonroot_method").takeIf { it.isNotBlank() },
-                    packageName
-                ),
+                nonRootMethod = nonRootMethod,
+                nonRootMethods = nonRootMethods,
                 catalogSlug = json.optString("module_slug").takeIf { it.matches(SLUG) }
             ).also {
                 require(it.supportedAbis.isNotEmpty()) { "Module supported_abis must not be empty" }

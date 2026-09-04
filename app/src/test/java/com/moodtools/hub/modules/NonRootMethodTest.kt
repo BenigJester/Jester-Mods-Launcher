@@ -69,6 +69,82 @@ class NonRootMethodTest {
     }
 
     @Test
+    fun strictUidModuleCanOfferShellWithPatchFallback() {
+        val choices = NonRootMethod.choicesFromJson(
+            listOf("identity_shell", "direct_patch"),
+            NonRootMethod.IDENTITY_SHELL
+        )
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Example",
+            supportedVersions = setOf("1.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = "com.android.support.Main",
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            nonRootMethod = NonRootMethod.IDENTITY_SHELL,
+            nonRootMethods = choices,
+            selectedNonRootMethod = NonRootMethod.DIRECT_PATCH
+        )
+
+        assertEquals(
+            listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH),
+            choices
+        )
+        assertEquals(NonRootMethod.DIRECT_PATCH, module.effectiveNonRootMethod)
+    }
+
+    @Test
+    fun strictUidChoicesRejectWrongOrderAndInjectionPairs() {
+        assertThrows(IllegalArgumentException::class.java) {
+            NonRootMethod.choicesFromJson(
+                listOf("direct_patch", "identity_shell"),
+                NonRootMethod.IDENTITY_SHELL
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NonRootMethod.choicesFromJson(
+                listOf("identity_shell", "injection"),
+                NonRootMethod.IDENTITY_SHELL
+            )
+        }
+    }
+
+    @Test
+    fun installedMethodWinsSavedDeviceChoice() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Example",
+            supportedVersions = setOf("1.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = "com.android.support.Main",
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            nonRootMethod = NonRootMethod.IDENTITY_SHELL,
+            nonRootMethods = listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH)
+        )
+
+        assertEquals(
+            NonRootMethod.DIRECT_PATCH,
+            resolveNonRootMethodChoice(
+                module,
+                saved = NonRootMethod.IDENTITY_SHELL,
+                installed = NonRootMethod.DIRECT_PATCH
+            )
+        )
+        assertEquals(
+            NonRootMethod.IDENTITY_SHELL,
+            resolveNonRootMethodChoice(
+                module,
+                saved = NonRootMethod.IDENTITY_SHELL,
+                installed = NonRootMethod.INJECTION
+            )
+        )
+    }
+
+    @Test
     fun identityShellRequiresOfficialRestoreWhenALegacyPatchIsInstalled() {
         assertEquals(
             LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL,

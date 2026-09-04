@@ -735,7 +735,9 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                     return result.installError("APKS bundle: could not find base APK");
                 }
 
-                selectedSplits = selectSplitApks(extractedApks, apkFile, BlackBoxCore.is64Bit());
+                selectedSplits = isPreservedDeviceSplitSet(stagedFile)
+                        ? allNonBaseSplits(extractedApks, apkFile)
+                        : selectSplitApks(extractedApks, apkFile, BlackBoxCore.is64Bit());
                 StringBuilder splitNames = new StringBuilder();
                 if (selectedSplits != null) {
                     for (File s : selectedSplits) {
@@ -1113,6 +1115,29 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         if (abiSplit != null) result.add(abiSplit);
         if (densitySplit != null && densitySplit != abiSplit) result.add(densitySplit);
         if (langSplit != null && langSplit != abiSplit && langSplit != densitySplit) result.add(langSplit);
+        return result;
+    }
+
+    /**
+     * Identity shells archive the exact split set Android had already selected for this device.
+     * Re-running a global ABI/density/language heuristic can drop configuration splits belonging
+     * to dynamic feature modules, so a launcher-authored archive keeps every installed split.
+     */
+    private static boolean isPreservedDeviceSplitSet(File apksFile) {
+        if (apksFile == null || !apksFile.isFile()) return false;
+        try (ZipFile zip = new ZipFile(apksFile)) {
+            return zip.getEntry("META-INF/jester-installed-split-set-v1") != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static List<File> allNonBaseSplits(List<File> apks, File baseApk) {
+        if (apks == null || apks.isEmpty()) return Collections.emptyList();
+        ArrayList<File> result = new ArrayList<>();
+        for (File file : apks) {
+            if (file != null && !file.equals(baseApk)) result.add(file);
+        }
         return result;
     }
 

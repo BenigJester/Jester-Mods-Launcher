@@ -28,6 +28,8 @@ object ExecutionModeLaunchBridge {
 
     fun isInstalledIdentityShell(context: Context, game: LibraryGame): Boolean = false
 
+    fun installedNonRootMethod(context: Context, packageName: String): com.moodtools.hub.modules.NonRootMethod? = null
+
     fun requiresOfficialRestoreBeforeIdentityShell(context: Context, game: InstalledGame): Boolean = false
 
     fun discardPreparedIdentityShell(context: Context, packageName: String) = Unit

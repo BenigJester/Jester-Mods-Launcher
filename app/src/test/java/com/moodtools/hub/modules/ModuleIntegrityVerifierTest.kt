@@ -43,6 +43,16 @@ class ModuleIntegrityVerifierTest {
     }
 
     @Test
+    fun verifiesSignedStrictUidMethodChoices() {
+        val methods = listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH)
+        val fixture = fixture(NonRootMethod.IDENTITY_SHELL, nonRootMethods = methods)
+
+        fixture.verifier.verify(fixture.directory, fixture.module, ABI)
+
+        assertEquals(methods, fixture.module.nonRootMethods)
+    }
+
+    @Test
     fun rejectsDexContentTamperingEvenWhenSizeIsUnchanged() {
         val fixture = fixture()
         File(fixture.directory, "classes.dex").writeBytes("signed-dex-X".toByteArray())
@@ -118,6 +128,7 @@ class ModuleIntegrityVerifierTest {
 
     private fun fixture(
         nonRootMethod: NonRootMethod? = null,
+        nonRootMethods: List<NonRootMethod>? = null,
         privateScope: String? = null
     ): Fixture {
         val directory = temporary.newFolder(PACKAGE_NAME)
@@ -138,6 +149,9 @@ class ModuleIntegrityVerifierTest {
             .put("native_file", "libmenu_native.so")
             .also { json ->
                 nonRootMethod?.let { json.put("nonroot_method", it.jsonValue) }
+                nonRootMethods?.let {
+                    json.put("nonroot_methods", JSONArray(it.map(NonRootMethod::jsonValue)))
+                }
             }
         File(directory, "config.json").writeText(config.toString())
 
@@ -151,6 +165,9 @@ class ModuleIntegrityVerifierTest {
             .put("nativeFile", "libmenu_native.so")
             .also { json ->
                 nonRootMethod?.let { json.put("nonrootMethod", it.jsonValue) }
+                nonRootMethods?.let {
+                    json.put("nonrootMethods", JSONArray(it.map(NonRootMethod::jsonValue)))
+                }
             }
 
         val payload = JSONObject()
@@ -205,7 +222,8 @@ class ModuleIntegrityVerifierTest {
                 dexFile = "classes.dex",
                 nativeFile = "libmenu_native.so",
                 iconFile = null,
-                nonRootMethod = nonRootMethod ?: NonRootMethod.INJECTION
+                nonRootMethod = nonRootMethod ?: NonRootMethod.INJECTION,
+                nonRootMethods = nonRootMethods ?: listOf(nonRootMethod ?: NonRootMethod.INJECTION)
             ),
             verifier = ModuleIntegrityVerifier(Base64.getEncoder().encodeToString(keys.public.encoded))
         )

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstring>
 #include <cstdint>
+#include <cerrno>
 #include <elf.h>
 #include <initializer_list>
 #include <map>
@@ -11,6 +12,7 @@
 
 #include <jni.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include "Includes/Logger.h"
 #include "Includes/Utils.hpp"
@@ -47,6 +49,7 @@ enum class CompatibilityState : int {
 enum class CompatibilityFailure : int {
     None = 0,
     TargetProfileMismatch,
+    ExecuteOnlyReadDenied,
     StartupPatchRejected,
 };
 
@@ -67,6 +70,8 @@ static std::atomic<bool> gNativeInstallStarted{false};
 static std::atomic<CompatibilityState> gCompatibilityState{CompatibilityState::Waiting};
 static std::atomic<CompatibilityFailure> gCompatibilityFailure{CompatibilityFailure::None};
 static std::atomic<int> gRuntimeMethod{0};
+static std::atomic<int> gExecuteOnlyReadSuccessCount{0};
+static std::atomic<int> gExecuteOnlyReadDeniedCount{0};
 static std::atomic<bool> gHookExampleAvailable{true};
 static std::atomic<bool> gDirectCallExampleAvailable{true};
 static std::atomic<bool> gInstallWatchdogRecovered{false};
@@ -233,6 +238,42 @@ void AppendUniqueMatches(std::vector<uintptr_t> *destination,
             std::unique(destination->begin(), destination->end()), destination->end());
 }
 
+// Capability-based XOM support: Android 10 and vendor kernels may map native code without
+// PROT_READ. Do not guess from the SDK or brand. Ask the kernel for temporary read access, scan,
+// then restore the exact original protection. A denial is preserved as its own diagnostic.
+void ScanExecutableRange(std::vector<uintptr_t> *matches,
+                         uintptr_t start,
+                         uintptr_t end,
+                         int protection,
+                         const char *pattern) {
+    if (matches == nullptr || start == 0 || end <= start ||
+        (protection & PROT_EXEC) == 0) return;
+    const bool executeOnly = (protection & PROT_READ) == 0;
+    if (executeOnly) {
+        errno = 0;
+        if (KittyMemory::memProtect(reinterpret_cast<const void *>(start), end - start,
+                                    protection | PROT_READ) != 0) {
+            gExecuteOnlyReadDeniedCount.fetch_add(1, std::memory_order_relaxed);
+            LOGW(OBFUSCATE("Execute-only target range denied temporary read access: errno=%d"),
+                 errno);
+            return;
+        }
+        gExecuteOnlyReadSuccessCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    AppendUniqueMatches(matches, KittyScanner::findIdaPatternAll(start, end, pattern));
+    if (executeOnly &&
+        KittyMemory::memProtect(reinterpret_cast<const void *>(start), end - start,
+                                protection) != 0) {
+        LOGW(OBFUSCATE("Execute-only target protection restore failed: errno=%d"), errno);
+    }
+}
+
+CompatibilityFailure TargetDiscoveryFailure() {
+    return gExecuteOnlyReadDeniedCount.load(std::memory_order_acquire) > 0
+           ? CompatibilityFailure::ExecuteOnlyReadDenied
+           : CompatibilityFailure::TargetProfileMismatch;
+}
+
 std::vector<uintptr_t> FindTargetExecutablePattern(const char *pattern) {
     std::vector<uintptr_t> matches;
 
@@ -241,9 +282,9 @@ std::vector<uintptr_t> FindTargetExecutablePattern(const char *pattern) {
     const auto maps = KittyMemory::getMaps(
             KittyMemory::EProcMapFilter::Contains, targetLibName);
     for (const auto &map : maps) {
-        if (!map.readable || !map.executable || map.length == 0) continue;
-        AppendUniqueMatches(&matches, KittyScanner::findIdaPatternAll(
-                map.startAddress, map.endAddress, pattern));
+        if (!map.executable || map.length == 0) continue;
+        ScanExecutableRange(&matches, map.startAddress, map.endAddress,
+                            map.protection, pattern);
     }
 
     // Also scan executable ELF PT_LOAD segments. This covers native-bridge or anonymous mappings
@@ -258,11 +299,10 @@ std::vector<uintptr_t> FindTargetExecutablePattern(const char *pattern) {
             const uintptr_t start = targetElf.loadBias() + programHeader.p_vaddr;
             const uintptr_t requestedEnd = start + programHeader.p_filesz;
             const auto addressMap = KittyMemory::getAddressMap(start);
-            if (!addressMap.isValid() || !addressMap.readable || !addressMap.executable) continue;
+            if (!addressMap.isValid() || !addressMap.executable) continue;
             const uintptr_t safeEnd = std::min(requestedEnd, addressMap.endAddress);
             if (safeEnd <= start) continue;
-            AppendUniqueMatches(&matches, KittyScanner::findIdaPatternAll(
-                    start, safeEnd, pattern));
+            ScanExecutableRange(&matches, start, safeEnd, addressMap.protection, pattern);
         }
     }
     return matches;
@@ -272,8 +312,8 @@ bool IsExecutableTargetAddress(uintptr_t address, size_t byteCount) {
     if (address == 0 || byteCount == 0 ||
         (address & (alignof(uint32_t) - 1)) != 0) return false;
     const auto map = KittyMemory::getAddressMap(address);
-    return map.isValid() && map.readable && map.executable &&
-           address <= map.endAddress && byteCount <= map.endAddress - address;
+    return map.isValid() && map.executable && address <= map.endAddress &&
+           byteCount <= map.endAddress - address;
 }
 
 template <size_t N>
@@ -352,7 +392,7 @@ bool InstallPackageIdentityCompatibilityExamples() {
     const uintptr_t startupTarget = FindVerifiedStartupPatchTarget();
     if (startupTarget == 0) {
         gCompatibilityFailure.store(
-                CompatibilityFailure::TargetProfileMismatch, std::memory_order_release);
+                TargetDiscoveryFailure(), std::memory_order_release);
         return false;
     }
 
@@ -542,6 +582,8 @@ const char *CompatibilityFailureName(CompatibilityFailure failure) {
             return "";
         case CompatibilityFailure::TargetProfileMismatch:
             return "target binary differs from every verified profile";
+        case CompatibilityFailure::ExecuteOnlyReadDenied:
+            return "device blocked safe inspection of execute-only game code";
         case CompatibilityFailure::StartupPatchRejected:
             return "device rejected a verified startup patch";
     }
@@ -581,6 +623,9 @@ std::string CompatibilityFeatureDescriptor() {
 #else
     descriptor += " | ARMv7";
 #endif
+    if (gExecuteOnlyReadSuccessCount.load(std::memory_order_acquire) > 0) {
+        descriptor += " | XOM compatible";
+    }
     const long build = DetectedAppVersionCode();
     if (build > 0) {
         descriptor += " | ";
