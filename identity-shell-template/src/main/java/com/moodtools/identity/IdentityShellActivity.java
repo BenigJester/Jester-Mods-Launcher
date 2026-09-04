@@ -17,6 +17,7 @@ import java.io.InputStream;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.core.env.BEnvironment;
+import top.niunaijun.blackbox.entity.pm.InstallResult;
 
 /** Direct launcher entry for a generated exact-package shell. */
 public final class IdentityShellActivity extends Activity {
@@ -65,17 +66,7 @@ public final class IdentityShellActivity extends Activity {
             core.ensureBlackProcessInitialized();
             if (!core.isInstalled(targetPackage, USER_ID)) {
                 updateStatus("Importing original game…");
-                Uri gamePayload = payloadUri(targetPackage, "game.apks");
-                top.niunaijun.blackbox.entity.pm.InstallResult result =
-                        core.installPackageAsUser(gamePayload, USER_ID);
-                if (!result.success) {
-                    throw new IllegalStateException(result.msg == null
-                            ? "The original game payload could not be imported"
-                            : result.msg);
-                }
-                if (!core.isInstalled(targetPackage, USER_ID)) {
-                    throw new IllegalStateException("The original game import could not be verified");
-                }
+                importOriginalGame(core, targetPackage);
             }
             releaseImportedGameBackup(targetPackage);
 
@@ -94,6 +85,84 @@ public final class IdentityShellActivity extends Activity {
         } catch (Throwable error) {
             Log.e(TAG, "Identity-shell launch failed", error);
             showFailure(error.getMessage());
+        }
+    }
+
+    /**
+     * Stage the cross-package provider stream in this shell before asking the BlackBox service
+     * to parse it. Some OEM Binder implementations interrupt a long provider stream when it is
+     * opened from the remote service process. A shell-owned file keeps that transfer local and
+     * also gives us a safe source for one service-recovery retry.
+     */
+    private void importOriginalGame(BlackBoxCore core, String targetPackage) throws Exception {
+        File stagedPayload = new File(getCacheDir(), "identity-game-import.apks");
+        if (stagedPayload.exists() && !stagedPayload.delete()) {
+            throw new IllegalStateException("Could not replace the staged original game");
+        }
+        try {
+            try (InputStream input = getContentResolver().openInputStream(
+                    payloadUri(targetPackage, "game.apks"))) {
+                if (input == null) {
+                    throw new IllegalStateException("The preserved original game is unavailable");
+                }
+                copyToFile(input, stagedPayload);
+            }
+
+            InstallResult lastResult = null;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                core.ensureBlackProcessInitialized();
+                lastResult = core.installPackageAsUser(stagedPayload, USER_ID);
+                boolean recoverable = isRecoverableInstallFailure(lastResult.msg);
+                if ((lastResult.success || recoverable)
+                        && waitForImportedGame(core, targetPackage)) return;
+                if (attempt == 0 && (lastResult.success || recoverable)) {
+                    updateStatus("Recovering game setup…");
+                    Thread.sleep(750L);
+                    continue;
+                }
+                break;
+            }
+
+            String detail = lastResult == null ? null : lastResult.msg;
+            if (lastResult != null && lastResult.success) {
+                detail = "The original game import could not be verified";
+            }
+            throw new IllegalStateException(detail == null || detail.trim().isEmpty()
+                    ? "The original game payload could not be imported"
+                    : detail.trim());
+        } finally {
+            if (stagedPayload.exists() && !stagedPayload.delete()) {
+                Log.w(TAG, "Could not clear staged original-game import");
+            }
+        }
+    }
+
+    private boolean waitForImportedGame(BlackBoxCore core, String targetPackage)
+            throws InterruptedException {
+        for (int check = 0; check < 8; check++) {
+            if (core.isInstalled(targetPackage, USER_ID)) return true;
+            Thread.sleep(250L);
+        }
+        return false;
+    }
+
+    private boolean isRecoverableInstallFailure(String detail) {
+        if (detail == null) return false;
+        String normalized = detail.toLowerCase(java.util.Locale.US);
+        return normalized.contains("remote exception")
+                || normalized.contains("service unavailable")
+                || normalized.contains("binder");
+    }
+
+    private void copyToFile(InputStream input, File target) throws Exception {
+        try (FileOutputStream output = new FileOutputStream(target)) {
+            byte[] buffer = new byte[128 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
+            output.getFD().sync();
+        }
+        if (target.length() <= 0L) {
+            throw new IllegalStateException("The preserved original game is empty");
         }
     }
 

@@ -543,7 +543,9 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
             }
             return service.installPackageAsUser(file, option, userId);
         } catch (RemoteException e) {
-            crash(e);
+            Log.e(TAG, "RemoteException in installPackageAsUser; clearing stale service", e);
+            transactionThrottler.recordFailure();
+            clearServiceCache();
         }
         return new InstallResult().installError("Remote exception during install");
     }
@@ -644,6 +646,15 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
     
     private boolean isInstalledFallback(String packageName) {
         try {
+            // An exact-package shell deliberately has the same physical identity as its virtual
+            // guest. The host package therefore cannot prove that the original game was imported.
+            // Returning true here would skip import after a service startup failure and leave a
+            // permanently empty shell.
+            if (packageName != null && packageName.equals(BlackBoxCore.getHostPkg())
+                    && BlackBoxCore.get().isHostPackageVirtualizationEnabled()) {
+                Log.w(TAG, "Host-package fallback cannot verify a virtualized identity");
+                return false;
+            }
             
             BlackBoxCore.getContext().getPackageManager().getPackageInfo(packageName, 0);
             return true;

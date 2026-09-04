@@ -173,7 +173,7 @@ enum class ModuleTransferIntent {
 }
 
 internal fun moduleTransferPrimaryActionLabel(state: ModuleUpdateUiState): String = when {
-    state.updateAvailable -> "Download update"
+    state.updateAvailable -> "Update"
     state.intent == ModuleTransferIntent.UPDATE_CHECK -> "Check again"
     else -> "Try again"
 }

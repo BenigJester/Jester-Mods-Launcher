@@ -18,7 +18,7 @@ class ModuleTransferPresentationTest {
             updateAvailable = true
         )
 
-        assertEquals("Download update", moduleTransferPrimaryActionLabel(state))
+        assertEquals("Update", moduleTransferPrimaryActionLabel(state))
     }
 
     @Test
