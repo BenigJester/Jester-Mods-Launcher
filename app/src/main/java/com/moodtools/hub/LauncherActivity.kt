@@ -4845,8 +4845,71 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _packageSetupState.value = PackageSetupUiState()
         _directPatchPromptState.value = DirectPatchPromptUiState()
         _launchState.value = LaunchUiState()
-        scannedConfigs = null
-        refreshGames(forceGameScan = true)
+
+        // This choice only changes launcher-owned routing. Keep the scanner's package label,
+        // icon, and other Android metadata intact instead of rebuilding the whole library.
+        val choiceKey = nonRootMethodChoiceKey(game.module)
+        fun updatedConfig(config: com.moodtools.hub.modules.ModuleConfig): com.moodtools.hub.modules.ModuleConfig =
+            if (nonRootMethodChoiceKey(config) == choiceKey && method in config.nonRootMethods) {
+                config.copy(selectedNonRootMethod = method)
+            } else {
+                config
+            }
+        fun updatedGame(installedGame: InstalledGame?): InstalledGame? = installedGame?.let { current ->
+            val module = updatedConfig(current.module)
+            if (module == current.module) current else current.copy(module = module)
+        }
+        fun updatedListing(listing: ModuleListing?): ModuleListing? = listing?.let { current ->
+            val config = updatedConfig(current.catalog.config)
+            val detectedGame = updatedGame(current.game)
+            if (config == current.catalog.config && detectedGame == current.game) {
+                current
+            } else {
+                current.copy(
+                    catalog = current.catalog.copy(config = config),
+                    game = detectedGame
+                )
+            }
+        }
+
+        scannedConfigs = scannedConfigs?.map(::updatedConfig)
+        detectedGamesCache = detectedGamesCache.mapNotNull(::updatedGame)
+        _availableModules.value = _availableModules.value.mapNotNull(::updatedListing)
+        _libraryGames.value = _libraryGames.value.map { current ->
+            val module = updatedConfig(current.module)
+            val detectedGame = updatedGame(current.game)
+            val listing = updatedListing(current.listing)
+            if (module == current.module && detectedGame == current.game && listing == current.listing) {
+                current
+            } else {
+                current.copy(
+                    module = module,
+                    game = detectedGame,
+                    listing = listing,
+                    launchAction = detectedGame?.let {
+                        ExecutionModeLaunchBridge.libraryLaunchAction(getApplication(), it)
+                    } ?: current.launchAction
+                )
+            }
+        }
+        _games.value = _libraryGames.value.mapNotNull(LibraryGame::game)
+
+        val selectedPackage = _selectedGame.value?.packageName
+        if (selectedPackage != null) {
+            _selectedGame.value = _games.value.firstOrNull { it.packageName == selectedPackage }
+        }
+        val selectedIdentity = _selectedLibraryGame.value?.moduleIdentity
+        if (selectedIdentity != null) {
+            _selectedLibraryGame.value = _libraryGames.value.firstOrNull {
+                it.moduleIdentity == selectedIdentity
+            }
+        }
+        val downloadSlug = _downloadListing.value?.catalog?.slug
+        if (downloadSlug != null) {
+            _downloadListing.value = _availableModules.value.firstOrNull {
+                it.catalog.slug == downloadSlug
+            }
+        }
     }
 
     private fun nonRootMethodChoiceKey(config: com.moodtools.hub.modules.ModuleConfig): String =

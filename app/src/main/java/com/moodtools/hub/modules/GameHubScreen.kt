@@ -5465,12 +5465,16 @@ private fun ModuleListingCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.bodySmall)
-                Text("Add-on ${listing.catalog.version}", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "Game version ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")}",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
+                )
                 Spacer(Modifier.height(7.dp))
                 LauncherMethodBadge(
-                    launcherMethodPresentation(
-                        listing.catalog.config.effectiveNonRootMethod,
-                        BuildConfig.IS_ROOT_MODE
+                    launcherMethodBadgePresentation(
+                        module = listing.catalog.config,
+                        rootMode = BuildConfig.IS_ROOT_MODE
                     )
                 )
             }
@@ -6249,7 +6253,11 @@ private fun CompactGameCard(
                 )
                 Spacer(Modifier.height(7.dp))
                 LauncherMethodBadge(
-                    launcherMethodPresentation(game.module.effectiveNonRootMethod, BuildConfig.IS_ROOT_MODE)
+                    launcherMethodBadgePresentation(
+                        module = game.module,
+                        rootMode = BuildConfig.IS_ROOT_MODE,
+                        installedNonRootMethod = game.installedNonRootMethod
+                    )
                 )
             }
             Spacer(Modifier.width(10.dp))

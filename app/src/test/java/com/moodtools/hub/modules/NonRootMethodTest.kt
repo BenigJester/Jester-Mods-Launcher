@@ -96,6 +96,37 @@ class NonRootMethodTest {
     }
 
     @Test
+    fun unlockedDualMethodBadgeShowsEveryAvailableSetup() {
+        val module = dualMethodModule(selected = NonRootMethod.IDENTITY_SHELL)
+
+        val presentation = launcherMethodBadgePresentation(
+            module = module,
+            rootMode = false
+        )
+
+        assertEquals("SHELL + PATCH", presentation.badgeLabel)
+        assertEquals(
+            "Available non-root methods: Identity shell and Patch",
+            presentation.badgeDescription
+        )
+    }
+
+    @Test
+    fun dualMethodBadgeCollapsesToTheInstalledLockedSetup() {
+        val module = dualMethodModule(selected = NonRootMethod.IDENTITY_SHELL)
+
+        val presentation = launcherMethodBadgePresentation(
+            module = module,
+            rootMode = false,
+            installedNonRootMethod = NonRootMethod.DIRECT_PATCH
+        )
+
+        assertEquals(NonRootMethod.DIRECT_PATCH, presentation.method)
+        assertEquals("PATCH", presentation.badgeLabel)
+        assertEquals("Non-root method: Patch", presentation.badgeDescription)
+    }
+
+    @Test
     fun strictUidChoicesRejectWrongOrderAndInjectionPairs() {
         assertThrows(IllegalArgumentException::class.java) {
             NonRootMethod.choicesFromJson(
@@ -168,4 +199,18 @@ class NonRootMethodTest {
             )
         )
     }
+
+    private fun dualMethodModule(selected: NonRootMethod? = null) = ModuleConfig(
+        packageName = "com.example.dual",
+        title = "Dual setup",
+        supportedVersions = setOf("1.0"),
+        supportedAbis = setOf("arm64-v8a"),
+        entryPoint = "com.android.support.Main",
+        dexFile = "classes.dex",
+        nativeFile = "libmenu_native.so",
+        iconFile = null,
+        nonRootMethod = NonRootMethod.IDENTITY_SHELL,
+        nonRootMethods = listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH),
+        selectedNonRootMethod = selected
+    )
 }
