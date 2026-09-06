@@ -160,6 +160,7 @@ class LauncherActivity : ComponentActivity() {
     private var pendingInstallerPermissionTarget: InstallerPermissionTarget? = null
     private var pendingGameInstall: ModuleListing? = null
     private var pendingPackageReplacement: PackageReplacementRequest? = null
+    private var packageReplacementRetryAvailable = false
     private var packageReplacementPhase = PackageReplacementPhase.IDLE
     private var packageReplacementPreparation: Job? = null
     private var packageReplacementReconciliation: Job? = null
@@ -205,6 +206,7 @@ class LauncherActivity : ComponentActivity() {
             debugLauncherUpdateTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_LAUNCHER_UPDATE_TEST_EXTRA, false) == true,
             debugModuleUpdatesTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_MODULE_UPDATES_TEST_EXTRA, false) == true
         )
+        restorePackageReplacementRecovery()
         setContent {
             val startup by viewModel.startupState.collectAsStateWithLifecycle()
             val entered by viewModel.launcherEntered.collectAsStateWithLifecycle()
@@ -533,8 +535,22 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun retryPackageSetup() {
-        if (packageReplacementPreparation?.isActive == true || pendingPackageReplacement != null ||
-            pendingLegacyPatchMigration != null) return
+        if (packageReplacementPreparation?.isActive == true || pendingLegacyPatchMigration != null) return
+        pendingPackageReplacement?.takeIf { packageReplacementRetryAvailable }?.let { request ->
+            val retryRequest = if (request.requiresUninstall && !isPackageInstalled(request.packageName)) {
+                request.copy(requiresUninstall = false).also {
+                    runCatching { PackageReplacementRecoveryStore(applicationContext).save(it) }
+                    pendingPackageReplacement = it
+                }
+            } else {
+                request
+            }
+            packageReplacementRetryAvailable = false
+            viewModel.dismissPackageSetup()
+            requestPackageReplacementPermissionOrConfirm(retryRequest)
+            return
+        }
+        if (pendingPackageReplacement != null) return
         val entry = viewModel.selectedLibraryGame.value ?: return
         viewModel.dismissPackageSetup()
         launchLibraryGame(entry)
@@ -661,7 +677,18 @@ class LauncherActivity : ComponentActivity() {
             }.onSuccess { request ->
                 packageReplacementPreparation = null
                 withContext(Dispatchers.Main) {
+                    runCatching { PackageReplacementRecoveryStore(applicationContext).save(request) }
+                        .onFailure { error ->
+                            packageReplacementPhase = PackageReplacementPhase.IDLE
+                            viewModel.onPackageReplacementFailed(
+                                "The prepared package could not be retained safely for installation.",
+                                request.title,
+                                error
+                            )
+                            return@withContext
+                        }
                     pendingPackageReplacement = request
+                    packageReplacementRetryAvailable = false
                     packageReplacementPhase = PackageReplacementPhase.IDLE
                     requestPackageReplacementPermissionOrConfirm(request)
                 }
@@ -881,9 +908,11 @@ class LauncherActivity : ComponentActivity() {
         packageReplacementReconciliation = null
         packageReplacementPreparation = null
         pendingPackageReplacement = null
+        packageReplacementRetryAvailable = false
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
         viewModel.hideDirectPatchPrompt()
+        PackageReplacementRecoveryStore(applicationContext).clear()
         viewModel.onPackageReplacementInstalled(request)
     }
 
@@ -893,25 +922,59 @@ class LauncherActivity : ComponentActivity() {
         packageReplacementReconciliation = null
         packageReplacementPreparation?.cancel()
         packageReplacementPreparation = null
-        pendingPackageReplacement = null
+        packageReplacementRetryAvailable = pendingPackageReplacement != null
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
         viewModel.hideDirectPatchPrompt()
-        viewModel.onPackageReplacementFailed(detail, title, error)
+        viewModel.onPackageReplacementFailed(
+            detail = "$detail You can retry the prepared package without downloading the original game again.",
+            title = title,
+            error = error,
+            preparedRetryAvailable = packageReplacementRetryAvailable
+        )
     }
 
     private fun cancelPackageReplacement() {
-        val title = pendingPackageReplacement?.title
+        val request = pendingPackageReplacement
+        val title = request?.title
             ?: viewModel.packageSetupState.value.title.ifBlank { "Game" }
+        val mustRetainPreparedPackage = request != null && !isPackageInstalled(request.packageName)
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
         packageReplacementPreparation?.cancel()
         packageReplacementPreparation = null
-        pendingPackageReplacement = null
+        if (mustRetainPreparedPackage) {
+            packageReplacementRetryAvailable = true
+        } else {
+            pendingPackageReplacement = null
+            packageReplacementRetryAvailable = false
+        }
         packageReplacementPhase = PackageReplacementPhase.IDLE
         packageReplacementLeftLauncher = false
         viewModel.hideDirectPatchPrompt()
-        viewModel.onPackageReplacementCancelled(title)
+        if (!mustRetainPreparedPackage) {
+            PackageReplacementRecoveryStore(applicationContext).clear()
+        }
+        viewModel.onPackageReplacementCancelled(title, mustRetainPreparedPackage)
+    }
+
+    private fun restorePackageReplacementRecovery() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val store = PackageReplacementRecoveryStore(applicationContext)
+            val request = store.load() ?: return@launch
+            if (ExecutionModeLaunchBridge.isPackageReplacementInstalled(applicationContext, request)) {
+                store.clear()
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                if (pendingPackageReplacement == null) {
+                    pendingPackageReplacement = request
+                    packageReplacementRetryAvailable = true
+                    packageReplacementPhase = PackageReplacementPhase.IDLE
+                    viewModel.onPackageReplacementRecoveryAvailable(request)
+                }
+            }
+        }
     }
 
     private fun isPackageInstalled(targetPackage: String): Boolean = runCatching {
@@ -2921,6 +2984,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 cancelled = false,
                 completed = false,
                 failed = false,
+                preparedRetryAvailable = false,
                 stage = stage,
                 stageProgress = packageSetupStageProgress(headline, stage),
                 headline = headline,
@@ -2950,6 +3014,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             current.copy(
                 visible = true,
                 inProgress = false,
+                preparedRetryAvailable = false,
                 stage = SecureTransferStage.VERIFYING,
                 stageProgress = 1f,
                 title = title,
@@ -3123,7 +3188,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
-    fun onPackageReplacementFailed(detail: String, title: String, error: Throwable? = null) {
+    fun onPackageReplacementFailed(
+        detail: String,
+        title: String,
+        error: Throwable? = null,
+        preparedRetryAvailable: Boolean = false
+    ) {
         val presentation = error?.let {
             TransferFailurePolicy.present(
                 error = it,
@@ -3131,16 +3201,24 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 fallbackDetail = detail
             )
         }
+        val displayedDetail = presentation?.detail?.let { presented ->
+            if (preparedRetryAvailable && !presented.contains("without downloading", ignoreCase = true)) {
+                "$presented The prepared package is still available, so the original game does not need to be downloaded again."
+            } else {
+                presented
+            }
+        } ?: detail
         _packageSetupState.update { current ->
             current.copy(
                 visible = true,
                 inProgress = false,
                 failed = true,
+                preparedRetryAvailable = preparedRetryAvailable,
                 stage = SecureTransferStage.FAILED,
                 stageProgress = null,
                 title = title,
                 headline = presentation?.headline ?: "$title setup failed",
-                detail = presentation?.detail ?: detail,
+                detail = displayedDetail,
                 diagnostics = appendDiagnostic(
                     current.diagnostics,
                     error?.let {
@@ -3151,7 +3229,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         _launchState.value = LaunchUiState(
             headline = presentation?.headline ?: "$title setup failed",
-            detail = presentation?.detail ?: detail,
+            detail = displayedDetail,
             failed = true
         )
         viewModelScope.launch(Dispatchers.IO) {
@@ -3159,24 +3237,52 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
-    fun onPackageReplacementCancelled(title: String) {
+    fun onPackageReplacementRecoveryAvailable(request: PackageReplacementRequest) {
+        _packageSetupState.value = PackageSetupUiState(
+            visible = true,
+            failed = true,
+            preparedRetryAvailable = true,
+            stage = SecureTransferStage.FAILED,
+            title = request.title,
+            packageName = request.packageName,
+            kind = request.kind,
+            headline = "${request.title} setup can continue",
+            detail = "Android did not finish the previous installation. Try the prepared package again; the original game does not need to be downloaded.",
+            diagnostics = listOf("Recovered a verified package setup after launcher restart")
+        )
+        _launchState.value = LaunchUiState(
+            headline = "${request.title} setup can continue",
+            detail = "The prepared package is ready to retry."
+        )
+    }
+
+    fun onPackageReplacementCancelled(title: String, preparedRetryAvailable: Boolean = false) {
         _packageSetupState.update { current ->
             current.copy(
                 visible = true,
                 inProgress = false,
                 cancelling = false,
                 cancelled = true,
+                preparedRetryAvailable = preparedRetryAvailable,
                 stage = SecureTransferStage.CANCELLED,
                 stageProgress = null,
                 title = title,
                 headline = "$title setup paused",
-                detail = "No Android package was changed. You can safely try again whenever you're ready.",
+                detail = if (preparedRetryAvailable) {
+                    "The original package is currently absent, so the prepared package was kept. Try again without downloading the game."
+                } else {
+                    "No Android package was changed. You can safely try again whenever you're ready."
+                },
                 diagnostics = appendDiagnostic(current.diagnostics, "Setup cancelled by the user")
             )
         }
         _launchState.value = LaunchUiState(
             headline = "$title wasn't changed",
-            detail = "The prepared package remains available if you try again."
+            detail = if (preparedRetryAvailable) {
+                "The prepared package remains available and the original game does not need to be downloaded again."
+            } else {
+                "You can safely start setup again whenever you're ready."
+            }
         )
     }
 
@@ -3189,6 +3295,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 completed = true,
                 failed = false,
                 cancelled = false,
+                preparedRetryAvailable = false,
                 stage = SecureTransferStage.COMPLETED,
                 stageProgress = 1f,
                 title = request.title,

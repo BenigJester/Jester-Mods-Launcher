@@ -323,6 +323,7 @@ data class PackageSetupUiState(
     val cancelled: Boolean = false,
     val completed: Boolean = false,
     val failed: Boolean = false,
+    val preparedRetryAvailable: Boolean = false,
     val stage: SecureTransferStage = SecureTransferStage.READY,
     val stageProgress: Float? = null,
     val title: String = "",
@@ -877,7 +878,7 @@ fun GameHubScreen(
             )
             LauncherOverlay.PACKAGE_SETUP -> PackageSetupDialog(
                 state = packageSetup,
-                canRetry = selected?.game != null,
+                canRetry = packageSetup.preparedRetryAvailable || selected?.game != null,
                 alternativeMethod = selected
                     ?.takeIf {
                         it.module.offersNonRootMethodChoice && it.installedNonRootMethod == null
