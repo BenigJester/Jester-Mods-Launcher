@@ -39,6 +39,7 @@ if defined LOCAL_TEST_TOKEN_FILE if exist "!LOCAL_TEST_TOKEN_FILE!" del /q "!LOC
 if defined MODULE_INPUT_FILE if exist "!MODULE_INPUT_FILE!" del /q "!MODULE_INPUT_FILE!" >nul 2>nul
 if defined MODULE_STAGE_FILE if exist "!MODULE_STAGE_FILE!" del /q "!MODULE_STAGE_FILE!" >nul 2>nul
 if defined INSTALLED_LAUNCHER_FILE if exist "!INSTALLED_LAUNCHER_FILE!" del /q "!INSTALLED_LAUNCHER_FILE!" >nul 2>nul
+if defined EMBED_MODULE_ZIP if exist "!EMBED_MODULE_ZIP!" del /q "!EMBED_MODULE_ZIP!" >nul 2>nul
 if defined LOCAL_TEST_ROOT if defined ADB_EXE if defined DEVICE_SERIAL (
     "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "rm -rf !LOCAL_TEST_ROOT!" >nul 2>nul
 )
@@ -294,18 +295,23 @@ if /I "!LAUNCHER_BUILD!"=="hardened-test" set "LAUNCHER_BUILD=release"
 rem ---- Select locally staged module test --------------------------------------
 if defined LAUNCHER_ONLY set "MODULE_SETUP_MODE=launcher-only"
 if not defined MODULE_SETUP_MODE (
-    set "MODULE_SETUP_MODE=stage"
-    echo.
-    echo Module test: local stage only
-    echo   !MODULE_COUNT! selected local module folder^(s^) will be copied into Launcher storage.
-    if /I "!LAUNCHER_BUILD!"=="release" (
-        echo   Release staging uses an ADB-only local import, not the live catalog.
+    if defined INTERACTIVE_TEST if not defined LAUNCHER_ONLY (
+        echo.
+        echo Choose local module delivery:
+        echo   [1] Stage after install - copy the module into launcher storage with ADB
+        echo   [2] Embed in launcher   - build one debug APK containing the local TEST module
+        echo.
+        choice /C 12 /N /M "Select delivery [1/2]: "
+        if errorlevel 2 (set "MODULE_SETUP_MODE=embed") else (set "MODULE_SETUP_MODE=stage")
+    ) else (
+        set "MODULE_SETUP_MODE=stage"
     )
 )
 
 if /I "!MODULE_SETUP_MODE!"=="1" set "MODULE_SETUP_MODE=stage"
 if /I "!MODULE_SETUP_MODE!"=="2" set "MODULE_SETUP_MODE=stage"
 if /I "!MODULE_SETUP_MODE!"=="local" set "MODULE_SETUP_MODE=stage"
+if /I "!MODULE_SETUP_MODE!"=="embedded" set "MODULE_SETUP_MODE=embed"
 
 if /I "!MODULE_SETUP_MODE!"=="download" (
     echo [ERROR] The download/catalog module test path was removed.
@@ -315,12 +321,33 @@ if /I "!MODULE_SETUP_MODE!"=="download" (
     goto fail
 )
 
-if /I not "!MODULE_SETUP_MODE!"=="stage" if /I not "!MODULE_SETUP_MODE!"=="launcher-only" (
+if /I not "!MODULE_SETUP_MODE!"=="stage" if /I not "!MODULE_SETUP_MODE!"=="embed" if /I not "!MODULE_SETUP_MODE!"=="launcher-only" (
     echo [ERROR] Unknown module test: !MODULE_SETUP_MODE!
-    echo         Use stage/local, or omit it for local stage.
+    echo         Use stage/local, embed/embedded, or omit it for local stage.
     set "EXIT_CODE=1"
     set "FAIL_CONTEXT=Unknown module setup mode: !MODULE_SETUP_MODE!"
     goto fail
+)
+if /I "!MODULE_SETUP_MODE!"=="embed" (
+    if not "!MODULE_COUNT!"=="1" (
+        echo [ERROR] An embedded local test build requires exactly one module.
+        set "EXIT_CODE=1"
+        set "FAIL_CONTEXT=Embedded local tests require exactly one module."
+        goto fail
+    )
+    if /I not "!LAUNCHER_BUILD!"=="debug" (
+        echo [ERROR] Local TEST modules can be embedded only in a Debug launcher.
+        echo         Select Debug, or use stage for a Release launcher test.
+        set "EXIT_CODE=1"
+        set "FAIL_CONTEXT=Embedded local tests are debug-only."
+        goto fail
+    )
+    if /I not "!LAUNCHER_SOURCE!"=="build" if defined LAUNCHER_SOURCE (
+        echo [ERROR] Embedded local tests require a fresh launcher build.
+        set "EXIT_CODE=1"
+        set "FAIL_CONTEXT=Embedded local tests cannot reuse an existing APK."
+        goto fail
+    )
 )
 rem ---- Optional diagnostic mode ---------------------------------------------
 set "GOOGLE_SIGNIN_DIAG=0"
@@ -359,7 +386,10 @@ rem ---- Select fresh or existing launcher APK ---------------------------------
 if defined MODULE_ONLY_TEST (
     set "LAUNCHER_SOURCE=installed"
 ) else if not defined LAUNCHER_SOURCE (
-    if defined INTERACTIVE_TEST (
+    if /I "!MODULE_SETUP_MODE!"=="embed" (
+        set "LAUNCHER_SOURCE=build"
+        echo [APK] Embedded local TEST selected; a fresh Debug launcher will be built.
+    ) else if defined INTERACTIVE_TEST (
         echo.
         echo Choose launcher APK source:
         echo   [1] Existing build - install the already-built selected APK
@@ -377,6 +407,12 @@ if /I "!LAUNCHER_SOURCE!"=="1" set "LAUNCHER_SOURCE=existing"
 if /I "!LAUNCHER_SOURCE!"=="reuse" set "LAUNCHER_SOURCE=existing"
 if /I "!LAUNCHER_SOURCE!"=="skip" set "LAUNCHER_SOURCE=existing"
 if /I "!LAUNCHER_SOURCE!"=="2" set "LAUNCHER_SOURCE=build"
+if /I "!MODULE_SETUP_MODE!"=="embed" if /I not "!LAUNCHER_SOURCE!"=="build" (
+    echo [ERROR] Embedded local tests require a fresh launcher build.
+    set "EXIT_CODE=1"
+    set "FAIL_CONTEXT=Embedded local tests cannot reuse an existing APK."
+    goto fail
+)
 if /I not "!LAUNCHER_SOURCE!"=="build" if /I not "!LAUNCHER_SOURCE!"=="existing" if /I not "!LAUNCHER_SOURCE!"=="installed" (
     echo [ERROR] Unknown launcher APK source: !LAUNCHER_SOURCE!
     echo         Use build or existing.
@@ -388,6 +424,7 @@ if /I not "!LAUNCHER_SOURCE!"=="build" if /I not "!LAUNCHER_SOURCE!"=="existing"
 set "NEEDS_LOCAL_BUILD="
 if /I "!LAUNCHER_SOURCE!"=="build" set "NEEDS_LOCAL_BUILD=1"
 if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" if /I not "!SKIP_MODULE_BUILD!"=="1" set "NEEDS_LOCAL_BUILD=1"
+if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="embed" set "NEEDS_LOCAL_BUILD=1"
 
 rem Keep direct test_helper.cmd use consistent with standalone-tools.cmd. Run each flavor in
 rem its own process so all flavor-specific package, build, install, and staging state stays isolated.
@@ -700,7 +737,10 @@ goto fail
 echo [ADB] Using !DEVICE_SERIAL!
 
 rem ---- Build or validate selected standalone module output ---------------------
-if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" (
+if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" goto build_module_start
+if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="embed" goto build_module_start
+goto build_module_done
+:build_module_start
     echo.
     set "MODULE_BUILD_TARGETS="
     if defined MODULE_INPUT_FILE for /f "usebackq tokens=1,2,3 delims=|" %%M in ("!MODULE_INPUT_FILE!") do if "%%O"=="0" (
@@ -755,7 +795,20 @@ if not defined LAUNCHER_ONLY if /I "!MODULE_SETUP_MODE!"=="stage" (
             goto fail
         )
     )
+
+if /I "!MODULE_SETUP_MODE!"=="embed" (
+    set "EMBED_MODULE_ZIP=%TEMP%\jester-moods-embedded-local-test-%RANDOM%.zip"
+    for /f "usebackq tokens=1,* delims=|" %%M in ("!MODULE_STAGE_FILE!") do (
+        powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\create-local-test-module-bundle.ps1" -ModuleDirectory "%%N" -OutputPath "!EMBED_MODULE_ZIP!"
+        if errorlevel 1 (
+            set "EXIT_CODE=!ERRORLEVEL!"
+            set "FAIL_CONTEXT=Could not create embedded local test bundle for %%M."
+            goto fail
+        )
+    )
+    echo [EMBED] Local TEST bundle prepared inside the Debug launcher build.
 )
+:build_module_done
 
 rem ---- Build selected launcher flavor -----------------------------------------
 if defined MODULE_ONLY_TEST goto validate_existing_launcher
@@ -823,7 +876,9 @@ if not exist "!GRADLE_PROJECT_CACHE!" (
     goto fail
 )
 
-call "!GRADLE_CMD!" -p "!GRADLE_PROJECT_DIR!" !GRADLE_TASK! --no-daemon --project-cache-dir "!GRADLE_PROJECT_CACHE!"
+set "GRADLE_EMBED_ARGUMENT="
+if /I "!MODULE_SETUP_MODE!"=="embed" set "GRADLE_EMBED_ARGUMENT=-PlocalTestModuleBundle=!EMBED_MODULE_ZIP!"
+call "!GRADLE_CMD!" -p "!GRADLE_PROJECT_DIR!" !GRADLE_TASK! !GRADLE_EMBED_ARGUMENT! --no-daemon --project-cache-dir "!GRADLE_PROJECT_CACHE!"
 set "GRADLE_EXIT_CODE=!ERRORLEVEL!"
 if defined GRADLE_SUBST_DRIVE (
     "%SystemRoot%\System32\subst.exe" !GRADLE_SUBST_DRIVE! /d >nul 2>nul
@@ -833,6 +888,7 @@ if not "!GRADLE_EXIT_CODE!"=="0" (
     set "FAIL_CONTEXT=Gradle build failed for !BUILD_LABEL! using task !GRADLE_TASK!."
     goto fail
 )
+if defined EMBED_MODULE_ZIP if exist "!EMBED_MODULE_ZIP!" del /q "!EMBED_MODULE_ZIP!" >nul 2>nul
 if not exist "%APK_PATH%" (
     echo [ERROR] APK not found: %APK_PATH%
     set "EXIT_CODE=1"
@@ -890,6 +946,11 @@ echo [LAUNCHER] Found !INSTALLED_LAUNCHER_APK!
 
 rem ---- Stage or prepare module into the debuggable launcher's private files ---
 if defined LAUNCHER_ONLY goto module_setup_complete
+if /I "!MODULE_SETUP_MODE!"=="embed" (
+    echo.
+    echo [EMBED] !TARGET_LABEL! is inside the launcher APK and will be installed as local TEST on startup.
+    goto module_setup_complete
+)
 echo.
 if defined MODULE_ONLY_TEST (echo [2/2] Staging !TARGET_LABEL! module...) else (echo [4/4] Staging !TARGET_LABEL! module...)
 if /I "!LAUNCHER_BUILD!"=="release" (
@@ -1054,7 +1115,7 @@ if /I "!LAUNCHER_BUILD!"=="release" (
             )
         )
 
-        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% mkdir -p files/menus/%%~M"
+        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% sh -c 'rm -rf files/menus/%%~M.local-test-next && mkdir -p files/menus/%%~M.local-test-next'"
         if errorlevel 1 (
             echo [ERROR] run-as failed for %APP_ID%.
             echo         Confirm !BUILD_LABEL! was installed and is debuggable.
@@ -1063,17 +1124,17 @@ if /I "!LAUNCHER_BUILD!"=="release" (
             goto fail
         )
         for %%F in (config.json classes.dex libmenu_native.so) do (
-            "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% cp %REMOTE_TMP%/%%~M/%%F files/menus/%%~M/%%F"
+            "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% cp %REMOTE_TMP%/%%~M/%%F files/menus/%%~M.local-test-next/%%F"
             if errorlevel 1 (
                 set "EXIT_CODE=!ERRORLEVEL!"
                 set "FAIL_CONTEXT=Could not copy %%F into launcher storage for %%~M."
                 goto fail
             )
         )
-        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% sh -c 'echo {} > files/menus/%%~M/local-test.json'"
+        "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "run-as %APP_ID% sh -c 'echo {} > files/menus/%%~M.local-test-next/local-test.json && rm -rf files/menus/%%~M && mv files/menus/%%~M.local-test-next files/menus/%%~M'"
         if errorlevel 1 (
             set "EXIT_CODE=!ERRORLEVEL!"
-            set "FAIL_CONTEXT=Could not mark %%~M as a local test module."
+            set "FAIL_CONTEXT=Could not activate %%~M as a local test module."
             goto fail
         )
     )
@@ -1133,6 +1194,9 @@ if defined LAUNCHER_ONLY (
 ) else if defined MODULE_ONLY_TEST (
     echo [DONE] !TARGET_LABEL! module is built and staged in the installed Jester Mods !MODE_LABEL! launcher.
     echo        The launcher APK was not rebuilt or reinstalled.
+) else if /I "!MODULE_SETUP_MODE!"=="embed" (
+    echo [DONE] Jester Mods !MODE_LABEL! is installed with !TARGET_LABEL! embedded as a local TEST module.
+    echo        Opening Jester Mods now; the module is installed from the APK during startup.
 ) else (
     echo [DONE] Jester Mods !MODE_LABEL! and !TARGET_LABEL! module are installed and staged.
     if /I "!LAUNCHER_BUILD!"=="release" (
@@ -1213,6 +1277,7 @@ echo      Multiple dropped modules:       choose Manual local module folder^(s^)
 echo      Cooking Madness Root stage:     test_helper.cmd cooking root "" stage debug
 echo      Cooking Root release stage:     test_helper.cmd cooking root "" stage release
 echo      Soul Knight Non-root stage:     test_helper.cmd soul-knight nonroot "" stage release
+echo      Soul Knight embedded TEST APK:  test_helper.cmd soul-knight nonroot none embed debug
 echo      Cooking Google diagnostic:      test_helper.cmd cooking nonroot google-diag stage debug
 echo      Legacy one-argument mode: test_helper.cmd nonroot
 echo      Optional: set JESTER_MODULE_DIR to one or more quoted local module folders.

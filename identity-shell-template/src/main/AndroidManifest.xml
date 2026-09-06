@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <queries>
-        <package android:name="com.moodtools.hub.nonroot" />
+        <package android:name="__IDENTITY_LAUNCHER_PACKAGE__" />
     </queries>
 
     <application
@@ -22,6 +22,14 @@
         <meta-data
             android:name="com.moodtools.identity_shell"
             android:value="true" />
+
+        <meta-data
+            android:name="com.moodtools.identity_shell_version"
+            android:value="3" />
+
+        <meta-data
+            android:name="com.moodtools.identity_payload_authority"
+            android:value="__IDENTITY_PAYLOAD_AUTHORITY__" />
 
         <activity
             android:name=".IdentityShellActivity"

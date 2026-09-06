@@ -9,8 +9,17 @@ import java.nio.charset.Charset
 internal object BinaryXmlStringPool {
     private const val XML_TYPE = 0x0003
     private const val STRING_POOL_TYPE = 0x0001
+    private const val START_ELEMENT_TYPE = 0x0102
     private const val UTF8_FLAG = 0x00000100
     private const val SORTED_FLAG = 0x00000001
+    private const val TYPE_STRING = 0x03
+    private const val TYPE_INT_DEC = 0x10
+    private const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
+    private const val MANIFEST_ELEMENT = "manifest"
+    private const val VERSION_CODE_ATTRIBUTE = "versionCode"
+    private const val VERSION_NAME_ATTRIBUTE = "versionName"
+
+    data class ManifestPackageVersion(val versionName: String, val versionCode: Long)
 
     fun replaceExact(document: ByteArray, expected: String, replacement: String): ByteArray {
         return replaceStrings(document, expected, requireExactlyOne = true) { value ->
@@ -23,6 +32,59 @@ internal object BinaryXmlStringPool {
         return replaceStrings(document, expected, requireExactlyOne = false) { value ->
             value.replace(expected, replacement)
         }
+    }
+
+    /** Replaces the compiled package version while leaving shell protocol metadata independent. */
+    fun replaceManifestPackageVersion(
+        document: ByteArray,
+        expectedVersionName: String,
+        versionName: String,
+        versionCode: Long
+    ): ByteArray {
+        require(versionCode in 1..2_100_000_000L) {
+            "Game version code cannot be represented in an APK manifest"
+        }
+        val rewritten = replaceExact(document, expectedVersionName, versionName)
+        val strings = readStrings(rewritten)
+        var replacements = 0
+        forEachAttribute(rewritten, strings) { element, namespace, name, attributeOffset ->
+            if (element == MANIFEST_ELEMENT && namespace == ANDROID_NAMESPACE &&
+                name == VERSION_CODE_ATTRIBUTE) {
+                require((rewritten[attributeOffset + 15].toInt() and 0xff) == TYPE_INT_DEC) {
+                    "AndroidManifest.xml versionCode is not a decimal integer"
+                }
+                putI32(rewritten, attributeOffset + 16, versionCode.toInt())
+                replacements++
+            }
+        }
+        require(replacements == 1) {
+            "Expected one AndroidManifest.xml versionCode declaration; found $replacements"
+        }
+        return rewritten
+    }
+
+    fun manifestPackageVersion(document: ByteArray): ManifestPackageVersion {
+        val strings = readStrings(document)
+        var versionName: String? = null
+        var versionCode: Long? = null
+        forEachAttribute(document, strings) { element, namespace, name, attributeOffset ->
+            if (element != MANIFEST_ELEMENT || namespace != ANDROID_NAMESPACE) return@forEachAttribute
+            val type = document[attributeOffset + 15].toInt() and 0xff
+            when (name) {
+                VERSION_NAME_ATTRIBUTE -> {
+                    require(type == TYPE_STRING) { "AndroidManifest.xml versionName is not a string" }
+                    versionName = stringAt(strings, i32(document, attributeOffset + 16))
+                }
+                VERSION_CODE_ATTRIBUTE -> {
+                    require(type == TYPE_INT_DEC) { "AndroidManifest.xml versionCode is not a decimal integer" }
+                    versionCode = i32(document, attributeOffset + 16).toLong() and 0xffff_ffffL
+                }
+            }
+        }
+        return ManifestPackageVersion(
+            versionName = requireNotNull(versionName) { "AndroidManifest.xml has no versionName" },
+            versionCode = requireNotNull(versionCode) { "AndroidManifest.xml has no versionCode" }
+        )
     }
 
     private fun replaceStrings(
@@ -149,6 +211,92 @@ internal object BinaryXmlStringPool {
         stringBytes.copyInto(output, newStringsStart)
         styleBytes.copyInto(output, newStringsStart + stringBytes.size)
         return output
+    }
+
+    private fun readStrings(document: ByteArray): List<String> {
+        val chunkOffset = findStringPool(document)
+        val headerSize = u16(document, chunkOffset + 2)
+        val chunkSize = i32(document, chunkOffset + 4)
+        val stringCount = i32(document, chunkOffset + 8)
+        val flags = i32(document, chunkOffset + 16)
+        val stringsStart = i32(document, chunkOffset + 20)
+        val stylesStart = i32(document, chunkOffset + 24)
+        val dataStart = chunkOffset + stringsStart
+        val dataEnd = if (stylesStart == 0) chunkOffset + chunkSize else chunkOffset + stylesStart
+        require(headerSize >= 28 && stringCount >= 0 && dataStart in chunkOffset..dataEnd &&
+            dataEnd <= chunkOffset + chunkSize) {
+            "AndroidManifest.xml string pool is invalid"
+        }
+        val utf8 = flags and UTF8_FLAG != 0
+        return List(stringCount) { index ->
+            val relativeOffset = i32(document, chunkOffset + headerSize + index * 4)
+            val offset = dataStart + relativeOffset
+            require(offset in dataStart until dataEnd) {
+                "AndroidManifest.xml has an invalid string offset"
+            }
+            if (utf8) decodeUtf8(document, offset, dataEnd) else decodeUtf16(document, offset, dataEnd)
+        }
+    }
+
+    private inline fun forEachAttribute(
+        document: ByteArray,
+        strings: List<String>,
+        action: (element: String, namespace: String?, name: String, attributeOffset: Int) -> Unit
+    ) {
+        var cursor = u16(document, 2)
+        while (cursor + 8 <= document.size) {
+            val type = u16(document, cursor)
+            val headerSize = u16(document, cursor + 2)
+            val chunkSize = i32(document, cursor + 4)
+            require(headerSize >= 8 && chunkSize >= headerSize && cursor + chunkSize <= document.size) {
+                "AndroidManifest.xml contains an invalid chunk"
+            }
+            if (type == START_ELEMENT_TYPE) {
+                require(headerSize >= 16 && cursor + headerSize + 20 <= cursor + chunkSize) {
+                    "AndroidManifest.xml start element is invalid"
+                }
+                val extension = cursor + headerSize
+                val element = stringAt(strings, i32(document, extension + 4))
+                val attributeStart = u16(document, extension + 8)
+                val attributeSize = u16(document, extension + 10)
+                val attributeCount = u16(document, extension + 12)
+                require(attributeSize >= 20) { "AndroidManifest.xml attribute size is invalid" }
+                val firstAttribute = extension + attributeStart
+                require(firstAttribute >= extension + 20 &&
+                    firstAttribute + attributeSize * attributeCount <= cursor + chunkSize) {
+                    "AndroidManifest.xml attributes are invalid"
+                }
+                repeat(attributeCount) { index ->
+                    val offset = firstAttribute + index * attributeSize
+                    val namespaceIndex = i32(document, offset)
+                    val namespace = if (namespaceIndex == -1) null else stringAt(strings, namespaceIndex)
+                    action(element, namespace, stringAt(strings, i32(document, offset + 4)), offset)
+                }
+            }
+            cursor += chunkSize
+        }
+    }
+
+    private fun findStringPool(document: ByteArray): Int {
+        require(document.size >= 8 && u16(document, 0) == XML_TYPE) {
+            "AndroidManifest.xml is not binary XML"
+        }
+        var cursor = u16(document, 2)
+        while (cursor + 8 <= document.size) {
+            val headerSize = u16(document, cursor + 2)
+            val chunkSize = i32(document, cursor + 4)
+            require(headerSize >= 8 && chunkSize >= headerSize && cursor + chunkSize <= document.size) {
+                "AndroidManifest.xml contains an invalid chunk"
+            }
+            if (u16(document, cursor) == STRING_POOL_TYPE) return cursor
+            cursor += chunkSize
+        }
+        error("AndroidManifest.xml has no string pool")
+    }
+
+    private fun stringAt(strings: List<String>, index: Int): String {
+        require(index in strings.indices) { "AndroidManifest.xml contains an invalid string reference" }
+        return strings[index]
     }
 
     private fun decodeUtf8(bytes: ByteArray, offset: Int, limit: Int): String {

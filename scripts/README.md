@@ -14,6 +14,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-embedded
 
 `WebsiteCatalogPath` is optional. When supplied, the helper fails unless the module package and private scope exactly match the website operator catalog. The same flow is available interactively under **Build launcher → Allowlisted embedded private module build**.
 
+For a shareable Debug launcher that carries one local TEST module, use **Build launcher → Debug launcher with embedded local TEST module**, or run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-embedded-local-test.ps1 `
+  -ModuleBundle .\module-output\com.ChillyRoom.DungeonShooter.zip -Flavor nonroot
+```
+
 It covers module debug/release builds, Root and Non-root launcher builds, complete production packages, guided device testing, APK installation, output inspection, tests, and cleanup. The guided device test is local-only and intentionally stages only the manually selected module folder or folders, or runs launcher-only, so old module-output folders cannot pollute a test run. Its module-only scope reuses an installed launcher without rebuilding or reinstalling it.
 
 `test_helper.cmd` remains available as the direct build/install/device-test helper. The guided test defaults to reusing the selected flavor's existing APK from `app\build\outputs\apk`; choose the fresh-build option when Gradle should rebuild it. Direct callers can set `JESTER_LAUNCHER_SOURCE=existing`, or pass `existing` as argument 7, to get the same behavior. Examples:
@@ -22,6 +29,7 @@ It covers module debug/release builds, Root and Non-root launcher builds, comple
 - `test_helper.cmd cooking nonroot "" stage debug`
 - `test_helper.cmd launcher root "" "" release`
 - `test_helper.cmd launcher nonroot "" "" debug "" existing`
+- `test_helper.cmd soul-knight nonroot none embed debug` builds a Debug launcher APK with the Soul Knight local TEST module inside it; the launcher installs that embedded module into its private storage on first authorized startup.
 
 Production builds ask for a numeric `major.minor.patch` version, derive the build by removing its dots (`1.1.1` becomes `111`), then apply the pair equally to Root and Non-root APKs.
 

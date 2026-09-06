@@ -39,7 +39,32 @@ class DirectPatchInstallPolicyTest {
         )
     }
 
+    @Test
+    fun exactPatchRevisionIsCurrent() {
+        assertTrue(directPatchRevisionIsCurrent(CURRENT_REVISION, CURRENT_REVISION.copy()))
+    }
+
+    @Test
+    fun moduleOrPatchFormatChangeNeedsReapply() {
+        assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(moduleBuild = 41), CURRENT_REVISION))
+        assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(markerSchema = 1), CURRENT_REVISION))
+        assertFalse(directPatchRevisionIsCurrent(
+            CURRENT_REVISION.copy(nativeSha256 = "old-native"),
+            CURRENT_REVISION
+        ))
+    }
+
     private companion object {
         const val PATCH_SIGNER = "jester-patch-signer"
+        val CURRENT_REVISION = DirectPatchRevision(
+            markerSchema = 2,
+            gameVersionCode = 80512,
+            moduleBuild = 42,
+            moduleVersion = "8.5.1-r2",
+            launchGuardSchema = 1,
+            launchGuardPublicKey = "guard-key",
+            dexSha256 = "dex",
+            nativeSha256 = "native"
+        )
     }
 }

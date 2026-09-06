@@ -91,7 +91,13 @@ class SmartStorageManagerTest {
     fun startupKeepsFullyCommittedModuleGenerationAndDropsItsOldBackups() {
         val files = temporaryFolder.newFolder("files")
         val module = File(files, "menus/com.example.game").apply { mkdirs() }
-        val targets = listOf("libmenu_native.so", "classes.dex", "config.json", "signed-manifest.json")
+        val targets = listOf(
+            "libmenu_native.so",
+            "classes.dex",
+            "config.json",
+            "signed-manifest.json",
+            "update.json"
+        )
         targets.forEach { name ->
             artifact(module, name, "new-$name")
             artifact(module, "$name.bak", "old-$name")

@@ -148,29 +148,25 @@ internal fun launcherMethodPresentation(
 }
 
 /**
- * Presents every setup a dual-method add-on supports until Android has an active replacement.
- * Once a shell or patch is installed, the badge follows that locked device setup.
+ * Presents every setup a dual-method add-on as its own badge until Android has an active
+ * replacement. Once a shell or patch is installed, only that locked device setup is shown.
  */
-internal fun launcherMethodBadgePresentation(
+internal fun launcherMethodBadgePresentations(
     module: ModuleConfig,
     rootMode: Boolean,
     installedNonRootMethod: NonRootMethod? = null
-): LauncherMethodPresentation {
+): List<LauncherMethodPresentation> {
     val lockedMethod = installedNonRootMethod?.takeIf(module.nonRootMethods::contains)
     val presentation = launcherMethodPresentation(
         lockedMethod ?: module.effectiveNonRootMethod,
         rootMode
     )
     if (rootMode || !module.offersNonRootMethodChoice || lockedMethod != null) {
-        return presentation
+        return listOf(presentation)
     }
-    return presentation.copy(
-        badgeLabel = module.nonRootMethods.joinToString(" + ") { method ->
-            launcherMethodPresentation(method, rootMode = false).badgeLabel
-        },
-        badgeDescription = "Available non-root methods: " +
-            module.nonRootMethods.joinToString(" and ") { it.displayName }
-    )
+    return module.nonRootMethods.map { method ->
+        launcherMethodPresentation(method, rootMode = false)
+    }
 }
 
 /** The action the primary Library button will perform for the current installation. */

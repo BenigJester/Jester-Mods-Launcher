@@ -25,11 +25,20 @@ def releaseSigningReady = releaseStorePath != null && releaseStorePassword != nu
 
 def privateModuleBundleValue = providers.gradleProperty('privateModuleBundle').orNull
 def privateModuleScopeValue = providers.gradleProperty('privateModuleScope').orNull?.trim() ?: ''
+def localTestModuleBundleValue = providers.gradleProperty('localTestModuleBundle').orNull
 def privateModuleBundle = privateModuleBundleValue
         ? rootProject.file(privateModuleBundleValue).canonicalFile
         : null
+def localTestModuleBundle = localTestModuleBundleValue
+        ? rootProject.file(localTestModuleBundleValue).canonicalFile
+        : null
 def privateModulePackage = ''
 def privateModuleSha256 = ''
+def localTestModulePackage = ''
+def localTestModuleSha256 = ''
+if (privateModuleBundle != null && localTestModuleBundle != null) {
+    throw new GradleException('A launcher build cannot embed both a private module and a local test module.')
+}
 if (privateModuleBundle != null) {
     if (!privateModuleBundle.isFile()) {
         throw new GradleException("privateModuleBundle does not exist: ${privateModuleBundle}")
@@ -67,8 +76,42 @@ if (privateModuleBundle != null) {
         .join()
 }
 
+if (localTestModuleBundle != null) {
+    if (!localTestModuleBundle.isFile()) {
+        throw new GradleException("localTestModuleBundle does not exist: ${localTestModuleBundle}")
+    }
+    def archive = new java.util.zip.ZipFile(localTestModuleBundle)
+    try {
+        def configEntry = archive.getEntry('config.json')
+        if (configEntry == null || configEntry.directory || configEntry.size < 2 || configEntry.size > 65_536) {
+            throw new GradleException('The local test module bundle must contain a small config.json file.')
+        }
+        def configText = archive.getInputStream(configEntry).getText('UTF-8')
+        if (configText.startsWith('\uFEFF')) configText = configText.substring(1)
+        def config = new groovy.json.JsonSlurper().parseText(configText)
+        localTestModulePackage = String.valueOf(config.package_name ?: config.target_package ?: '')
+        if (!(localTestModulePackage ==~ /[A-Za-z0-9_.]{3,200}/)) {
+            throw new GradleException('The local test module bundle contains an invalid package name.')
+        }
+        ['classes.dex', 'libmenu_native.so'].each { requiredName ->
+            def required = archive.getEntry(requiredName)
+            if (required == null || required.directory || required.size <= 0) {
+                throw new GradleException("The local test module bundle is missing ${requiredName}.")
+            }
+        }
+    } finally {
+        archive.close()
+    }
+    localTestModuleSha256 = java.security.MessageDigest.getInstance('SHA-256')
+        .digest(localTestModuleBundle.bytes)
+        .collect { String.format('%02x', it & 0xFF) }
+        .join()
+}
+
 def generatedPrivateModuleAssets = layout.buildDirectory.dir('generated/privateModuleAssets')
 def generatedPrivateModuleAssetsDirectory = file("$buildDir/generated/privateModuleAssets")
+def generatedLocalTestModuleAssets = layout.buildDirectory.dir('generated/localTestModuleAssets')
+def generatedLocalTestModuleAssetsDirectory = file("$buildDir/generated/localTestModuleAssets")
 def generatedIdentityShellAssetsDirectory = file("$buildDir/generated/identityShellTemplateAssets")
 def preparePrivateModuleAssets = tasks.register('preparePrivateModuleAssets') {
     outputs.dir(generatedPrivateModuleAssets)
@@ -83,6 +126,27 @@ def preparePrivateModuleAssets = tasks.register('preparePrivateModuleAssets') {
             }
             project.copy {
                 from privateModuleBundle
+                into outputDirectory
+                rename { 'module.zip' }
+            }
+        }
+    }
+}
+
+def prepareLocalTestModuleAssets = tasks.register('prepareLocalTestModuleAssets') {
+    outputs.dir(generatedLocalTestModuleAssets)
+    inputs.property('localTestModuleBundlePath', localTestModuleBundle?.path ?: '')
+    if (localTestModuleBundle != null) inputs.file(localTestModuleBundle)
+    doLast {
+        def outputRoot = generatedLocalTestModuleAssets.get().asFile
+        project.delete(outputRoot)
+        if (localTestModuleBundle != null) {
+            def outputDirectory = new File(outputRoot, 'embedded-local-test')
+            if (!outputDirectory.mkdirs() && !outputDirectory.isDirectory()) {
+                throw new GradleException('Could not create generated local test module assets.')
+            }
+            project.copy {
+                from localTestModuleBundle
                 into outputDirectory
                 rename { 'module.zip' }
             }
@@ -109,6 +173,11 @@ gradle.taskGraph.whenReady { graph ->
     def productionPackageRequested = graph.allTasks.any { task ->
         task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*Release.*')
     }
+    if (localTestModuleBundle != null && graph.allTasks.any { task ->
+        task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*(Release|HardenedTest).*')
+    }) {
+        throw new GradleException('An embedded local test module is allowed only in a debug launcher build.')
+    }
     if (productionPackageRequested &&
             (!releaseSigningReady || !trustedReleaseSignerSha256.matches('[0-9A-Fa-f]{64}'))) {
         throw new GradleException(
@@ -134,14 +203,17 @@ android {
         manifestPlaceholders = [launcherLabel: 'Jester Mods']
         minSdk 26
         targetSdk 35
-        versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(204)
-        versionName providers.gradleProperty('launcherVersionName').getOrElse('2.0.4')
+        versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(208)
+        versionName providers.gradleProperty('launcherVersionName').getOrElse('2.0.8')
         buildConfigField 'String', 'UPDATE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9ueWd1XDC7a63XAmkmNPfB52dXe/Q6VF/mUQ9639cDm4uLYrQ7+34p+6Vi1m3eU/KV/lY/BlQPWVHM2gwU/xDT32c+zkfojTn8Fb9kCxNLOOIvpMBLDMxHoZvv63z1MS7lK2Zd1dNrLbM26UK0K01nDL15yWJjQ4fxHvxR1t9sRSXgk9aBft/7R0NMgC2TJDIG1n2Fsk7f82r8gIxIKrI4CnTSKA30zwoH46/GhMmoiqaCOEOdqXNoV7ll+bfeN/PNEACxgOGwY750nkkZEgMLvCNXqto4nFflH0bYUTazaJ5z3fOuCJ8pR5hh5L1hk44Zh8F8wO0qyjCBMoByypObgpF0JURcZb6G/kmvAEB1lZet+yFIeycjCxsksVDVo1SbfXZ10Oum1WZz07X3Bn/i2FjGy6YNzKViRd86khRVa79H9ZIDPx1mb1UYREjpx8tMo/G9pmVY0mooEOBMvzWVm4JxYPQJA8G7kfu/zGS1vWZSUcfG1VwDCUULUicu43AgMBAAE="'
         buildConfigField 'String', 'ACCESS_LEASE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAm2Mcwr7+L/dXID3KVJbspglExlWgdd/ofCESWgqUdfpXCTh3RhJm7q6qXJiKODtJw2Rs+HsZAXvw+6A0f6Fjo7+A1pgnIGzWCjihcmEl32t2vOr/vXS3XQbjo+yk9QjEZ2T4EiYHc9YK3iKEAowGZtHF1vZPTJkrbjXXWB3eJ7bf3Py37ZKa2sb07SedifEMyE9LgWMVWEbohTT+EkXlTAY6k2+um3wgt1FEUClo0PaBEDv3jSJCVJuqTzrz3xrhx07+tRHdlDxfwyHimfXdsel7wMEZaxb7ssj2Sfkbp59KsCijHiwz4gI22LGOutW+eP2+t7e8dkB+18eaCF/EGzko3U65Xk6ZivgH2Z07WxpUmvQyPEgNE74y1KZhIWEl274M5PaxtYMZAEUlDI2XtSCZVsm4siiKmMbwEd9fYl3uFoOiOkGlc28Yomwlb8PgsnVI7riF6M05RQd4Iy8ZqfVGGQdERKqKrbBIEn9rVM9n/X2nypBj9zpCjtYLcjApAgMBAAE="'
         buildConfigField 'boolean', 'PRIVATE_MODULE_ENABLED', privateModuleBundle != null ? 'true' : 'false'
         buildConfigField 'String', 'PRIVATE_MODULE_PACKAGE', '"' + privateModulePackage + '"'
         buildConfigField 'String', 'PRIVATE_MODULE_SCOPE', '"' + privateModuleScopeValue + '"'
         buildConfigField 'String', 'PRIVATE_MODULE_SHA256', '"' + privateModuleSha256 + '"'
+        buildConfigField 'boolean', 'LOCAL_TEST_MODULE_ENABLED', localTestModuleBundle != null ? 'true' : 'false'
+        buildConfigField 'String', 'LOCAL_TEST_MODULE_PACKAGE', '"' + localTestModulePackage + '"'
+        buildConfigField 'String', 'LOCAL_TEST_MODULE_SHA256', '"' + localTestModuleSha256 + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables {
             useSupportLibrary true
@@ -260,6 +332,7 @@ android {
 
     sourceSets {
         main.assets.srcDir(generatedPrivateModuleAssetsDirectory)
+        main.assets.srcDir(generatedLocalTestModuleAssetsDirectory)
         nonroot.assets.srcDir(new File(generatedIdentityShellAssetsDirectory, 'nonroot'))
     }
 
@@ -288,6 +361,7 @@ tasks.configureEach { task ->
     if ((task.name.startsWith('merge') && task.name.endsWith('Assets')) ||
             task.name.toLowerCase(java.util.Locale.ROOT).contains('lint')) {
         task.dependsOn(preparePrivateModuleAssets)
+        task.dependsOn(prepareLocalTestModuleAssets)
     }
     if ((task.name.startsWith('mergeNonroot') && task.name.endsWith('Assets')) ||
             (task.name.toLowerCase(java.util.Locale.ROOT).contains('lint') &&

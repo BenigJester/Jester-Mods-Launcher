@@ -919,7 +919,8 @@ private fun DirectPatchInstallDialog(
             Column {
                 Text(
                     when {
-                        identityShell -> "Install $title compatibility shell"
+                        identityShell && state.replacesOriginal -> "Install $title compatibility shell"
+                        identityShell -> "Repair $title compatibility shell"
                         state.replacesOriginal -> "Install patched $title"
                         else -> "Update patched $title"
                     },
@@ -928,7 +929,8 @@ private fun DirectPatchInstallDialog(
                 Spacer(Modifier.height(5.dp))
                 Text(
                     when {
-                        identityShell -> "The original game has been preserved unchanged"
+                        identityShell && state.replacesOriginal -> "The original game has been preserved unchanged"
+                        identityShell -> "No uninstall or data reset is required"
                         state.replacesOriginal -> "Two Android confirmations are required"
                         else -> "Your patched game is ready to update"
                     },
@@ -963,8 +965,12 @@ private fun DirectPatchInstallDialog(
                 } else {
                     DirectPatchDialogStep(
                         number = "1",
-                        headline = "Install in place",
-                        detail = "Android will update the existing Jester-patched game while preserving its local app data."
+                        headline = if (identityShell) "Repair shell in place" else "Install in place",
+                        detail = if (identityShell) {
+                            "Android will update the existing shell without uninstalling it. The preserved original-game payload stays in Jester Mods."
+                        } else {
+                            "Android will update the existing Jester-patched game while preserving its local app data."
+                        }
                     )
                 }
                 Text(
@@ -5471,8 +5477,8 @@ private fun ModuleListingCard(
                     style = MaterialTheme.typography.labelSmall
                 )
                 Spacer(Modifier.height(7.dp))
-                LauncherMethodBadge(
-                    launcherMethodBadgePresentation(
+                LauncherMethodBadges(
+                    launcherMethodBadgePresentations(
                         module = listing.catalog.config,
                         rootMode = BuildConfig.IS_ROOT_MODE
                     )
@@ -5673,6 +5679,21 @@ private fun LauncherMethodBadge(
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun LauncherMethodBadges(
+    presentations: List<LauncherMethodPresentation>,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        presentations.forEach { presentation ->
+            LauncherMethodBadge(presentation)
+        }
     }
 }
 
@@ -6252,8 +6273,8 @@ private fun CompactGameCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(7.dp))
-                LauncherMethodBadge(
-                    launcherMethodBadgePresentation(
+                LauncherMethodBadges(
+                    launcherMethodBadgePresentations(
                         module = game.module,
                         rootMode = BuildConfig.IS_ROOT_MODE,
                         installedNonRootMethod = game.installedNonRootMethod

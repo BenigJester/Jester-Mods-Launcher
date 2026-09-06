@@ -55,6 +55,7 @@ import com.moodtools.hub.modules.SecureTransferStage
 import com.moodtools.hub.modules.installedModuleUpdates
 import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
+import com.moodtools.hub.modules.EmbeddedLocalTestModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.sortLibraryGames
 import com.moodtools.hub.networking.LauncherAccessManager
@@ -442,15 +443,10 @@ class LauncherActivity : ComponentActivity() {
             finishIdentityShellRemoval(entry, removed = true)
             return
         }
-        if (resultCode != RESULT_OK) {
-            finishIdentityShellRemoval(
-                entry,
-                removed = false,
-                message = "${entry.title} shell was not uninstalled, so it remains in your Library."
-            )
-            return
-        }
 
+        // Some Android package installers return RESULT_CANCELED before PackageManager publishes
+        // the completed uninstall. Reconcile the authoritative installed-package state for both
+        // result codes so an OEM timing quirk cannot leave an add-on stuck in the Library.
         identityShellRemovalReconciliation?.cancel()
         identityShellRemovalReconciliation = lifecycleScope.launch {
             val deadline = SystemClock.elapsedRealtime() + PACKAGE_UNINSTALL_RECONCILE_TIMEOUT_MS
@@ -471,7 +467,11 @@ class LauncherActivity : ComponentActivity() {
                 finishIdentityShellRemoval(
                     entry,
                     removed = false,
-                    message = "Android confirmed the uninstall, but the ${entry.title} shell still appears installed."
+                    message = if (resultCode == RESULT_OK) {
+                        "Android confirmed the uninstall, but the ${entry.title} shell still appears installed."
+                    } else {
+                        "${entry.title} shell was not uninstalled, so it remains in your Library."
+                    }
                 )
             }
         }
@@ -1147,6 +1147,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val playStoreVersionClient = PlayStoreVersionClient()
     private val storageManager = SmartStorageManager(application.filesDir, application.cacheDir)
     private val embeddedPrivateModuleInstaller = EmbeddedPrivateModuleInstaller(application)
+    private val embeddedLocalTestModuleInstaller = EmbeddedLocalTestModuleInstaller(application)
     private val gatePreferences = application.getSharedPreferences(GATE_PREFERENCES, android.content.Context.MODE_PRIVATE)
     private val libraryPreferences = application.getSharedPreferences(LIBRARY_PREFERENCES, android.content.Context.MODE_PRIVATE)
     private val playStorePreferences = application.getSharedPreferences(PLAY_STORE_VERSION_PREFERENCES, android.content.Context.MODE_PRIVATE)
@@ -1352,6 +1353,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         initialLink: Uri? = null,
         bypassPrivateApproval: Boolean = false
     ) {
+        runCatching { embeddedLocalTestModuleInstaller.installIfConfigured() }
+            .onFailure { error ->
+                android.util.Log.e(
+                    "JesterMoodsLocalTest",
+                    "Embedded local test installation failed; normal launcher startup will continue.",
+                    error
+                )
+            }
         val installedPrivateModules = repository.privateModules()
         val configuredScope = BuildConfig.PRIVATE_MODULE_SCOPE.takeIf {
             BuildConfig.PRIVATE_MODULE_ENABLED

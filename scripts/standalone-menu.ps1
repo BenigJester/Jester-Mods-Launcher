@@ -296,6 +296,33 @@ function Invoke-EmbeddedPrivateLauncherBuild {
     }
 }
 
+function Invoke-EmbeddedLocalTestLauncherBuild {
+    Write-Header 'Build launcher with embedded local TEST module'
+    Write-Host 'This creates a Debug launcher APK containing one local module for tester sharing.' -ForegroundColor Gray
+    Write-Host 'The module is verified and installed into launcher-private storage on first startup.' -ForegroundColor DarkGray
+    Write-Host ''
+
+    $bundle = Read-ExistingFile 'Built module ZIP (drag it here)' @('.zip')
+
+    Write-Host ''
+    Write-Host '  1. Root'
+    Write-Host '  2. Non-root'
+    Write-Host '  3. Both'
+    Write-Host '  B. Back'
+    $flavorChoice = Read-Choice 'Launcher flavor' @('1','2','3','b')
+    if ($flavorChoice -eq 'b') { return }
+    $flavor = switch ($flavorChoice) {
+        '1' { 'root' }
+        '2' { 'nonroot' }
+        default { 'both' }
+    }
+
+    if (-not (Read-YesNo "Build the $flavor Debug APK with this local TEST module embedded?")) { return }
+    Invoke-Checked "Build embedded local TEST launcher ($flavor Debug)" {
+        & (Join-Path $PSScriptRoot 'build-embedded-local-test.ps1') -ModuleBundle $bundle -Flavor $flavor
+    }
+}
+
 function Show-LauncherMenu {
     while ($true) {
         Write-Header 'Build launcher APKs'
@@ -307,8 +334,9 @@ function Show-LauncherMenu {
         Write-Host '  6. Production release - Non-root'
         Write-Host '  7. Production release - Both'
         Write-Host '  8. Allowlisted embedded private module build'
+        Write-Host '  9. Debug launcher with embedded local TEST module'
         Write-Host '  B. Back'
-        $selection = Read-Choice 'Select an action' @('1','2','3','4','5','6','7','8','b')
+        $selection = Read-Choice 'Select an action' @('1','2','3','4','5','6','7','8','9','b')
         switch ($selection) {
             '1' { Invoke-LauncherBuild 'debug' 'root' }
             '2' { Invoke-LauncherBuild 'debug' 'nonroot' }
@@ -318,6 +346,7 @@ function Show-LauncherMenu {
             '6' { Invoke-LauncherBuild 'release' 'nonroot' }
             '7' { Invoke-LauncherBuild 'release' 'both' }
             '8' { Invoke-EmbeddedPrivateLauncherBuild }
+            '9' { Invoke-EmbeddedLocalTestLauncherBuild }
             'b' { return }
         }
         if ($selection -ne 'b') { Wait-ForUser }
@@ -378,26 +407,46 @@ function Start-DeviceTest {
         default { 'release' }
     }
 
+    $setup = 'launcher-only'
+    $skipModuleBuild = ''
+    if ($moduleSelection -ne 'launcher') {
+        Write-Host ''
+        if (-not $moduleOnly -and $build -eq 'debug') {
+            Write-Host 'Choose local module delivery:'
+            Write-Host '  1. Stage after install - copy into launcher storage with ADB'
+            Write-Host '  2. Embed in launcher   - carry one local TEST module inside the APK'
+            $setup = if ((Read-Choice 'Select delivery' @('1','2','stage','embed','embedded')) -in @('2','embed','embedded')) {
+                'embed'
+            } else {
+                'stage'
+            }
+        } else {
+            $setup = 'stage'
+        }
+        if ($setup -eq 'embed') {
+            Write-Host '  One module will be verified and installed from the Debug launcher APK on startup.' -ForegroundColor Gray
+        } else {
+            Write-Host 'Module test: local stage'
+            Write-Host '  The selected local module folders will be copied into Launcher storage.'
+        }
+        if ($build -eq 'release' -and $setup -eq 'stage') {
+            Write-Host '  Release staging uses an ADB-only local import, not the live catalog.' -ForegroundColor Gray
+        }
+        if (Read-YesNo 'Use existing module-output without rebuilding?' $true) {
+            $skipModuleBuild = '1'
+        }
+    }
+
     $launcherSource = 'installed'
     if (-not $moduleOnly) {
         Write-Host ''
         $flavorLabel = if ($mode -eq 'both') { 'Root and Non-root' } elseif ($mode -eq 'root') { 'Root' } else { 'Non-root' }
         Write-Host "Selected output: $flavorLabel $build APK" -ForegroundColor Gray
-        $launcherSource = if (Read-YesNo 'Use the existing built APK without rebuilding?' $true) { 'existing' } else { 'build' }
-    }
-
-    $setup = 'launcher-only'
-    $skipModuleBuild = ''
-    if ($moduleSelection -ne 'launcher') {
-        Write-Host ''
-        Write-Host 'Module test: local stage only'
-        Write-Host '  The selected local module folders will be copied into Launcher storage.'
-        if ($build -eq 'release') {
-            Write-Host '  Release staging uses an ADB-only local import, not the live catalog.' -ForegroundColor Gray
-        }
-        $setup = 'stage'
-        if (Read-YesNo 'Use existing module-output without rebuilding?' $true) {
-            $skipModuleBuild = '1'
+        if ($setup -eq 'embed') {
+            $launcherSource = 'build'
+            Write-Host 'A fresh launcher build is required to embed the local TEST module.' -ForegroundColor Gray
+        } else {
+            $launcherSource = if (Read-YesNo 'Use the existing built APK without rebuilding?' $true) { 'existing' } else { 'build' }
         }
     }
 

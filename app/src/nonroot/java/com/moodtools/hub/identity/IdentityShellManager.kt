@@ -47,6 +47,15 @@ import java.util.zip.ZipOutputStream
 import javax.security.auth.x500.X500Principal
 import org.json.JSONObject
 
+internal fun isIdentityShellReady(
+    identityShell: Boolean,
+    protocolVersion: Int,
+    payloadAuthority: String?,
+    expectedPayloadAuthority: String
+): Boolean = identityShell &&
+    protocolVersion >= IdentityShellManager.CURRENT_SHELL_VERSION &&
+    payloadAuthority == expectedPayloadAuthority
+
 /** Builds a branded exact-package shell with an original-game payload retained only until import. */
 internal class IdentityShellManager(
     private val context: Context,
@@ -64,8 +73,18 @@ internal class IdentityShellManager(
         info.metaData?.getBoolean(IDENTITY_METADATA, false) == true
     }.getOrDefault(false)
 
+    fun isInstalledShellReady(): Boolean = runCatching {
+        val info = packageManager.getApplicationInfo(targetPackage, PackageManager.GET_META_DATA)
+        isIdentityShellReady(
+            identityShell = info.metaData?.getBoolean(IDENTITY_METADATA, false) == true,
+            protocolVersion = info.metaData?.getInt(IDENTITY_VERSION_METADATA, 0) ?: 0,
+            payloadAuthority = info.metaData?.getString(PAYLOAD_AUTHORITY_METADATA),
+            expectedPayloadAuthority = payloadAuthority
+        )
+    }.getOrDefault(false)
+
     fun requiresReplacement(game: InstalledGame): Boolean =
-        game.packageName == targetPackage && !isInstalledShell()
+        game.packageName == targetPackage && !isInstalledShellReady()
 
     /** Removes launcher-owned shell material only after Android no longer has the shell installed. */
     fun removePreparedArtifacts() {
@@ -91,11 +110,12 @@ internal class IdentityShellManager(
     ): PackageReplacementRequest {
         require(game.packageName == targetPackage) { "The shell request targets another game" }
         require(game.versionSupported && game.abiSupported) { "This game build is not supported" }
-        require(!isInstalledShell()) {
-            "The identity shell is already installed. Open it directly or repair it from Jester Mods."
-        }
         val moduleDirectory = File(context.filesDir, "menus/$targetPackage")
         ModuleIntegrityVerifier().verify(moduleDirectory, game.module, game.abi)
+
+        if (isInstalledShell()) {
+            return prepareInstalledShellRepair(game, onProgress)
+        }
 
         onProgress?.invoke("Staging ${game.module.title}", "Temporarily copying the untouched APK split set for shell import.")
         val installed = installedPackageInfo()
@@ -118,13 +138,13 @@ internal class IdentityShellManager(
         context.assets.open(TEMPLATE_ASSET).use { input ->
             val template = File(root, "shell-template.apk")
             FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
-            rewriteTemplate(template, unsigned, label, branding)
+            rewriteTemplate(template, unsigned, label, branding, game.versionName, game.versionCode)
             check(template.delete()) { "Could not clear the temporary shell template" }
         }
         val material = signingMaterial()
         signApk(unsigned, signed, material)
         check(unsigned.delete()) { "Could not clear the unsigned shell" }
-        validateShell(signed, material.certificate)
+        validateShell(signed, material.certificate, game.versionName, game.versionCode)
 
         onProgress?.invoke(
             "Shell ready",
@@ -140,6 +160,50 @@ internal class IdentityShellManager(
         )
     }
 
+    private fun prepareInstalledShellRepair(
+        game: InstalledGame,
+        onProgress: ((headline: String, detail: String) -> Unit)?
+    ): PackageReplacementRequest {
+        val installed = installedPackageInfo()
+        val application = requireNotNull(installed.applicationInfo)
+        val label = packageManager.getApplicationLabel(application)
+            .toString().trim().ifEmpty { game.module.title }
+        val branding = renderBranding(packageManager.getApplicationIcon(targetPackage))
+        require(root.isDirectory && File(root, METADATA_FILE).isFile) {
+            "The preserved shell setup is unavailable. Reinstall the official game before creating it again."
+        }
+
+        onProgress?.invoke(
+            "Repairing $label shell",
+            "Binding the shell to this Jester Mods installation without removing the game."
+        )
+        val unsigned = File(root, "shell-repair-unsigned.apk")
+        val signed = File(root, "shell.apk")
+        context.assets.open(TEMPLATE_ASSET).use { input ->
+            val template = File(root, "shell-repair-template.apk")
+            FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
+            rewriteTemplate(template, unsigned, label, branding, game.versionName, game.versionCode)
+            check(template.delete()) { "Could not clear the temporary repair template" }
+        }
+        val material = signingMaterial()
+        signApk(unsigned, signed, material)
+        check(unsigned.delete()) { "Could not clear the unsigned shell repair" }
+        validateShell(signed, material.certificate, game.versionName, game.versionCode)
+
+        onProgress?.invoke(
+            "Shell repair ready",
+            "Android will update the existing shell in place; no uninstall is required."
+        )
+        return PackageReplacementRequest(
+            packageName = targetPackage,
+            title = label,
+            versionCode = game.versionCode,
+            apks = listOf(signed),
+            requiresUninstall = false,
+            kind = PackageReplacementKind.IDENTITY_SHELL
+        )
+    }
+
     fun install(request: PackageReplacementRequest) {
         require(request.kind == PackageReplacementKind.IDENTITY_SHELL &&
             request.packageName == targetPackage && request.apks.size == 1) {
@@ -150,7 +214,12 @@ internal class IdentityShellManager(
                 "Allow Jester Mods to install unknown apps first"
             }
         }
-        validateShell(request.apks.single(), signingMaterial().certificate)
+        validateShell(
+            request.apks.single(),
+            signingMaterial().certificate,
+            expectedVersionName = null,
+            expectedVersionCode = request.versionCode
+        )
         val installer = packageManager.packageInstaller
         val apk = request.apks.single()
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
@@ -221,7 +290,14 @@ internal class IdentityShellManager(
         check(incoming.renameTo(output)) { "Could not finalize the original game backup" }
     }
 
-    private fun rewriteTemplate(template: File, output: File, label: String, branding: Branding) {
+    private fun rewriteTemplate(
+        template: File,
+        output: File,
+        label: String,
+        branding: Branding,
+        versionName: String,
+        versionCode: Long
+    ) {
         val brandingEntries = resolveBrandingEntries(template)
         ZipFile(template).use { source ->
             val counting = CountingOutputStream(FileOutputStream(output))
@@ -232,10 +308,27 @@ internal class IdentityShellManager(
                     val replacement = when {
                         entry.name == MANIFEST_ENTRY -> {
                             val manifest = source.getInputStream(entry).use { it.readBytes() }
-                            BinaryXmlStringPool.replaceSubstring(
-                                BinaryXmlStringPool.replaceExact(manifest, LABEL_MARKER, label),
-                                TEMPLATE_PACKAGE,
-                                targetPackage
+                            BinaryXmlStringPool.replaceManifestPackageVersion(
+                                BinaryXmlStringPool.replaceSubstring(
+                                    BinaryXmlStringPool.replaceExact(
+                                        BinaryXmlStringPool.replaceExact(
+                                            BinaryXmlStringPool.replaceExact(
+                                                manifest,
+                                                LABEL_MARKER,
+                                                label
+                                            ),
+                                            LAUNCHER_PACKAGE_MARKER,
+                                            context.packageName
+                                        ),
+                                        PAYLOAD_AUTHORITY_MARKER,
+                                        payloadAuthority
+                                    ),
+                                    TEMPLATE_PACKAGE,
+                                    targetPackage
+                                ),
+                                TEMPLATE_VERSION_NAME,
+                                versionName,
+                                versionCode
                             )
                         }
                         entry.name == brandingEntries.legacy -> branding.legacy
@@ -334,15 +427,39 @@ internal class IdentityShellManager(
         File(root, METADATA_FILE).writeText(metadata.toString())
     }
 
-    private fun validateShell(apk: File, certificate: X509Certificate) {
+    private fun validateShell(
+        apk: File,
+        certificate: X509Certificate,
+        expectedVersionName: String?,
+        expectedVersionCode: Long
+    ) {
         require(apk.canonicalFile.parentFile == root.canonicalFile && apk.isFile && apk.length() > 0L)
         val archiveInfo = requireNotNull(packageManager.getPackageArchiveInfo(
             apk.absolutePath,
             PackageManager.GET_META_DATA
         )) { "Generated shell is not a valid APK" }
         require(archiveInfo.packageName == targetPackage) { "Generated shell has the wrong package identity" }
+        val archiveVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            archiveInfo.longVersionCode
+        } else {
+            @Suppress("DEPRECATION") archiveInfo.versionCode.toLong()
+        }
+        require(archiveVersionCode == expectedVersionCode) { "Generated shell has the wrong game build" }
+        if (expectedVersionName != null) {
+            require(archiveInfo.versionName == expectedVersionName) {
+                "Generated shell has the wrong game version"
+            }
+        }
         require(archiveInfo.applicationInfo?.metaData?.getBoolean(IDENTITY_METADATA, false) == true) {
             "Generated package is not an identity shell"
+        }
+        require(archiveInfo.applicationInfo?.metaData?.getInt(IDENTITY_VERSION_METADATA, 0) ==
+            CURRENT_SHELL_VERSION) {
+            "Generated identity shell protocol is outdated"
+        }
+        require(archiveInfo.applicationInfo?.metaData?.getString(PAYLOAD_AUTHORITY_METADATA) ==
+            payloadAuthority) {
+            "Generated shell has the wrong payload provider"
         }
         val result = ApkVerifier.Builder(apk).setMinCheckedPlatformVersion(26).build().verify()
         require(result.isVerified) { "Generated identity shell signature is invalid" }
@@ -539,10 +656,16 @@ internal class IdentityShellManager(
 
     companion object {
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
+        const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
+        const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
+        const val CURRENT_SHELL_VERSION = 3
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"
+        private const val TEMPLATE_VERSION_NAME = "__IDENTITY_GAME_VERSION__"
         private const val LABEL_MARKER = "__IDENTITY_SHELL_LABEL__"
+        private const val LAUNCHER_PACKAGE_MARKER = "__IDENTITY_LAUNCHER_PACKAGE__"
+        private const val PAYLOAD_AUTHORITY_MARKER = "__IDENTITY_PAYLOAD_AUTHORITY__"
         private const val GAME_PAYLOAD = "game.apks"
         private const val DEVICE_SPLIT_SET_MARKER = "META-INF/jester-installed-split-set-v1"
         private const val MANIFEST_ENTRY = "AndroidManifest.xml"
@@ -563,4 +686,7 @@ internal class IdentityShellManager(
         private const val KEY_VALIDITY_MILLIS = 25L * 365L * 24L * 60L * 60L * 1000L
         private val PACKAGE_PATTERN = Regex("[A-Za-z0-9_.]{3,200}")
     }
+
+    private val payloadAuthority: String
+        get() = "${context.packageName}.identity-payload"
 }

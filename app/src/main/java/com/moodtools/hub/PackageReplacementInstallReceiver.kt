@@ -14,7 +14,9 @@ data class PackageReplacementRequest(
     val versionCode: Long,
     val apks: List<File>,
     val requiresUninstall: Boolean,
-    val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH
+    val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH,
+    /** Updates only supplied APKs while Android retains the installed package's existing splits. */
+    val inheritExistingInstallation: Boolean = false
 )
 
 enum class PackageReplacementKind {

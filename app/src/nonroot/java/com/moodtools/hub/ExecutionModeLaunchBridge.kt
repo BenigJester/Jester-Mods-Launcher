@@ -81,7 +81,8 @@ object ExecutionModeLaunchBridge {
                 }
             }
             NonRootMethod.IDENTITY_SHELL -> identityShellLaunchAction(
-                installedIdentityShell = identityShellManager(context, game.packageName).isInstalledShell(),
+                installedIdentityShell = identityShellManager(context, game.packageName)
+                    .isInstalledShellReady(),
                 installedDirectPatch = directPatchManager(context, game.packageName).isPatchedInstallation()
             )
         }
@@ -124,7 +125,7 @@ object ExecutionModeLaunchBridge {
         PackageReplacementKind.DIRECT_PATCH -> directPatchManager(context, request.packageName)
             .isRequestInstalled(request)
         PackageReplacementKind.IDENTITY_SHELL -> identityShellManager(context, request.packageName)
-            .isInstalledShell()
+            .isInstalledShellReady()
     }
 
     fun launchPackageReplacement(context: Context, request: PackageReplacementRequest): Boolean {
@@ -189,7 +190,7 @@ object ExecutionModeLaunchBridge {
             val ready = when (game.module.effectiveNonRootMethod) {
                 NonRootMethod.DIRECT_PATCH -> patcher.isPatchedInstallation()
                 NonRootMethod.IDENTITY_SHELL -> identityShellManager(context, game.packageName)
-                    .isInstalledShell()
+                    .isInstalledShellReady()
                 NonRootMethod.INJECTION -> false
             }
             if (!ready) {

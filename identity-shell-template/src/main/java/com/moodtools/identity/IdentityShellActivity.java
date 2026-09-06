@@ -27,8 +27,8 @@ import top.niunaijun.blackbox.entity.pm.InstallResult;
 /** Direct launcher entry for a generated exact-package shell. */
 public final class IdentityShellActivity extends Activity {
     private static final String TAG = "IdentityShell";
-    private static final String PAYLOAD_AUTHORITY =
-            "com.moodtools.hub.nonroot.identity-payload";
+    private static final String PAYLOAD_AUTHORITY_METADATA =
+            "com.moodtools.identity_payload_authority";
     private static final String METHOD_GAME_IMPORT_SUCCEEDED =
             "identity_game_import_succeeded";
     private static final int USER_ID = 0;
@@ -73,18 +73,19 @@ public final class IdentityShellActivity extends Activity {
     private void prepareAndLaunch(boolean fullModuleAuthorized) {
         String targetPackage = getPackageName();
         try {
+            String payloadAuthority = resolvePayloadAuthority();
             BlackBoxCore core = BlackBoxCore.get();
             updateStatus("Starting compatibility service…");
             core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
             if (!core.isInstalled(targetPackage, USER_ID)) {
                 updateStatus("Importing original game…");
-                importOriginalGame(core, targetPackage);
+                importOriginalGame(core, targetPackage, payloadAuthority);
             }
-            releaseImportedGameBackup(targetPackage);
+            releaseImportedGameBackup(targetPackage, payloadAuthority);
 
             updateStatus("Preparing add-on…");
             core.stopPackage(targetPackage, USER_ID);
-            refreshModuleIfAvailable(targetPackage);
+            refreshModuleIfAvailable(targetPackage, payloadAuthority);
             IdentityLaunchGuard.persistMode(this, fullModuleAuthorized);
             if (!fullModuleAuthorized) {
                 Log.i(TAG, "External launch: identity compatibility only");
@@ -108,14 +109,15 @@ public final class IdentityShellActivity extends Activity {
      * opened from the remote service process. A shell-owned file keeps that transfer local and
      * also gives us a safe source for one service-recovery retry.
      */
-    private void importOriginalGame(BlackBoxCore core, String targetPackage) throws Exception {
+    private void importOriginalGame(BlackBoxCore core, String targetPackage,
+                                    String payloadAuthority) throws Exception {
         File stagedPayload = new File(getCacheDir(), "identity-game-import.apks");
         if (stagedPayload.exists() && !stagedPayload.delete()) {
             throw new IllegalStateException("Could not replace the staged original game");
         }
         try {
             try (InputStream input = getContentResolver().openInputStream(
-                    payloadUri(targetPackage, "game.apks"))) {
+                    payloadUri(payloadAuthority, targetPackage, "game.apks"))) {
                 if (input == null) {
                     throw new IllegalStateException("The preserved original game is unavailable");
                 }
@@ -208,12 +210,12 @@ public final class IdentityShellActivity extends Activity {
         }
     }
 
-    private void releaseImportedGameBackup(String targetPackage) {
+    private void releaseImportedGameBackup(String targetPackage, String payloadAuthority) {
         try {
             Bundle result = getContentResolver().call(
                     new Uri.Builder()
                             .scheme(ContentResolver.SCHEME_CONTENT)
-                            .authority(PAYLOAD_AUTHORITY)
+                            .authority(payloadAuthority)
                             .build(),
                     METHOD_GAME_IMPORT_SUCCEEDED,
                     targetPackage,
@@ -228,7 +230,8 @@ public final class IdentityShellActivity extends Activity {
         }
     }
 
-    private void refreshModuleIfAvailable(String targetPackage) throws Exception {
+    private void refreshModuleIfAvailable(String targetPackage, String payloadAuthority)
+            throws Exception {
         File directory = BEnvironment.getDataFilesDir(targetPackage, USER_ID);
         if (!directory.mkdirs() && !directory.isDirectory()) {
             throw new IllegalStateException("Could not create the add-on directory");
@@ -237,7 +240,7 @@ public final class IdentityShellActivity extends Activity {
         boolean copiedAny = false;
         for (String name : files) {
             try (InputStream input = getContentResolver().openInputStream(
-                    payloadUri(targetPackage, name))) {
+                    payloadUri(payloadAuthority, targetPackage, name))) {
                 if (input == null) continue;
                 copyAtomically(input, new File(directory, name), "classes.dex".equals(name));
                 copiedAny = true;
@@ -262,10 +265,23 @@ public final class IdentityShellActivity extends Activity {
         }
     }
 
-    private Uri payloadUri(String packageName, String fileName) {
+    private String resolvePayloadAuthority() throws Exception {
+        ApplicationInfo info = getPackageManager().getApplicationInfo(
+                getPackageName(), android.content.pm.PackageManager.GET_META_DATA);
+        String authority = info.metaData == null
+                ? null
+                : info.metaData.getString(PAYLOAD_AUTHORITY_METADATA);
+        if (authority == null
+                || !authority.matches("[A-Za-z0-9_.]{3,240}\\.identity-payload")) {
+            throw new IllegalStateException("Identity payload provider is unavailable");
+        }
+        return authority;
+    }
+
+    private Uri payloadUri(String authority, String packageName, String fileName) {
         return new Uri.Builder()
                 .scheme(ContentResolver.SCHEME_CONTENT)
-                .authority(PAYLOAD_AUTHORITY)
+                .authority(authority)
                 .appendPath("payload")
                 .appendPath(packageName)
                 .appendPath(fileName)

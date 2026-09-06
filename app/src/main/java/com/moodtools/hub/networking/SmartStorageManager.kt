@@ -138,17 +138,17 @@ internal class SmartStorageManager(
         menuDirectory.listFiles()?.filter(File::isDirectory)?.forEach { moduleDirectory ->
             val targets = TRANSACTION_TARGETS.map { name -> File(moduleDirectory, name) }
             val backups = targets.associateWith { target -> File(moduleDirectory, "${target.name}.bak") }
-            val hasInterruptedTransaction = backups.values.any(File::isFile)
+            val hasInterruptedTransaction = backups.values.any(File::exists)
             if (hasInterruptedTransaction && targets.all(File::isFile)) {
                 // Every new target reached its final name; the process only died before backup cleanup.
-                backups.values.forEach { delete(it, result) }
+                backups.values.forEach { deleteTree(it, result) }
             } else if (hasInterruptedTransaction) {
                 // A partial target set is never trusted. Restore the complete previous generation.
                 targets.forEach targetLoop@{ target ->
                     val backup = backups.getValue(target)
-                    if (target.isFile) delete(target, result)
+                    if (target.exists()) deleteTree(target, result)
                     if (target.exists()) return@targetLoop
-                    if (backup.isFile && backup.renameTo(target)) result.recordRecovered()
+                    if (backup.exists() && backup.renameTo(target)) result.recordRecovered()
                 }
             }
             TRANSACTION_TARGETS.forEach { targetName ->
@@ -313,7 +313,8 @@ internal class SmartStorageManager(
             "libmenu_native.so",
             "classes.dex",
             "config.json",
-            "${com.moodtools.hub.modules.ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE}"
+            "${com.moodtools.hub.modules.ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE}",
+            "update.json"
         )
         private val CACHE_LIMITS = mapOf(
             "launcher-module-icons" to CacheLimit(256, 32L * 1024L * 1024L),

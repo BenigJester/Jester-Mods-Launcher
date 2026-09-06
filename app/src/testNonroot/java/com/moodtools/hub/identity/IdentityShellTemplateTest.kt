@@ -3,6 +3,7 @@ package com.moodtools.hub.identity
 import com.moodtools.hub.soulpatch.BinaryXmlStringPool
 import java.io.File
 import java.util.zip.ZipFile
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,18 +19,41 @@ class IdentityShellTemplateTest {
             val manifest = archive.getInputStream(
                 requireNotNull(archive.getEntry("AndroidManifest.xml"))
             ).readBytes()
-            val branded = BinaryXmlStringPool.replaceSubstring(
-                BinaryXmlStringPool.replaceExact(
-                    manifest,
-                    "__IDENTITY_SHELL_LABEL__",
-                    "Example Game"
+            val branded = BinaryXmlStringPool.replaceManifestPackageVersion(
+                BinaryXmlStringPool.replaceSubstring(
+                    BinaryXmlStringPool.replaceExact(
+                        BinaryXmlStringPool.replaceExact(
+                            BinaryXmlStringPool.replaceExact(
+                                manifest,
+                                "__IDENTITY_SHELL_LABEL__",
+                                "Example Game"
+                            ),
+                            "__IDENTITY_LAUNCHER_PACKAGE__",
+                            "com.example.launcher"
+                        ),
+                        "__IDENTITY_PAYLOAD_AUTHORITY__",
+                        "com.example.launcher.identity-payload"
+                    ),
+                    "com.moodtools.identity.template",
+                    "com.example.game"
                 ),
-                "com.moodtools.identity.template",
-                "com.example.game"
+                "__IDENTITY_GAME_VERSION__",
+                "8.5.1",
+                80512
             )
             // A second rewrite proves both generated values are present in the rebuilt pool.
             BinaryXmlStringPool.replaceExact(branded, "Example Game", "Example Game 2")
             BinaryXmlStringPool.replaceSubstring(branded, "com.example.game", "com.example.other")
+            BinaryXmlStringPool.replaceExact(
+                branded,
+                "com.example.launcher.identity-payload",
+                "com.example.debug.identity-payload"
+            )
+            BinaryXmlStringPool.replaceExact(branded, "8.5.1", "8.5.2")
+            assertEquals(
+                BinaryXmlStringPool.ManifestPackageVersion("8.5.1", 80512),
+                BinaryXmlStringPool.manifestPackageVersion(branded)
+            )
             val resourceTable = archive.getInputStream(
                 requireNotNull(archive.getEntry("resources.arsc"))
             ).readBytes().toString(Charsets.ISO_8859_1)

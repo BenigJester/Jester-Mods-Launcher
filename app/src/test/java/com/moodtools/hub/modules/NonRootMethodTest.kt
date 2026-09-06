@@ -96,18 +96,24 @@ class NonRootMethodTest {
     }
 
     @Test
-    fun unlockedDualMethodBadgeShowsEveryAvailableSetup() {
+    fun unlockedDualMethodShowsEveryAvailableSetupAsASeparateBadge() {
         val module = dualMethodModule(selected = NonRootMethod.IDENTITY_SHELL)
 
-        val presentation = launcherMethodBadgePresentation(
+        val presentations = launcherMethodBadgePresentations(
             module = module,
             rootMode = false
         )
 
-        assertEquals("SHELL + PATCH", presentation.badgeLabel)
         assertEquals(
-            "Available non-root methods: Identity shell and Patch",
-            presentation.badgeDescription
+            listOf("SHELL", "PATCH"),
+            presentations.map { it.badgeLabel }
+        )
+        assertEquals(
+            listOf(
+                "Non-root method: Exact-package shell",
+                "Non-root method: Patch"
+            ),
+            presentations.map { it.badgeDescription }
         )
     }
 
@@ -115,11 +121,12 @@ class NonRootMethodTest {
     fun dualMethodBadgeCollapsesToTheInstalledLockedSetup() {
         val module = dualMethodModule(selected = NonRootMethod.IDENTITY_SHELL)
 
-        val presentation = launcherMethodBadgePresentation(
+        val presentations = launcherMethodBadgePresentations(
             module = module,
             rootMode = false,
             installedNonRootMethod = NonRootMethod.DIRECT_PATCH
         )
+        val presentation = presentations.single()
 
         assertEquals(NonRootMethod.DIRECT_PATCH, presentation.method)
         assertEquals("PATCH", presentation.badgeLabel)

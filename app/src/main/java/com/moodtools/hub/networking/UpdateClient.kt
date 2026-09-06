@@ -106,7 +106,9 @@ class UpdateClient(private val moduleRoot: File) {
             "The update must contain both native and DEX module payloads"
         }
 
-        moduleRoot.mkdirs()
+        require(moduleRoot.mkdirs() || moduleRoot.isDirectory) {
+            "Could not prepare the add-on storage directory"
+        }
         val nextNative = File(moduleRoot, "libmenu_native.so.next")
         val nextDex = File(moduleRoot, "classes.dex.next")
         nextNative.delete()
@@ -211,10 +213,15 @@ class UpdateClient(private val moduleRoot: File) {
         val nextDex = File(moduleRoot, "classes.dex.next")
         val nextConfig = File(moduleRoot, "config.json.next")
         val nextSignedManifest = File(moduleRoot, "${ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE}.next")
+        val nextUpdate = File(moduleRoot, "update.json.next")
         val nextPrivateMarker = privateScope?.let { File(moduleRoot, "${ModuleRepository.PRIVATE_INSTALL_MARKER}.next") }
-        nextConfig.delete()
-        nextSignedManifest.delete()
-        nextPrivateMarker?.delete()
+        listOf(nextNative, nextDex, nextConfig, nextSignedManifest).forEach { candidate ->
+            if (candidate.exists() && !candidate.isFile) candidate.deleteRecursively()
+        }
+        nextConfig.deleteRecursively()
+        nextSignedManifest.deleteRecursively()
+        nextUpdate.deleteRecursively()
+        nextPrivateMarker?.deleteRecursively()
         try {
             download(
                 path = native.getString("path"),
@@ -269,6 +276,7 @@ class UpdateClient(private val moduleRoot: File) {
                 }
             nextConfig.writeText(config.toString())
             nextSignedManifest.writeText(envelope.toString())
+            nextUpdate.writeText(payload.toString())
             nextPrivateMarker?.writeText(
                 JSONObject()
                     .put("schema", 1)
@@ -279,50 +287,73 @@ class UpdateClient(private val moduleRoot: File) {
             ensureNotCancelled(isCancelled)
             onStage(StandaloneUpdateStage.ACTIVATING)
             onDiagnostic("Activating the verified add-on atomically")
-            commitStandalonePayload(nextNative, nextDex, nextConfig, nextSignedManifest, nextPrivateMarker)
-            File(moduleRoot, "update.json").writeText(payload.toString())
+            commitStandalonePayload(
+                nextNative,
+                nextDex,
+                nextConfig,
+                nextSignedManifest,
+                nextUpdate,
+                nextPrivateMarker
+            )
         } finally {
-            nextConfig.delete()
-            nextSignedManifest.delete()
-            nextPrivateMarker?.delete()
+            nextConfig.deleteRecursively()
+            nextSignedManifest.deleteRecursively()
+            nextUpdate.deleteRecursively()
+            nextPrivateMarker?.deleteRecursively()
         }
         return UpdateResult(build, version, notes.takeIf(String::isNotBlank))
     }
 
-    private fun commitStandalonePayload(
+    internal fun commitStandalonePayload(
         nextNative: File,
         nextDex: File,
         nextConfig: File,
         nextSignedManifest: File,
+        nextUpdate: File,
         nextPrivateMarker: File?
     ) {
         val requiredTargets = listOf(
             nextNative to File(moduleRoot, "libmenu_native.so"),
             nextDex to File(moduleRoot, "classes.dex"),
             nextConfig to File(moduleRoot, "config.json"),
-            nextSignedManifest to File(moduleRoot, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE)
+            nextSignedManifest to File(moduleRoot, ModuleIntegrityVerifier.SIGNED_MANIFEST_FILE),
+            nextUpdate to File(moduleRoot, "update.json")
         )
         val privateTarget = File(moduleRoot, ModuleRepository.PRIVATE_INSTALL_MARKER)
-        val allTargets = requiredTargets.map { it.second } + privateTarget
+        // A signed catalog activation replaces a local TEST installation completely. Keeping
+        // this marker would make ModuleIntegrityVerifier continue down its unsigned test path
+        // even though every payload and the manifest now belong to the catalog publication.
+        val localTestTarget = File(moduleRoot, ModuleRepository.LOCAL_TEST_INSTALL_MARKER)
+        val allTargets = requiredTargets.map { it.second } + privateTarget + localTestTarget
         val backups = allTargets.map { target -> target to File(moduleRoot, "${target.name}.bak") }
-        backups.forEach { (_, backup) -> backup.delete() }
+        backups.forEach { (_, backup) -> backup.deleteRecursively() }
         try {
             backups.forEach { (target, backup) ->
-                if (target.isFile) require(target.renameTo(backup)) { "Could not back up ${target.name}" }
+                if (target.exists()) {
+                    require(target.renameTo(backup)) { "Could not back up ${target.name}" }
+                }
             }
             requiredTargets.forEach { (next, target) ->
+                require(next.isFile) { "Staged ${target.name} is unavailable" }
                 require(next.renameTo(target)) { "Could not commit ${target.name}" }
             }
             nextPrivateMarker?.let {
                 require(it.renameTo(privateTarget)) { "Could not commit ${privateTarget.name}" }
             }
-            backups.forEach { (_, backup) -> backup.delete() }
+            backups.forEach { (_, backup) -> backup.deleteRecursively() }
         } catch (error: Throwable) {
-            allTargets.forEach(File::delete)
-            backups.forEach { (target, backup) -> if (backup.isFile) backup.renameTo(target) }
+            allTargets.forEach(File::deleteRecursively)
+            backups.forEach { (target, backup) ->
+                if (backup.exists() && !backup.renameTo(target)) {
+                    error.addSuppressed(
+                        IllegalStateException(
+                            "Could not restore ${target.name} after failed activation; " +
+                                "its backup remains at ${backup.name}"
+                        )
+                    )
+                }
+            }
             throw error
-        } finally {
-            backups.forEach { (_, backup) -> backup.delete() }
         }
     }
 
@@ -406,7 +437,7 @@ class UpdateClient(private val moduleRoot: File) {
             }
             return
         }
-        output.delete()
+        output.deleteRecursively()
         val temporary = File(
             output.parentFile,
             "${output.name}.${expectedSha256.lowercase().take(16)}.part"
@@ -451,7 +482,7 @@ class UpdateClient(private val moduleRoot: File) {
             )
             ensureNotCancelled(isCancelled)
             require(sha256(temporary, isCancelled) == expectedSha256.lowercase()) { "Payload hash verification failed" }
-            if (output.exists()) require(output.delete())
+            if (output.exists()) require(output.deleteRecursively())
             require(temporary.renameTo(output)) { "Could not commit downloaded payload" }
         } catch (error: Throwable) {
             if (temporary.length() == expectedBytes) temporary.delete()
