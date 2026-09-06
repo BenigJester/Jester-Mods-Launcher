@@ -5603,13 +5603,23 @@ private fun rememberCachedBitmap(
     return bitmap
 }
 
-private fun libraryStatusLabel(entry: LibraryGame): String {
+internal fun libraryStatusLabel(entry: LibraryGame): String {
     if (entry.status != LibraryGameStatus.RUNNING) {
+        val setupChoiceAvailable = entry.module.offersNonRootMethodChoice &&
+            entry.installedNonRootMethod == null
         when (entry.launchAction) {
-            LibraryLaunchAction.PATCH_AND_INSTALL -> return "Patched install required"
+            LibraryLaunchAction.PATCH_AND_INSTALL -> return if (setupChoiceAvailable) {
+                "Shell or Patch setup required"
+            } else {
+                "Patched install required"
+            }
             LibraryLaunchAction.UPDATE_PATCHED_INSTALL -> return "Patched game update required"
             LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> return "Official game restore required"
-            LibraryLaunchAction.SHELL_AND_INSTALL -> return "Exact-package shell required"
+            LibraryLaunchAction.SHELL_AND_INSTALL -> return if (setupChoiceAvailable) {
+                "Shell or Patch setup required"
+            } else {
+                "Exact-package shell required"
+            }
             LibraryLaunchAction.PLAY -> Unit
         }
     }
@@ -5662,7 +5672,11 @@ private fun LauncherMethodBadge(
     presentation: LauncherMethodPresentation,
     modifier: Modifier = Modifier
 ) {
-    val color = if (presentation.method == NonRootMethod.INJECTION) Accent else AccentBlue
+    val color = when (presentation.method) {
+        NonRootMethod.INJECTION -> Accent
+        NonRootMethod.IDENTITY_SHELL -> AccentBlue
+        NonRootMethod.DIRECT_PATCH -> LimitedAmber
+    }
     Box(
         modifier = modifier
             .semantics { contentDescription = presentation.badgeDescription }

@@ -18,6 +18,7 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import black.android.app.BRActivityThread;
@@ -37,6 +38,7 @@ import top.niunaijun.blackbox.fake.service.base.PkgMethodProxy;
 import top.niunaijun.blackbox.fake.service.base.ValueMethodProxy;
 import top.niunaijun.blackbox.media.BlackBoxMediaContract;
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.FakeBillingCompat;
 import top.niunaijun.blackbox.utils.Reflector;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
@@ -255,6 +257,35 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, flags, resolvedType, BlackBoxCore.getUserId());
             if (resolveInfo != null) {
                 return resolveInfo;
+            }
+                  if (FakeBillingCompat.shouldUseFallback(
+                          intent,
+                          BActivityThread.getAppPackageName())) {
+                return FakeBillingCompat.createResolveInfo();
+            }
+            MethodParameterUtils.replaceUserIdIfNeeded(args, args.length - 1);
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("queryIntentServices")
+    public static class QueryIntentServices extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = MethodParameterUtils.getFirstParam(args, Intent.class);
+            Integer flags = MethodParameterUtils.getFirstParam(args, Integer.class);
+            List<ResolveInfo> resolves = BlackBoxCore.getBPackageManager()
+                    .queryIntentServices(intent, flags == null ? 0 : flags,
+                            BActivityThread.getUserId());
+            if (resolves != null && !resolves.isEmpty()) {
+                return BuildCompat.isN() ? ParceledListSliceCompat.create(resolves) : resolves;
+            }
+                  if (FakeBillingCompat.shouldUseFallback(
+                          intent,
+                          BActivityThread.getAppPackageName())) {
+                List<ResolveInfo> mock = Collections.singletonList(
+                        FakeBillingCompat.createResolveInfo());
+                return BuildCompat.isN() ? ParceledListSliceCompat.create(mock) : mock;
             }
             MethodParameterUtils.replaceUserIdIfNeeded(args, args.length - 1);
             return method.invoke(who, args);
@@ -626,6 +657,11 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             ServiceInfo serviceInfo = BlackBoxCore.getBPackageManager().getServiceInfo(componentName, flags, BlackBoxCore.getUserId());
             if (serviceInfo != null)
                 return serviceInfo;
+                  if (FakeBillingCompat.isMockComponent(componentName)
+                          && FakeBillingCompat.isEnabledForGuest(
+                          BActivityThread.getAppPackageName())) {
+                return FakeBillingCompat.createResolveInfo().serviceInfo;
+            }
             if (AppSystemEnv.isOpenPackage(componentName)) {
                 MethodParameterUtils.replaceUserIdIfNeeded(args, args.length - 1);
                 return method.invoke(who, args);

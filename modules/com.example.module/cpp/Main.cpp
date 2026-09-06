@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <cstdint>
 #include <cerrno>
@@ -75,6 +76,25 @@ static std::atomic<int> gExecuteOnlyReadDeniedCount{0};
 static std::atomic<bool> gHookExampleAvailable{true};
 static std::atomic<bool> gDirectCallExampleAvailable{true};
 static std::atomic<bool> gInstallWatchdogRecovered{false};
+
+// NativePayloadLoader calls this immediately after System.loadLibrary() to verify that the
+// Java loader and native payload expose the same startup contract. Keep it statically exported:
+// the probe runs before the game library is mapped and before runtime startup has completed.
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_android_support_NativePayloadLoader_nativeProbe(JNIEnv *env, jclass) {
+    if (env == nullptr) return nullptr;
+    char status[192];
+    std::snprintf(
+            status,
+            sizeof(status),
+            "runtime=%d compatibility=%d failure=%d installStarted=%d",
+            gRuntimeMethod.load(std::memory_order_acquire),
+            static_cast<int>(gCompatibilityState.load(std::memory_order_acquire)),
+            static_cast<int>(gCompatibilityFailure.load(std::memory_order_acquire)),
+            gNativeInstallStarted.load(std::memory_order_acquire) ? 1 : 0);
+    return env->NewStringUTF(status);
+}
 
 bool StartNativeRuntime(int method) {
     constexpr int kInjectionMethod = 1;

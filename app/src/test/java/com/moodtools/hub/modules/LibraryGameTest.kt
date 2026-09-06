@@ -89,6 +89,35 @@ class LibraryGameTest {
     }
 
     @Test
+    fun unlockedDualMethodLibraryCardDoesNotPresentOnlyOneSetup() {
+        val choices = listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH)
+        val base = libraryGame("Dual method")
+        val dualModule = base.module.copy(
+            nonRootMethod = NonRootMethod.IDENTITY_SHELL,
+            nonRootMethods = choices
+        )
+        val unlocked = base.copy(module = dualModule)
+
+        assertEquals(
+            "Shell or Patch setup required",
+            libraryStatusLabel(unlocked.copy(launchAction = LibraryLaunchAction.SHELL_AND_INSTALL))
+        )
+        assertEquals(
+            "Shell or Patch setup required",
+            libraryStatusLabel(unlocked.copy(launchAction = LibraryLaunchAction.PATCH_AND_INSTALL))
+        )
+        assertEquals(
+            "Exact-package shell required",
+            libraryStatusLabel(
+                unlocked.copy(
+                    launchAction = LibraryLaunchAction.SHELL_AND_INSTALL,
+                    installedNonRootMethod = NonRootMethod.IDENTITY_SHELL
+                )
+            )
+        )
+    }
+
+    @Test
     fun completedShellSetupKeepsTheFirstPlayAction() {
         assertEquals(
             "Play",

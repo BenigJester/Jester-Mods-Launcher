@@ -57,6 +57,7 @@ import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.proxy.record.ProxyBroadcastRecord;
 import top.niunaijun.blackbox.proxy.record.ProxyPendingRecord;
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.FakeBillingCompat;
 import top.niunaijun.blackbox.utils.PlayStoreCrashPolicy;
 import top.niunaijun.blackbox.utils.Reflector;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
@@ -491,6 +492,9 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             userId = userId == -1 ? BActivityThread.getUserId() : userId;
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, userId);
             String sourceGuestPackage = BActivityThread.getAppPackageName();
+            if (FakeBillingCompat.shouldUseFallback(intent, sourceGuestPackage)) {
+                return FakeBillingCompat.bind(connection, sourceGuestPackage);
+            }
             String servicePackage = resolveInfo != null && resolveInfo.serviceInfo != null
                     ? resolveInfo.serviceInfo.packageName
                     : intent.getComponent() != null
@@ -656,6 +660,9 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             IServiceConnection iServiceConnection = (IServiceConnection) args[0];
             if (iServiceConnection == null) {
                 return method.invoke(who, args);
+            }
+            if (FakeBillingCompat.unbind(iServiceConnection)) {
+                return null;
             }
             BlackBoxCore.getBActivityManager().unbindService(iServiceConnection.asBinder(), BActivityThread.getUserId());
             ServiceConnectionDelegate delegate = ServiceConnectionDelegate.getDelegate(iServiceConnection.asBinder());

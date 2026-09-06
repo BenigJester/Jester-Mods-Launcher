@@ -50,6 +50,17 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
         return delegate;
     }
 
+    /**
+     * Delivers a synthetic service connection through the framework signature used by the
+     * current Android release. Android 16 replaced the legacy two/three-argument callback with
+     * the IBinderSession overload, so callers must not invoke IServiceConnection directly.
+     */
+    public static void dispatchConnected(IServiceConnection connection, ComponentName component,
+                                         IBinder service) throws RemoteException {
+        new ServiceConnectionDelegate(connection, component)
+                .connected(component, service, (android.app.IBinderSession) null, false);
+    }
+
     @Override
     public void connected(ComponentName name, IBinder service) throws RemoteException {
         connected(name, service, false);
@@ -68,7 +79,7 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
     public void connected(ComponentName name, IBinder service, android.app.IBinderSession session, boolean dead)
             throws RemoteException {
         try {
-            Method method = mConn.getClass().getMethod(
+            Method method = IServiceConnection.class.getMethod(
                     "connected",
                     ComponentName.class,
                     IBinder.class,

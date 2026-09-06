@@ -448,6 +448,24 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         return Collections.emptyList();
     }
 
+    public List<ResolveInfo> queryIntentServices(Intent intent, int flags, int userId) {
+        try {
+            IBPackageManagerService service = getService();
+            if (service == null) {
+                Log.w(TAG, "PackageManager service is null, returning empty list for queryIntentServices");
+                return Collections.emptyList();
+            }
+            List<ResolveInfo> result = service.queryIntentServices(intent, flags, userId);
+            return result == null ? Collections.emptyList() : result;
+        } catch (android.os.DeadObjectException error) {
+            Log.w(TAG, "PackageManager service died during queryIntentServices", error);
+            clearServiceCache();
+        } catch (RemoteException error) {
+            Log.e(TAG, "RemoteException in queryIntentServices", error);
+        }
+        return Collections.emptyList();
+    }
+
     public List<ResolveInfo> queryBroadcastReceivers(Intent intent, int flags, String resolvedType, int userId) {
         try {
             IBPackageManagerService service = getService();
