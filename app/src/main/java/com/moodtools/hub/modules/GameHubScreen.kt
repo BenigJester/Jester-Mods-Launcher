@@ -4714,9 +4714,7 @@ private fun ModuleDownloadScreen(
                 summary = "Discover what is included, confirm compatibility, and choose how to add it.",
                 facts = listOf(
                     "ADD-ON RELEASE" to listing.catalog.version,
-                    "GAME RELEASE" to (game?.let {
-                        gameReleaseLabel(it.versionName, it.versionCode)
-                    } ?: listing.catalog.config.supportedVersions.sorted().joinToString(", "))
+                    "GAME RELEASE" to supportedGameReleaseLabel(listing.catalog.config)
                 ),
                 outdated = listing.playStoreOutdatedWarning
             )
@@ -5573,6 +5571,16 @@ private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
 
 private fun gameReleaseLabel(version: String, versionCode: Long?): String =
     versionCode?.let { "v$version · $it" } ?: "v$version"
+
+private fun supportedGameReleaseLabel(module: ModuleConfig): String {
+    val versions = module.supportedVersions.sorted()
+    val builds = module.supportedVersionCodes.sorted()
+    return if (versions.size == 1 && builds.size == 1) {
+        gameReleaseLabel(versions.single(), builds.single())
+    } else {
+        "${versions.joinToString(", ")} · ${supportedBuildsLabel(module.supportedVersionCodes)}"
+    }
+}
 
 private fun supportedBuildsLabel(versionCodes: Set<Long>): String =
     versionCodes.sorted().joinToString(", ").ifBlank { "Not declared" }
@@ -6599,9 +6607,7 @@ private fun ModuleScreen(
                 summary = "Your complete space to review features, manage compatibility, and launch.",
                 facts = listOf(
                     "ADD-ON RELEASE" to (game.listing?.catalog?.version ?: game.installedBuild.toString()),
-                    "GAME RELEASE" to (installedGame?.let {
-                        gameReleaseLabel(it.versionName, it.versionCode)
-                    } ?: "Not installed")
+                    "GAME RELEASE" to supportedGameReleaseLabel(game.module)
                 ),
                 localTest = game.localTest,
                 outdated = game.playStoreOutdatedWarning

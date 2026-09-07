@@ -16,6 +16,12 @@ radio-styled choices in the same inline popup used by the ordinary Spinner. The
 native callback receives `0` when all entries are selected; explicit subsets use
 bit 30 as a marker and bits 0 through 29 as the selected-item mask.
 
+`java/ItemSpawner.java` is the reusable item-picker UI. A game-specific bridge in
+`com.android.support` implements `ItemSpawner.Backend`, returns catalog rows as
+`id<TAB>name<TAB>type`, maps each type to a category label, and forwards the
+selected IDs and amounts to the game's native add-item path. Runtime catalog
+access and inventory mutation stay in that bridge rather than the shared helper.
+
 ## Choose which features to expose
 
 `cpp/Main.cpp` defines `kHiddenFeatureIds` near the top of the template. Add the
