@@ -41,7 +41,7 @@ android {
             path 'src/main/cpp/CMakeLists.txt'
             version '3.22.1'
         }
-        ndkVersion = "30.0.14904198"
+        ndkVersion = "29.0.14206865"
     }
 
     compileOptions {

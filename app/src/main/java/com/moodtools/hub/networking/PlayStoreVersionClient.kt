@@ -66,7 +66,7 @@ class PlayStoreVersionClient {
     }
 
     companion object {
-        private const val HOST = "jester.moodtools.workers.dev"
+        private val HOST = java.net.URI(ModuleCatalogClient.BASE_URL).host ?: "jester.moodtools.workers.dev"
         private const val MAX_BATCH_PACKAGES = 2_000
         private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_.]{3,200}$")
     }

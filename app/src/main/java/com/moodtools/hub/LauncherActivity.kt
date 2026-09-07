@@ -1088,7 +1088,8 @@ class LauncherActivity : ComponentActivity() {
 
     private fun openTrustedWebPage(address: String) {
         val uri = Uri.parse(address)
-        require(uri.scheme == "https" && uri.host.equals("jester.moodtools.workers.dev", ignoreCase = true)) {
+        val trustedHost = Uri.parse(ModuleCatalogClient.BASE_URL).host ?: "jester.moodtools.workers.dev"
+        require(uri.scheme == "https" && uri.host.equals(trustedHost, ignoreCase = true)) {
             "Refusing to open an untrusted web address"
         }
         val browser = Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
@@ -4438,7 +4439,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             .putLong(GATE_BUILD, gate.updateBuild)
             .putLong(GATE_EXPIRES, System.currentTimeMillis() + RELEASE_GATE_TTL_MS)
             .apply()
-        val verificationUrl = "https://jester.moodtools.workers.dev${gate.releasePath}?nonce=" +
+        val verificationUrl = "${ModuleCatalogClient.BASE_URL}${gate.releasePath}?nonce=" +
             URLEncoder.encode(nonce, Charsets.UTF_8.name())
         _updateState.value = ModuleUpdateUiState(
             headline = "One more step",

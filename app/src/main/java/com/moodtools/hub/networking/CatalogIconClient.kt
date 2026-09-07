@@ -101,8 +101,8 @@ class CatalogIconClient(context: Context) {
     }
 
     private companion object {
-        const val BASE_URL = "https://jester.moodtools.workers.dev"
-        const val HOST = "jester.moodtools.workers.dev"
+        const val BASE_URL = ModuleCatalogClient.BASE_URL
+        val HOST = java.net.URI(BASE_URL).host ?: "jester.moodtools.workers.dev"
         const val TAG = "JesterMoodsCatalogIcon"
         val memoryCache = ConcurrentHashMap<String, Bitmap>()
         val cacheLock = Any()

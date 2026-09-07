@@ -946,7 +946,7 @@ class LauncherAccessManager(context: Context) {
 
     companion object {
         private const val BASE_URL = ModuleCatalogClient.BASE_URL
-        private const val HOST = "jester.moodtools.workers.dev"
+        private val HOST = java.net.URI(BASE_URL).host ?: "jester.moodtools.workers.dev"
         private const val PREFERENCES = "jester_moods_launcher_access"
         private const val INSTALLATION_ID = "installation_id"
         private const val DIGITAL_KEY = "digital_key"

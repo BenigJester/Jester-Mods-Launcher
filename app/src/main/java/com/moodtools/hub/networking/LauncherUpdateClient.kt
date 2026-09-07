@@ -362,9 +362,9 @@ class LauncherUpdateClient(private val context: Context) {
     }
 
     companion object {
-        private const val BASE_URL = "https://jester.moodtools.workers.dev"
+        private const val BASE_URL = ModuleCatalogClient.BASE_URL
         private const val TAG = "JesterMoodsLauncherUpdate"
-        private const val HOST = "jester.moodtools.workers.dev"
+        private val HOST = java.net.URI(BASE_URL).host ?: "jester.moodtools.workers.dev"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val MAX_APK_BYTES = 250L * 1024L * 1024L
         private const val MAX_CHANGELOG_ENTRIES = 50

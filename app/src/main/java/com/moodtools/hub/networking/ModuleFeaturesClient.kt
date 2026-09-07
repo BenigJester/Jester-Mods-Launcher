@@ -104,8 +104,8 @@ class ModuleFeaturesClient(private val context: android.content.Context) {
 
     companion object {
         private const val TAG = "JesterMoodsFeatures"
-        private const val BASE_URL = "https://jester.moodtools.workers.dev"
-        private const val HOST = "jester.moodtools.workers.dev"
+        private const val BASE_URL = ModuleCatalogClient.BASE_URL
+        private val HOST = java.net.URI(BASE_URL).host ?: "jester.moodtools.workers.dev"
         private const val MAX_GROUPS = 24
         private const val MAX_FEATURES_PER_GROUP = 40
         private const val MAX_FEATURES = 200

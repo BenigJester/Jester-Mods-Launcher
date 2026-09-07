@@ -45,7 +45,8 @@ class ModuleDownloadAuthorizationExpired(cause: Throwable? = null) :
     Exception("The module download authorization expired", cause)
 
 class UpdateClient(private val moduleRoot: File) {
-    private val baseUrl = "https://jester.moodtools.workers.dev"
+    private val baseUrl = ModuleCatalogClient.BASE_URL
+    private val expectedHost = java.net.URI(baseUrl).host ?: "jester.moodtools.workers.dev"
 
     fun apply(request: UpdateRequest, abi: String, bootstrap: Int = 1): UpdateResult {
         require(request.packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
@@ -518,7 +519,7 @@ class UpdateClient(private val moduleRoot: File) {
 
     private fun open(address: String): HttpURLConnection {
         val url = URL(address)
-        require(url.protocol == "https" && url.host == "jester.moodtools.workers.dev")
+        require(url.protocol == "https" && url.host == expectedHost)
         return (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 60_000
