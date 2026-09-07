@@ -4641,6 +4641,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 editor.putLong(playStoreCheckedAtKey(packageName), status.checkedAtEpochSeconds)
                 editor.putLong(playStoreCheckedDayKey(packageName), status.checkedDay)
                 editor.putBoolean(playStoreStaleKey(packageName), status.stale)
+                editor.putInt(playStoreSchemaKey(packageName), PLAY_STORE_CACHE_SCHEMA)
                 changed = true
             } else if (cached != null) {
                 statuses[packageName] = cached
@@ -4680,7 +4681,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             checkedAtEpochSeconds = checkedAt,
             checkedDay = checkedDay,
             stale = playStorePreferences.getBoolean(playStoreStaleKey(packageName), false) ||
-                checkedDay != today
+                checkedDay != today ||
+                playStorePreferences.getInt(playStoreSchemaKey(packageName), 0) != PLAY_STORE_CACHE_SCHEMA
         )
     }
 
@@ -4716,6 +4718,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun playStoreUpdateAvailableKey(packageName: String): String =
         PLAY_STORE_UPDATE_AVAILABLE_PREFIX + packageName
     private fun playStoreStaleKey(packageName: String): String = PLAY_STORE_STALE_PREFIX + packageName
+    private fun playStoreSchemaKey(packageName: String): String = PLAY_STORE_SCHEMA_PREFIX + packageName
 
     private fun resolvePrivateAccessExpiries(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
@@ -5237,6 +5240,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_LISTING_UPDATED_AT_PREFIX = "listing_updated_at_"
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
+        private const val PLAY_STORE_SCHEMA_PREFIX = "schema_"
+        private const val PLAY_STORE_CACHE_SCHEMA = 1
         private const val NON_ROOT_METHOD_CHOICE_PREFIX = "non_root_method_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_INTERNET_TRANSITION_MS = 2_000L

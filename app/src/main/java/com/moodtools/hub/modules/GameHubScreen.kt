@@ -4768,24 +4768,30 @@ private fun ModuleDownloadScreen(
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
                 Spacer(Modifier.height(12.dp))
+                val offersMethodChoice = listing.catalog.config.offersNonRootMethodChoice &&
+                    !BuildConfig.IS_ROOT_MODE
                 val methodPresentation = launcherMethodPresentation(
-                    listing.catalog.config.effectiveNonRootMethod,
+                    if (offersMethodChoice) {
+                        listing.catalog.config.nonRootMethod
+                    } else {
+                        listing.catalog.config.effectiveNonRootMethod
+                    },
                     BuildConfig.IS_ROOT_MODE
                 )
                 InformationGroupLabel(methodPresentation.setupLabel)
                 Spacer(Modifier.height(8.dp))
                 DownloadInfoRow(
-                    if (listing.catalog.config.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
-                        "Recommended method"
+                    if (offersMethodChoice) {
+                        "Recommended setup"
                     } else {
                         methodPresentation.fieldLabel
                     },
                     methodPresentation.method.displayName
                 )
-                if (listing.catalog.config.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
+                if (offersMethodChoice) {
                     DownloadInfoRow(
-                        "Available methods",
-                        listing.catalog.config.nonRootMethods.joinToString(" + ") { it.displayName }
+                        "Alternative setup",
+                        listing.catalog.config.nonRootMethods.drop(1).joinToString(" or ") { it.displayName }
                     )
                 }
                 DownloadInfoRow(
@@ -5632,23 +5638,16 @@ private fun ModuleListingCard(
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        listing.catalog.config.title,
-                        modifier = Modifier.weight(1f),
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (listing.playStoreOutdatedWarning) {
-                        Spacer(Modifier.width(8.dp))
-                        OutdatedBadge()
-                    }
-                }
+                Text(
+                    listing.catalog.config.title,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "Game ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")} · builds ${supportedBuildsLabel(listing.catalog.config.supportedVersionCodes)}",
+                    "Game ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")} · ${supportedBuildsLabel(listing.catalog.config.supportedVersionCodes)}",
                     color = Muted,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -5657,7 +5656,8 @@ private fun ModuleListingCard(
                     launcherMethodBadgePresentations(
                         module = listing.catalog.config,
                         rootMode = BuildConfig.IS_ROOT_MODE
-                    )
+                    ),
+                    outdated = listing.playStoreOutdatedWarning
                 )
             }
         }
@@ -5894,7 +5894,8 @@ private fun LauncherMethodBadge(
 @Composable
 private fun LauncherMethodBadges(
     presentations: List<LauncherMethodPresentation>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    outdated: Boolean = false
 ) {
     Row(
         modifier = modifier,
@@ -5903,6 +5904,7 @@ private fun LauncherMethodBadges(
         presentations.forEach { presentation ->
             LauncherMethodBadge(presentation)
         }
+        if (outdated) OutdatedBadge()
     }
 }
 
@@ -6458,21 +6460,14 @@ private fun CompactGameCard(
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        game.title,
-                        modifier = Modifier.weight(1f),
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (addOnOutdated) {
-                        Spacer(Modifier.width(8.dp))
-                        OutdatedBadge()
-                    }
-                }
+                Text(
+                    game.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     libraryStatusLabel(game),
@@ -6493,7 +6488,8 @@ private fun CompactGameCard(
                         module = game.module,
                         rootMode = BuildConfig.IS_ROOT_MODE,
                         installedNonRootMethod = game.installedNonRootMethod
-                    )
+                    ),
+                    outdated = addOnOutdated
                 )
             }
             Spacer(Modifier.width(10.dp))
