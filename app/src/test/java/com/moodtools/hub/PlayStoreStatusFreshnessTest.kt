@@ -47,6 +47,18 @@ class PlayStoreStatusFreshnessTest {
     }
 
     @Test
+    fun unchangedServerMetadataKeepsTheDisplayedCardStable() {
+        val displayed = status(version = "2.0", checkedAt = 100).copy(stale = true)
+        val refreshed = displayed.copy(checkedAtEpochSeconds = 200, checkedDay = 2, stale = false)
+
+        assertEquals(displayed, stableDisplayedPlayStoreStatus(displayed, refreshed))
+        assertEquals(
+            refreshed.copy(updateAvailable = true),
+            stableDisplayedPlayStoreStatus(displayed, refreshed.copy(updateAvailable = true))
+        )
+    }
+
+    @Test
     fun compatibilityRequiresTheSupportedGameBuildWhenDeclared() {
         val module = ModuleConfig(
             packageName = "com.example.game",
@@ -62,7 +74,25 @@ class PlayStoreStatusFreshnessTest {
 
         assertEquals(true, status("2.0", 200).copy(latestVersionCode = 20_001L).isSupportedBy(module))
         assertEquals(false, status("2.0", 200).copy(latestVersionCode = 20_002L).isSupportedBy(module))
-        assertEquals(null, status("2.0", 200).isSupportedBy(module))
+        assertEquals(true, status("2.0", 200).isSupportedBy(module))
+    }
+
+    @Test
+    fun confirmedCatalogReleaseSuppliesBuildMissingFromOlderDeviceCache() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Game",
+            supportedVersions = setOf("2.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(20_001L)
+        )
+
+        assertEquals(20_001L, status("2.0", 200).versionCodeFor(module))
+        assertEquals(null, status("2.0", 200).copy(updateAvailable = true).versionCodeFor(module))
     }
 
     private fun status(version: String?, checkedAt: Long) = PlayStoreVersionStatus(

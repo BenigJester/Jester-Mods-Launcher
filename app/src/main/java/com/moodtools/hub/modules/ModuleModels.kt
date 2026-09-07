@@ -276,6 +276,12 @@ data class PlayStoreVersionStatus(
     val checkedDay: Long,
     val stale: Boolean = false
 ) {
+    fun versionCodeFor(module: ModuleConfig): Long? = latestVersionCode
+        ?: module.supportedVersionCodes.singleOrNull()?.takeIf {
+            updateAvailable == false &&
+                module.supportedVersions.singleOrNull() == latestVersion
+        }
+
     // The server hint is based on the published catalog, which can lag a locally staged module.
     // Re-evaluate an exact Google Play version against the module the launcher actually resolved.
     fun isSupportedBy(module: ModuleConfig): Boolean? {
@@ -283,7 +289,7 @@ data class PlayStoreVersionStatus(
         if (module.supportedVersionCodes.isEmpty()) {
             return latestVersion?.let { true } ?: updateAvailable?.not()
         }
-        return latestVersionCode?.let { it in module.supportedVersionCodes }
+        return versionCodeFor(module)?.let { it in module.supportedVersionCodes }
             ?: if (updateAvailable == true) false else null
     }
 }

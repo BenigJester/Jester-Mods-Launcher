@@ -4651,7 +4651,6 @@ private fun ModuleDownloadScreen(
     val playStoreStatus = listing.playStoreVersionStatus
     val playStoreSupported = listing.playStoreVersionSupported
     val playStoreUpdateInProgress = listing.playStoreUpdateInProgress
-    val playStoreOutdatedWarning = listing.playStoreOutdatedWarning
     val totalDownloadSize = if (needsGame) directSource?.let { source ->
         val addOnSize = if (game != null) {
             listing.catalog.downloadSizeByAbi[game.abi]
@@ -4693,7 +4692,7 @@ private fun ModuleDownloadScreen(
             AddOnDetailHero(
                 bitmap = bitmap,
                 title = listing.catalog.config.title,
-                collectionLabel = "${listing.catalog.category.uppercase(Locale.ROOT)} ADD-ON",
+                collectionLabel = "ADD-ON",
                 status = when (listing.status) {
                     ModuleInstallStatus.INSTALLED -> "IN YOUR LIBRARY"
                     ModuleInstallStatus.UPDATE_AVAILABLE -> "UPDATE AVAILABLE"
@@ -4718,7 +4717,8 @@ private fun ModuleDownloadScreen(
                     "GAME RELEASE" to (game?.let {
                         gameReleaseLabel(it.versionName, it.versionCode)
                     } ?: listing.catalog.config.supportedVersions.sorted().joinToString(", "))
-                )
+                ),
+                outdated = listing.playStoreOutdatedWarning
             )
         }
 
@@ -4792,33 +4792,21 @@ private fun ModuleDownloadScreen(
                     "Google Play",
                     playStoreStatus?.let { status ->
                         buildString {
-                            append(playStoreReleaseLabel(status))
+                            append(playStoreReleaseLabel(status, listing.catalog.config))
                             if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                            else if (playStoreOutdatedWarning) append(" · add-on update needed")
-                            if (status.stale) append(" · last saved check")
                         }
                     } ?: "Check temporarily unavailable"
                 )
                 LauncherMethodNotice(methodPresentation)
-                if (playStoreStatus != null && playStoreSupported == false) {
+                if (playStoreStatus != null && playStoreSupported == false && playStoreUpdateInProgress) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        if (playStoreUpdateInProgress) {
-                            if (playStoreStatus?.latestVersion != null) {
-                                "Google Play has a newer game release. This add-on is marked as being updated for it."
-                            } else {
-                                "Google Play has a newer release. This add-on is marked as being updated for it."
-                            }
+                        if (playStoreStatus?.latestVersion != null) {
+                            "Google Play has a newer game release. This add-on is marked as being updated for it."
                         } else {
-                            if (playStoreStatus?.latestVersion != null) {
-                                "Google Play has a newer game release than this add-on supports. " +
-                                    "Wait for an add-on update before using the newest game version."
-                            } else {
-                                "Google Play has published a newer release since this add-on was verified. " +
-                                    "Wait for an add-on update before updating the game."
-                            }
+                            "Google Play has a newer release. This add-on is marked as being updated for it."
                         },
-                        color = if (playStoreUpdateInProgress) AccentBlue else Danger,
+                        color = AccentBlue,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -5131,7 +5119,8 @@ private fun AddOnDetailHero(
     statusColor: Color,
     summary: String,
     facts: List<Pair<String, String>>,
-    localTest: Boolean = false
+    localTest: Boolean = false,
+    outdated: Boolean = false
 ) {
     val shape = RoundedCornerShape(30.dp)
     Box(
@@ -5174,7 +5163,10 @@ private fun AddOnDetailHero(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (localTest) LocalTestBadge()
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (outdated) OutdatedBadge()
+                    if (localTest) LocalTestBadge()
+                }
             }
             Spacer(Modifier.height(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5557,10 +5549,10 @@ private fun LimitedModuleAccessNotice(compact: Boolean = false) {
     }
 }
 
-private fun playStoreReleaseLabel(status: PlayStoreVersionStatus): String =
+private fun playStoreReleaseLabel(status: PlayStoreVersionStatus, module: ModuleConfig): String =
     when {
-        status.latestVersion != null -> gameReleaseLabel(status.latestVersion, status.latestVersionCode)
-        status.latestVersionCode != null -> "Build ${status.latestVersionCode} · version not published"
+        status.latestVersion != null -> gameReleaseLabel(status.latestVersion, status.versionCodeFor(module))
+        status.latestVersionCode != null -> "${status.latestVersionCode} · version not published"
         else -> when (status.updateAvailable) {
             true -> "New release detected"
             false -> "Release checked"
@@ -5574,7 +5566,7 @@ private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
     } ?: "a new Google Play release"
 
 private fun gameReleaseLabel(version: String, versionCode: Long?): String =
-    "v$version · ${versionCode ?: "unavailable"}"
+    versionCode?.let { "v$version · $it" } ?: "v$version"
 
 private fun supportedBuildsLabel(versionCodes: Set<Long>): String =
     versionCodes.sorted().joinToString(", ").ifBlank { "Not declared" }
@@ -5603,8 +5595,6 @@ private fun ModuleListingCard(
     val statusText = when {
         listing.playStoreUpdateInProgress ->
             "Add-on update in progress for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
-        listing.playStoreOutdatedWarning ->
-            "Add-on update needed for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
         game == null -> "Install the original game to continue"
         !game.versionSupported -> "A compatible game version and build are needed"
         !game.abiSupported -> "This installed version isn't supported"
@@ -5612,7 +5602,6 @@ private fun ModuleListingCard(
     }
     val statusColor = when {
         listing.playStoreUpdateInProgress -> AccentBlue
-        listing.playStoreOutdatedWarning -> Danger
         game != null && game.moduleSupported -> Accent
         else -> Muted
     }
@@ -5643,13 +5632,20 @@ private fun ModuleListingCard(
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    listing.catalog.config.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        listing.catalog.config.title,
+                        modifier = Modifier.weight(1f),
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (listing.playStoreOutdatedWarning) {
+                        Spacer(Modifier.width(8.dp))
+                        OutdatedBadge()
+                    }
+                }
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.bodySmall)
                 Text(
                     "Game ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")} · builds ${supportedBuildsLabel(listing.catalog.config.supportedVersionCodes)}",
@@ -5813,9 +5809,6 @@ internal fun libraryStatusLabel(entry: LibraryGame): String {
     if (entry.status != LibraryGameStatus.RUNNING && entry.playStoreUpdateInProgress) {
         return "Add-on update in progress · ${playStoreReleaseReference(entry.playStoreVersionStatus)}"
     }
-    if (entry.status != LibraryGameStatus.RUNNING && entry.playStoreOutdatedWarning) {
-        return "Add-on outdated · ${playStoreReleaseReference(entry.playStoreVersionStatus)}"
-    }
     return when (entry.status) {
         LibraryGameStatus.RUNNING -> "Running · tap to resume"
         LibraryGameStatus.READY -> entry.game?.let {
@@ -5843,6 +5836,26 @@ private fun LocalTestBadge(modifier: Modifier = Modifier) {
         Text(
             "TEST",
             color = AccentBlue,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun OutdatedBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .semantics { contentDescription = "Outdated add-on" }
+            .clip(RoundedCornerShape(999.dp))
+            .background(PrivateGold.copy(alpha = 0.16f))
+            .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.5f)), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "OUTDATED",
+            color = PrivateGold,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold
         )
@@ -6445,19 +6458,25 @@ private fun CompactGameCard(
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    game.title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        game.title,
+                        modifier = Modifier.weight(1f),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (addOnOutdated) {
+                        Spacer(Modifier.width(8.dp))
+                        OutdatedBadge()
+                    }
+                }
                 Spacer(Modifier.height(2.dp))
                 Text(
                     libraryStatusLabel(game),
                     color = when {
-                        addOnOutdated -> Danger
                         addOnUpdating -> AccentBlue
                         game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
                         game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Muted
@@ -6578,7 +6597,7 @@ private fun ModuleScreen(
             AddOnDetailHero(
                 bitmap = bitmap,
                 title = game.title,
-                collectionLabel = "LIBRARY ADD-ON",
+                collectionLabel = "ADD-ON",
                 status = libraryStatusLabel(game).uppercase(Locale.ROOT),
                 statusColor = statusColor,
                 summary = "Your complete space to review features, manage compatibility, and launch.",
@@ -6588,7 +6607,8 @@ private fun ModuleScreen(
                         gameReleaseLabel(it.versionName, it.versionCode)
                     } ?: "Not installed")
                 ),
-                localTest = game.localTest
+                localTest = game.localTest,
+                outdated = game.playStoreOutdatedWarning
             )
         }
         if (game.privateAccessProtected) {
@@ -6970,8 +6990,7 @@ private fun ModuleCompatibilityCard(
     val ready = installedGame?.moduleSupported == true && game.installedComplete &&
         game.launchAction == LibraryLaunchAction.PLAY
     val playStoreUpdateInProgress = game.playStoreUpdateInProgress
-    val playStoreOutdatedWarning = game.playStoreOutdatedWarning
-    val attention = !ready || playStoreOutdatedWarning
+    val attention = !ready
     val statusColor = when {
         game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
         playStoreUpdateInProgress -> AccentBlue
@@ -6989,7 +7008,6 @@ private fun ModuleCompatibilityCard(
         game.launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "Official game restore required"
         game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL -> "Exact-package shell required"
         playStoreUpdateInProgress -> "Add-on update in progress"
-        playStoreOutdatedWarning -> "Add-on update advised"
         game.running -> "Running and ready"
         else -> "Ready to play"
     }
@@ -7012,8 +7030,6 @@ private fun ModuleCompatibilityCard(
             "Jester Mods will preserve the untouched game package and create a shell with its exact name and icon."
         playStoreUpdateInProgress ->
             "The maintainer is updating this add-on for the newer game release shown by Google Play."
-        playStoreOutdatedWarning ->
-            "Google Play is showing a newer game release than this add-on currently supports."
         else ->
             "Requirements are satisfied. The in-game menu will show a compact runtime status only."
     }
@@ -7075,10 +7091,8 @@ private fun ModuleCompatibilityCard(
                 "Google Play",
                 game.playStoreVersionStatus?.let {
                     buildString {
-                        append(playStoreReleaseLabel(it))
+                        append(playStoreReleaseLabel(it, game.module))
                         if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                        else if (playStoreOutdatedWarning) append(" · update add-on first")
-                        if (it.stale) append(" · saved check")
                     }
                 } ?: "Check temporarily unavailable"
             )

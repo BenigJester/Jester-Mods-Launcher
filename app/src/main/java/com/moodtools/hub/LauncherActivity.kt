@@ -149,6 +149,19 @@ internal fun newestPlayStoreStatus(
     else -> cached
 }
 
+internal fun stableDisplayedPlayStoreStatus(
+    displayed: PlayStoreVersionStatus?,
+    refreshed: PlayStoreVersionStatus?
+): PlayStoreVersionStatus? = when {
+    refreshed == null -> displayed
+    displayed != null &&
+        displayed.latestVersion == refreshed.latestVersion &&
+        displayed.latestVersionCode == refreshed.latestVersionCode &&
+        displayed.listingUpdatedAtEpochSeconds == refreshed.listingUpdatedAtEpochSeconds &&
+        displayed.updateAvailable == refreshed.updateAvailable -> displayed
+    else -> refreshed
+}
+
 private enum class InstallerPermissionTarget {
     LAUNCHER_UPDATE,
     ORIGINAL_GAME,
@@ -4800,6 +4813,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 config.packageName to repository.privateScope(config.packageName)
             }
             val catalogCountByPackage = resolvedCatalog.groupingBy { it.config.packageName }.eachCount()
+            val displayedPlayStoreStatuses = _availableModules.value.associate {
+                it.catalog.slug to it.playStoreVersionStatus
+            }
             fun isInstalledPublication(item: com.moodtools.hub.modules.CatalogModule): Boolean {
                 val packageName = item.config.packageName
                 return com.moodtools.hub.modules.isInstalledCatalogPublication(
@@ -4820,7 +4836,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     } else 0L,
                     installedComplete = installedPublication && repository.isInstalled(item.config.packageName),
                     deviceArchitectureSupported = DeviceArchitectureGuard.supports(item.config.supportedAbis),
-                    playStoreVersionStatus = playStoreStatuses[item.config.packageName],
+                    playStoreVersionStatus = stableDisplayedPlayStoreStatus(
+                        displayedPlayStoreStatuses[item.slug],
+                        playStoreStatuses[item.config.packageName]
+                    ),
                     privateAccessExpiresAtEpochSeconds = item.privateScope
                         ?.let(privateAccessExpiryByScope::get)
                 )
