@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "description": "Full-stack serverless backend for Jester Mods Launcher",
   "main": "src/index.ts",
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "generate-keys": "bash scripts/generate-keys.sh"
+    "generate-keys": "bash scripts/generate-keys.sh",
+    "test": "node --experimental-strip-types scripts/test-worker.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240903.0",

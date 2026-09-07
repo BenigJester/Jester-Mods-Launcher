@@ -87,3 +87,8 @@ temp/
 # Nested dependency repository metadata is intentionally not part of this
 # monorepo. The dependency working trees themselves are vendored below.
 third_party/**/.git/
+
+# Node / Cloudflare Worker
+node_modules/
+.wrangler/
+
