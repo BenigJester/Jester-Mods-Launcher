@@ -59,6 +59,11 @@ function generateRandomId(bytesLength = 32): string {
   return toCanonicalBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+async function computeSha256UrlSafe(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return toCanonicalBase64(new Uint8Array(digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 // ============================================================================
 // 2. Main Worker Router
 // ============================================================================
@@ -152,28 +157,28 @@ export default {
     // ------------------------------------------------------------------------
     if (
       url.pathname === "/api/launcher/access" ||
-      url.pathname === "/api/launcher/private-access" ||
       url.pathname === "/api/launcher/recover"
     ) {
       const body: any = await request.json().catch(() => ({}));
       const now = Math.floor(Date.now() / 1000);
       const expiresAt = now + 7 * 86400; // 7 days offline lease
 
+      const digitalKey = body.digitalKey || ("jm_" + generateRandomId(64));
+      const digitalKeySha256 = await computeSha256UrlSafe(digitalKey);
+
       const leasePayload = {
         schema: 1,
-        audience: "moodtools-private-module-lease",
+        audience: "moodtools-launcher-offline-lease",
         leaseVersion: 1,
         accessVersion: 4,
-        proofVersion: 1,
-        scope: body.scope || "global",
+        proofVersion: body.proofVersion || 1,
+        grantId: "grant_" + generateRandomId(20),
         deviceId: body.deviceId || "dev-01",
-        recoveryId: body.recoveryId || "rec-01",
-        flavor: body.flavor || "root",
+        flavor: body.flavor || "nonroot",
         proofKeyId: body.proofKeyId || "proof-key-id",
-        grantId: "grant_" + generateRandomId(16),
+        digitalKeySha256: digitalKeySha256,
         issuedAt: now,
         expiresAt: expiresAt,
-        grantExpiresAt: expiresAt + 365 * 86400,
       };
 
       const offlineLease = await signEnvelope(
@@ -181,12 +186,53 @@ export default {
         privateKey,
         "launcher-lease-rsa-2026-01"
       );
-      const digitalKey = body.digitalKey || ("jm_" + generateRandomId(48));
 
       return okJson({
         ok: true,
         approved: true,
+        recoveryBound: true,
+        proofKeyId: body.proofKeyId || "proof-key-id",
         digitalKey: digitalKey,
+        issuedAt: now,
+        expiresAt: expiresAt,
+        offlineLease: offlineLease,
+      });
+    }
+
+    if (url.pathname === "/api/launcher/private-access") {
+      const body: any = await request.json().catch(() => ({}));
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = now + 7 * 86400;
+      const grantExpiresAt = expiresAt + 365 * 86400;
+
+      const leasePayload = {
+        schema: 1,
+        audience: "moodtools-private-module-lease",
+        leaseVersion: 1,
+        accessVersion: 4,
+        proofVersion: body.proofVersion || 1,
+        scope: body.scope || "global",
+        deviceId: body.deviceId || "dev-01",
+        recoveryId: body.recoveryId || "rec-01",
+        flavor: body.flavor || "nonroot",
+        proofKeyId: body.proofKeyId || "proof-key-id",
+        grantId: "grant_" + generateRandomId(20),
+        issuedAt: now,
+        expiresAt: expiresAt,
+        grantExpiresAt: grantExpiresAt,
+      };
+
+      const offlineLease = await signEnvelope(
+        leasePayload,
+        privateKey,
+        "launcher-lease-rsa-2026-01"
+      );
+
+      return okJson({
+        ok: true,
+        approved: true,
+        recoveryBound: true,
+        digitalKey: "jm_" + generateRandomId(64),
         issuedAt: now,
         expiresAt: expiresAt,
         offlineLease: offlineLease,
@@ -196,23 +242,24 @@ export default {
     if (url.pathname === "/api/launcher/redeem") {
       const body: any = await request.json().catch(() => ({}));
       const now = Math.floor(Date.now() / 1000);
-      const expiresAt = now + 365 * 86400;
+      const expiresAt = now + 7 * 86400;
+
+      const digitalKey = body.digitalKey || ("jm_" + generateRandomId(64));
+      const digitalKeySha256 = await computeSha256UrlSafe(digitalKey);
 
       const leasePayload = {
         schema: 1,
-        audience: "moodtools-private-module-lease",
+        audience: "moodtools-launcher-offline-lease",
         leaseVersion: 1,
         accessVersion: 4,
-        proofVersion: 1,
-        scope: "global",
+        proofVersion: body.proofVersion || 1,
+        grantId: "grant_" + generateRandomId(20),
         deviceId: body.deviceId || "dev-01",
-        recoveryId: body.recoveryId || "rec-01",
-        flavor: body.flavor || "root",
+        flavor: body.flavor || "nonroot",
         proofKeyId: body.proofKeyId || "proof-key-id",
-        grantId: "grant_" + generateRandomId(16),
+        digitalKeySha256: digitalKeySha256,
         issuedAt: now,
-        expiresAt: now + 7 * 86400,
-        grantExpiresAt: expiresAt,
+        expiresAt: expiresAt,
       };
 
       const offlineLease = await signEnvelope(
@@ -225,9 +272,9 @@ export default {
         ok: true,
         recoveryBound: true,
         proofKeyId: body.proofKeyId || "proof-key-id",
-        digitalKey: "jm_" + generateRandomId(48),
+        digitalKey: digitalKey,
         issuedAt: now,
-        expiresAt: now + 7 * 86400,
+        expiresAt: expiresAt,
         offlineLease: offlineLease,
       });
     }
@@ -244,12 +291,20 @@ export default {
             packageName: "com.example.module",
             slug: "com-example-module",
             title: "Example Game Mod",
+            version: "1.0.0",
+            notes: "Initial release for testing",
+            category: "Other",
+            tags: ["mod", "custom"],
+            publishedAt: 1700000000,
+            updatedAt: 1700000000,
+            build: 1,
             supportedVersions: ["1.0.0", "5.4"],
             supportedVersionCodes: [100, 101],
             supportedAbis: ["arm64-v8a"],
-            build: 1,
+            downloadSizeByAbi: { "arm64-v8a": 10240 },
             nonrootMethod: "injection",
             nonrootMethods: ["injection"],
+            features: [],
             source: {
               path: "/api/launcher-module-payload/com.example.module/1/module.zip",
               sizeBytes: 10240,
@@ -272,7 +327,7 @@ export default {
       const signedPrivate = await signEnvelope(privateData, privateKey);
       return okJson({
         ok: true,
-        capability: generateRandomId(48),
+        capability: generateRandomId(64),
         expiresAt: Math.floor(Date.now() / 1000) + 600,
         catalogs: [signedPrivate],
       });
@@ -344,7 +399,11 @@ export default {
     // FEATURE 6: PLAY STORE COMPATIBILITY & CHANGELOGS
     // ------------------------------------------------------------------------
     if (url.pathname === "/api/launcher-play-store-versions") {
-      return okJson({});
+      return okJson({
+        ok: true,
+        schema: 1,
+        results: [],
+      });
     }
 
     if (url.pathname.startsWith("/api/launcher-play-store-version/")) {
@@ -363,11 +422,51 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/launcher-release" || url.pathname.startsWith("/api/launcher-test-release/")) {
+      const releasePayload = {
+        schema: 1,
+        audience: url.pathname.startsWith("/api/launcher-test-release/")
+          ? "moodtools-standalone-launcher-test"
+          : "moodtools-standalone-launcher",
+        build: 301,
+        version: "3.0.1",
+        notes: "Self-hosted Cloudflare backend",
+        flavor: "nonroot",
+        files: {
+          root: {
+            path: "/api/launcher-download/301/root.apk",
+            sha256: "0".repeat(64),
+            size: 15000000,
+          },
+          nonroot: {
+            path: "/api/launcher-download/301/nonroot.apk",
+            sha256: "0".repeat(64),
+            size: 15000000,
+          },
+        },
+        file: {
+          path: "/api/launcher-test-download/301/nonroot.apk",
+          sha256: "0".repeat(64),
+          size: 15000000,
+        },
+      };
+      return okJson(await signEnvelope(releasePayload, privateKey));
+    }
+
     if (url.pathname === "/api/launcher-changelog") {
-      return okJson({
-        ok: true,
-        entries: [{ build: 209, version: "2.0.9", notes: "Self-hosted Cloudflare backend" }],
-      });
+      const changelogPayload = {
+        schema: 1,
+        audience: "moodtools-standalone",
+        entries: [
+          {
+            build: 301,
+            version: "3.0.1",
+            notes: "Self-hosted Cloudflare backend",
+            publishedAt: 1700000000,
+          },
+        ],
+      };
+      return okJson(await signEnvelope(changelogPayload, privateKey));
     }
 
     // ------------------------------------------------------------------------

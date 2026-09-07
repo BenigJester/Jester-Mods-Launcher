@@ -32,7 +32,7 @@ internal object LauncherOfflineLeaseVerifier {
         require(envelope.optString("keyId") == KEY_ID)
         val payloadText = envelope.getString("payload")
         val signatureText = envelope.getString("signature")
-        require(payloadText.length in 100..4096 && signatureText.length in 400..1024)
+        require(payloadText.length in 100..4096 && signatureText.length in 300..1024)
         val payloadBytes = decodeCanonicalBase64(payloadText)
         val signatureBytes = decodeCanonicalBase64(signatureText)
         val publicKey = KeyFactory.getInstance("RSA").generatePublic(
