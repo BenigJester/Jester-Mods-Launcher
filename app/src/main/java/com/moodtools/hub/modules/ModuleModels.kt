@@ -17,6 +17,8 @@ data class ModuleConfig(
     val nonRootMethods: List<NonRootMethod> = listOf(nonRootMethod),
     /** Device-local choice; never serialized into or trusted as module metadata. */
     val selectedNonRootMethod: NonRootMethod? = null,
+    /** Android versionCode values explicitly supported by this add-on. Empty for legacy metadata. */
+    val supportedVersionCodes: Set<Long> = emptySet(),
     /** Stable catalog identity. Null only for legacy/local modules that predate slug storage. */
     val catalogSlug: String? = null
 ) {
@@ -39,6 +41,12 @@ data class ModuleConfig(
             NonRootMethod.DIRECT_PATCH
         )) {
             "Multiple non-root methods are reserved for Shell and Patch compatibility"
+        }
+        require(supportedVersionCodes.all { it > 0L }) {
+            "Supported game build numbers must be positive"
+        }
+        require(supportedVersionCodes.isEmpty() || supportedVersionCodes.size == supportedVersions.size) {
+            "Every supported game version must have one build number"
         }
     }
 }
@@ -261,6 +269,7 @@ data class CatalogIcon(
 
 data class PlayStoreVersionStatus(
     val latestVersion: String?,
+    val latestVersionCode: Long? = null,
     val listingUpdatedAtEpochSeconds: Long?,
     val updateAvailable: Boolean?,
     val checkedAtEpochSeconds: Long,
@@ -269,8 +278,14 @@ data class PlayStoreVersionStatus(
 ) {
     // The server hint is based on the published catalog, which can lag a locally staged module.
     // Re-evaluate an exact Google Play version against the module the launcher actually resolved.
-    fun isSupportedBy(module: ModuleConfig): Boolean? =
-        latestVersion?.let { it in module.supportedVersions } ?: updateAvailable?.not()
+    fun isSupportedBy(module: ModuleConfig): Boolean? {
+        if (latestVersion != null && latestVersion !in module.supportedVersions) return false
+        if (module.supportedVersionCodes.isEmpty()) {
+            return latestVersion?.let { true } ?: updateAvailable?.not()
+        }
+        return latestVersionCode?.let { it in module.supportedVersionCodes }
+            ?: if (updateAvailable == true) false else null
+    }
 }
 
 sealed interface GameInstallSource {

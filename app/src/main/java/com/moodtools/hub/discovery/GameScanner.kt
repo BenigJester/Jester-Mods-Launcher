@@ -23,20 +23,22 @@ class GameScanner(private val context: Context) {
                 val packageInfo = packageManager.getPackageInfo(module.packageName, 0)
                 val shellIdentity = identityShellIdentity(module.packageName, info)
                 val versionName = shellIdentity?.versionName ?: packageInfo.versionName ?: "unknown"
+                val versionCode = shellIdentity?.versionCode ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    packageInfo.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageInfo.versionCode.toLong()
+                }
                 val abi = shellIdentity?.abi ?: detectInstalledAbi(info)
                 InstalledGame(
                     packageName = module.packageName,
                     versionName = versionName,
-                    versionCode = shellIdentity?.versionCode ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        packageInfo.longVersionCode
-                    } else {
-                        @Suppress("DEPRECATION")
-                        packageInfo.versionCode.toLong()
-                    },
+                    versionCode = versionCode,
                     label = shellIdentity?.label ?: packageManager.getApplicationLabel(info).toString(),
                     icon = packageManager.getApplicationIcon(info),
                     module = module,
-                    versionSupported = module.supportedVersions.contains(versionName),
+                    versionSupported = versionName in module.supportedVersions &&
+                        (module.supportedVersionCodes.isEmpty() || versionCode in module.supportedVersionCodes),
                     abi = abi,
                     abiSupported = module.supportedAbis.contains(abi)
                 )

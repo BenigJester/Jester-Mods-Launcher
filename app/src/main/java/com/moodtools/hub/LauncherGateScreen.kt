@@ -186,41 +186,45 @@ fun LauncherGateScreen(
                             CircleShape
                         )
                 )
-                AnimatedContent(
-                    targetState = presentation,
-                    transitionSpec = {
-                        val direction = if (targetState.scene == GateScene.Ready) 1 else -1
-                        (
-                            fadeIn(tween(260)) +
-                                scaleIn(tween(360), initialScale = 0.97f) +
-                                slideInVertically(tween(360)) { fullHeight -> fullHeight / 18 * direction }
-                        ) togetherWith (
-                            fadeOut(tween(180)) +
-                                scaleOut(tween(220), targetScale = 0.985f) +
-                                slideOutVertically(tween(220)) { fullHeight -> -fullHeight / 24 * direction }
-                        ) using SizeTransform(clip = false)
-                    },
-                    label = "launcher-gate-scene"
-                ) { targetPresentation ->
-                    when (targetPresentation) {
-                        LauncherGatePresentation.Booting -> BootGateContent()
-                        is LauncherGatePresentation.Ready -> {
-                            val expiresAtMillis = targetPresentation.expiresAt
-                                .takeIf { it != Long.MAX_VALUE }
-                                ?.let { seconds -> seconds * 1_000L }
-                            ReadyAccessContent(
-                                expiresAtMillis = expiresAtMillis,
-                                onEnter = onEnter
-                            )
-                        }
-                        else -> {
-                            DefaultGateContent(
-                                presentation = targetPresentation,
-                                onUnlock = onUnlock,
-                                onRetry = onRetry,
-                                onCopySupportCode = onCopySupportCode,
-                                onExit = onExit
-                            )
+                Column(Modifier.fillMaxSize()) {
+                    GateBrandHeader()
+                    AnimatedContent(
+                        targetState = presentation,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        transitionSpec = {
+                            val direction = if (targetState.scene == GateScene.Ready) 1 else -1
+                            (
+                                fadeIn(tween(260)) +
+                                    scaleIn(tween(360), initialScale = 0.97f) +
+                                    slideInVertically(tween(360)) { fullHeight -> fullHeight / 18 * direction }
+                            ) togetherWith (
+                                fadeOut(tween(180)) +
+                                    scaleOut(tween(220), targetScale = 0.985f) +
+                                    slideOutVertically(tween(220)) { fullHeight -> -fullHeight / 24 * direction }
+                            ) using SizeTransform(clip = false)
+                        },
+                        label = "launcher-gate-scene"
+                    ) { targetPresentation ->
+                        when (targetPresentation) {
+                            LauncherGatePresentation.Booting -> BootGateContent()
+                            is LauncherGatePresentation.Ready -> {
+                                val expiresAtMillis = targetPresentation.expiresAt
+                                    .takeIf { it != Long.MAX_VALUE }
+                                    ?.let { seconds -> seconds * 1_000L }
+                                ReadyAccessContent(
+                                    expiresAtMillis = expiresAtMillis,
+                                    onEnter = onEnter
+                                )
+                            }
+                            else -> {
+                                DefaultGateContent(
+                                    presentation = targetPresentation,
+                                    onUnlock = onUnlock,
+                                    onRetry = onRetry,
+                                    onCopySupportCode = onCopySupportCode,
+                                    onExit = onExit
+                                )
+                            }
                         }
                     }
                 }
@@ -235,7 +239,6 @@ private fun BootGateContent() {
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        GateBrandHeader()
         Spacer(Modifier.weight(0.9f))
         Column(
             modifier = Modifier
@@ -297,8 +300,6 @@ private fun ReadyAccessContent(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            GateBrandHeader()
-
             Spacer(Modifier.weight(0.85f))
 
             Box(
@@ -413,7 +414,6 @@ private fun DefaultGateContent(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        GateBrandHeader()
         Spacer(Modifier.weight(0.9f))
         Column(
             modifier = Modifier.fillMaxWidth().background(

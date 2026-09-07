@@ -182,6 +182,12 @@ class ModuleCatalogClient(
                 val supportedVersions = buildSet {
                     for (versionIndex in 0 until versions.length()) add(versions.getString(versionIndex))
                 }
+                val supportedVersionCodes = buildSet {
+                    val codes = item.optJSONArray("supportedVersionCodes") ?: return@buildSet
+                    for (codeIndex in 0 until codes.length()) {
+                        add(codes.getLong(codeIndex).also { require(it > 0L) })
+                    }
+                }
                 val supportedAbis = buildSet {
                     for (abiIndex in 0 until abis.length()) add(abis.getString(abiIndex))
                 }
@@ -226,6 +232,7 @@ class ModuleCatalogClient(
                             iconFile = null,
                             nonRootMethod = nonRootMethod,
                             nonRootMethods = nonRootMethods,
+                            supportedVersionCodes = supportedVersionCodes,
                             catalogSlug = slug
                         ),
                         slug = slug,

@@ -143,6 +143,7 @@ internal fun newestPlayStoreStatus(
     (received.listingUpdatedAtEpochSeconds ?: 0L) >
         (cached.listingUpdatedAtEpochSeconds ?: 0L) -> received
     received.latestVersion != null && cached.latestVersion == null -> received
+    received.latestVersionCode != null && cached.latestVersionCode == null -> received
     !received.stale && cached.stale -> received
     received.updateAvailable != cached.updateAvailable -> received
     else -> cached
@@ -4596,6 +4597,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             if (fresh != null) {
                 val received = PlayStoreVersionStatus(
                     latestVersion = fresh.version,
+                    latestVersionCode = fresh.versionCode,
                     listingUpdatedAtEpochSeconds = fresh.listingUpdatedAtEpochSeconds,
                     updateAvailable = fresh.updateAvailable,
                     checkedAtEpochSeconds = fresh.checkedAtEpochSeconds,
@@ -4606,6 +4608,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 statuses[packageName] = status
                 if (status.latestVersion != null) editor.putString(playStoreVersionKey(packageName), status.latestVersion)
                 else editor.remove(playStoreVersionKey(packageName))
+                if (status.latestVersionCode != null) {
+                    editor.putLong(playStoreVersionCodeKey(packageName), status.latestVersionCode)
+                } else editor.remove(playStoreVersionCodeKey(packageName))
                 if (status.listingUpdatedAtEpochSeconds != null) {
                     editor.putLong(
                         playStoreListingUpdatedAtKey(packageName),
@@ -4636,10 +4641,13 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val version = playStorePreferences.getString(playStoreVersionKey(packageName), null)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
+        val versionCode = playStorePreferences
+            .getLong(playStoreVersionCodeKey(packageName), 0L)
+            .takeIf { it > 0L }
         val listingUpdatedAt = playStorePreferences
             .getLong(playStoreListingUpdatedAtKey(packageName), 0L)
             .takeIf { it > 0L }
-        if (version == null && listingUpdatedAt == null) return null
+        if (version == null && versionCode == null && listingUpdatedAt == null) return null
         val checkedAt = playStorePreferences.getLong(playStoreCheckedAtKey(packageName), 0L)
         val checkedDay = playStorePreferences.getLong(playStoreCheckedDayKey(packageName), Long.MIN_VALUE)
         if (checkedAt <= 0L || checkedDay == Long.MIN_VALUE) return null
@@ -4653,6 +4661,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         return PlayStoreVersionStatus(
             latestVersion = version,
+            latestVersionCode = versionCode,
             listingUpdatedAtEpochSeconds = listingUpdatedAt,
             updateAvailable = updateAvailable,
             checkedAtEpochSeconds = checkedAt,
@@ -4687,6 +4696,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun playStoreCheckedDayKey(packageName: String): String = PLAY_STORE_DAY_PREFIX + packageName
     private fun playStoreVersionKey(packageName: String): String = PLAY_STORE_VERSION_PREFIX + packageName
+    private fun playStoreVersionCodeKey(packageName: String): String = PLAY_STORE_VERSION_CODE_PREFIX + packageName
     private fun playStoreCheckedAtKey(packageName: String): String = PLAY_STORE_CHECKED_AT_PREFIX + packageName
     private fun playStoreListingUpdatedAtKey(packageName: String): String =
         PLAY_STORE_LISTING_UPDATED_AT_PREFIX + packageName
@@ -5203,6 +5213,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val GATE_EXPIRES = "expires"
         private const val PLAY_STORE_DAY_PREFIX = "checked_day_"
         private const val PLAY_STORE_VERSION_PREFIX = "latest_version_"
+        private const val PLAY_STORE_VERSION_CODE_PREFIX = "latest_version_code_"
         private const val PLAY_STORE_CHECKED_AT_PREFIX = "checked_at_"
         private const val PLAY_STORE_LISTING_UPDATED_AT_PREFIX = "listing_updated_at_"
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"

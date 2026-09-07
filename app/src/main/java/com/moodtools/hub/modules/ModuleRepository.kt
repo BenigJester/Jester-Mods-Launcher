@@ -29,6 +29,10 @@ class ModuleRepository(private val context: Context) {
                 val versions = json.optJSONArray("supported_versions") ?: return@buildSet
                 for (index in 0 until versions.length()) add(versions.getString(index))
             }
+            val supportedVersionCodes = buildSet {
+                val codes = json.optJSONArray("supported_version_codes") ?: return@buildSet
+                for (index in 0 until codes.length()) add(codes.getLong(index).also { require(it > 0L) })
+            }
             val supportedAbis = buildSet {
                 val abis = json.optJSONArray("supported_abis")
                 if (abis == null) {
@@ -75,6 +79,7 @@ class ModuleRepository(private val context: Context) {
                 iconFile = json.optString("icon_file").takeIf { it.isNotBlank() },
                 nonRootMethod = nonRootMethod,
                 nonRootMethods = nonRootMethods,
+                supportedVersionCodes = supportedVersionCodes,
                 catalogSlug = json.optString("module_slug").takeIf { it.matches(SLUG) }
             ).also {
                 require(it.supportedAbis.isNotEmpty()) { "Module supported_abis must not be empty" }

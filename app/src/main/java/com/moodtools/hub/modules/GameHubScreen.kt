@@ -459,6 +459,8 @@ private fun browseCatalogRevision(listings: List<ModuleListing>): Int {
         revision = 31 * revision + listing.catalog.build.hashCode()
         revision = 31 * revision + listing.catalog.config.packageName.hashCode()
         revision = 31 * revision + listing.catalog.config.title.hashCode()
+        revision = 31 * revision + listing.catalog.config.supportedVersions.hashCode()
+        revision = 31 * revision + listing.catalog.config.supportedVersionCodes.hashCode()
         revision = 31 * revision + listing.catalog.category.hashCode()
         revision = 31 * revision + listing.catalog.tags.hashCode()
         revision = 31 * revision + listing.catalog.updatedAtEpochSeconds.hashCode()
@@ -470,6 +472,7 @@ private fun browseCatalogRevision(listings: List<ModuleListing>): Int {
         revision = 31 * revision + listing.installedComplete.hashCode()
         revision = 31 * revision + listing.deviceArchitectureSupported.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.latestVersion.hashCode()
+        revision = 31 * revision + listing.playStoreVersionStatus?.latestVersionCode.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.listingUpdatedAtEpochSeconds.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.updateAvailable.hashCode()
         revision = 31 * revision + listing.playStoreVersionStatus?.stale.hashCode()
@@ -4635,33 +4638,6 @@ private fun ModuleDownloadScreen(
     onDone: () -> Unit
 ) {
     val game = listing.game
-    val context = LocalContext.current.applicationContext
-    var featuresExpanded by rememberSaveable(listing.catalog.slug) { mutableStateOf(false) }
-    val featureKey = remember(listing.catalog.slug, listing.catalog.build, listing.catalog.features?.path) {
-        listOf(
-            listing.catalog.slug,
-            listing.catalog.build.toString(),
-            listing.catalog.features?.path.orEmpty()
-        ).joinToString(":")
-    }
-    val featureEntry = screenCache.featureDetails[featureKey] ?: FeatureDetailsCacheEntry()
-    LaunchedEffect(featuresExpanded, featureEntry.retryNonce, featureKey) {
-        val latestEntry = screenCache.featureDetails[featureKey] ?: FeatureDetailsCacheEntry()
-        if (!featuresExpanded || listing.catalog.features == null || latestEntry.groups != null || latestEntry.loading) {
-            return@LaunchedEffect
-        }
-        screenCache.featureDetails[featureKey] = latestEntry.copy(loading = true, error = null)
-        runCatching {
-            withContext(Dispatchers.IO) { ModuleFeaturesClient(context).load(listing.catalog) }
-        }.onSuccess {
-            screenCache.featureDetails[featureKey] = FeatureDetailsCacheEntry(groups = it)
-        }.onFailure {
-            screenCache.featureDetails[featureKey] = latestEntry.copy(
-                loading = false,
-                error = "Feature details are unavailable. Check your connection and try again."
-            )
-        }
-    }
     val bitmap = rememberListingBitmap(screenCache, listing, 160)
     val action = when (listing.status) {
         ModuleInstallStatus.UPDATE_AVAILABLE -> "Update"
@@ -4711,9 +4687,39 @@ private fun ModuleDownloadScreen(
                     onClick = onBack
                 ).padding(vertical = 8.dp, horizontal = 4.dp)
             )
-            Spacer(Modifier.height(10.dp))
-            Text("Add-on details", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("See what is included and required before adding this add-on to your library.", color = Muted)
+        }
+
+        item {
+            AddOnDetailHero(
+                bitmap = bitmap,
+                title = listing.catalog.config.title,
+                collectionLabel = "${listing.catalog.category.uppercase(Locale.ROOT)} ADD-ON",
+                status = when (listing.status) {
+                    ModuleInstallStatus.INSTALLED -> "IN YOUR LIBRARY"
+                    ModuleInstallStatus.UPDATE_AVAILABLE -> "UPDATE AVAILABLE"
+                    ModuleInstallStatus.BROKEN_INSTALL -> "REPAIR NEEDED"
+                    ModuleInstallStatus.GAME_NOT_INSTALLED,
+                    ModuleInstallStatus.UNSUPPORTED_VERSION -> "GAME REQUIRED"
+                    ModuleInstallStatus.UNSUPPORTED_DEVICE,
+                    ModuleInstallStatus.UNSUPPORTED_ABI -> "NOT COMPATIBLE"
+                    ModuleInstallStatus.AVAILABLE -> "READY TO ADD"
+                },
+                statusColor = when (listing.status) {
+                    ModuleInstallStatus.INSTALLED,
+                    ModuleInstallStatus.AVAILABLE -> Accent
+                    ModuleInstallStatus.UPDATE_AVAILABLE -> AccentBlue
+                    ModuleInstallStatus.GAME_NOT_INSTALLED,
+                    ModuleInstallStatus.UNSUPPORTED_VERSION -> PrivateGold
+                    else -> Danger
+                },
+                summary = "Discover what is included, confirm compatibility, and choose how to add it.",
+                facts = listOf(
+                    "ADD-ON RELEASE" to listing.catalog.version,
+                    "GAME RELEASE" to (game?.let {
+                        gameReleaseLabel(it.versionName, it.versionCode)
+                    } ?: listing.catalog.config.supportedVersions.sorted().joinToString(", "))
+                )
+            )
         }
 
         if (listing.privateAccessProtected) {
@@ -4728,39 +4734,30 @@ private fun ModuleDownloadScreen(
 
         item {
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(SurfaceDark).padding(18.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (bitmap != null) {
-                        Image(bitmap, listing.catalog.config.title, Modifier.size(68.dp).clip(RoundedCornerShape(18.dp)))
-                    } else {
-                        Box(
-                            Modifier.size(68.dp).clip(RoundedCornerShape(18.dp)).background(SurfaceRaised),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(listing.catalog.config.title.take(1).uppercase(), color = Accent, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(listing.catalog.config.title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(
-                            if (game == null) "Original game not installed" else "Original game installed",
-                            color = if (game == null) Muted else Accent,
-                            style = MaterialTheme.typography.bodyMedium
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(SurfaceRaised.copy(alpha = 0.94f), SurfaceDark)
                         )
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
+                    )
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)), RoundedCornerShape(24.dp))
+                    .padding(18.dp)
+            ) {
                 InformationGroupLabel("GAME COMPATIBILITY")
                 Spacer(Modifier.height(8.dp))
                 game?.let {
-                    DownloadInfoRow("Installed version", it.versionName)
+                    DownloadInfoRow("Installed game", gameReleaseLabel(it.versionName, it.versionCode))
                     DownloadInfoRow("Architecture", architectureLabel(it.abi))
                 }
                 DownloadInfoRow(
                     "Compatible versions",
                     listing.catalog.config.supportedVersions.sorted().joinToString(", ")
+                )
+                DownloadInfoRow(
+                    "Compatible builds",
+                    supportedBuildsLabel(listing.catalog.config.supportedVersionCodes)
                 )
                 if (game == null) {
                     DownloadInfoRow(
@@ -4808,13 +4805,13 @@ private fun ModuleDownloadScreen(
                     Text(
                         if (playStoreUpdateInProgress) {
                             if (playStoreStatus?.latestVersion != null) {
-                                "Google Play has a newer game version. This add-on is marked as being updated for it."
+                                "Google Play has a newer game release. This add-on is marked as being updated for it."
                             } else {
                                 "Google Play has a newer release. This add-on is marked as being updated for it."
                             }
                         } else {
                             if (playStoreStatus?.latestVersion != null) {
-                                "Google Play has a newer game version than this add-on supports. " +
+                                "Google Play has a newer game release than this add-on supports. " +
                                     "Wait for an add-on update before using the newest game version."
                             } else {
                                 "Google Play has published a newer release since this add-on was verified. " +
@@ -4837,25 +4834,13 @@ private fun ModuleDownloadScreen(
                 }
                 totalDownloadSize?.let { DownloadInfoRow("Total download", formatDownloadSize(it)) }
                 DownloadInfoRow("Package", listing.catalog.config.packageName)
-                listing.catalog.features?.let { features ->
+                listing.catalog.features?.let {
                     Spacer(Modifier.height(12.dp))
                     Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
                     Spacer(Modifier.height(12.dp))
                     ModuleFeaturesSection(
-                        featureCount = features.count,
-                        groups = featureEntry.groups,
-                        expanded = featuresExpanded,
-                        loading = featureEntry.loading,
-                        error = featureEntry.error,
-                        onToggle = { featuresExpanded = !featuresExpanded },
-                        onRetry = {
-                            screenCache.featureDetails[featureKey] = featureEntry.copy(
-                                groups = null,
-                                loading = false,
-                                error = null,
-                                retryNonce = featureEntry.retryNonce + 1
-                            )
-                        }
+                        screenCache = screenCache,
+                        module = listing.catalog
                     )
                 }
             }
@@ -5043,17 +5028,37 @@ private fun ModuleDownloadScreen(
 
 @Composable
 private fun ModuleFeaturesSection(
-    featureCount: Int,
-    groups: List<ModuleFeatureGroup>?,
-    expanded: Boolean,
-    loading: Boolean,
-    error: String?,
-    onToggle: () -> Unit,
-    onRetry: () -> Unit
+    screenCache: LauncherScreenCache,
+    module: CatalogModule
 ) {
+    val context = LocalContext.current.applicationContext
+    var expanded by rememberSaveable(module.slug) { mutableStateOf(false) }
+    val featureKey = remember(module.slug, module.build, module.features?.path) {
+        listOf(module.slug, module.build.toString(), module.features?.path.orEmpty()).joinToString(":")
+    }
+    val entry = screenCache.featureDetails[featureKey] ?: FeatureDetailsCacheEntry()
+    LaunchedEffect(expanded, entry.retryNonce, featureKey) {
+        val latestEntry = screenCache.featureDetails[featureKey] ?: FeatureDetailsCacheEntry()
+        if (!expanded || module.features == null || latestEntry.groups != null || latestEntry.loading) {
+            return@LaunchedEffect
+        }
+        screenCache.featureDetails[featureKey] = latestEntry.copy(loading = true, error = null)
+        runCatching {
+            withContext(Dispatchers.IO) { ModuleFeaturesClient(context).load(module) }
+        }.onSuccess {
+            screenCache.featureDetails[featureKey] = FeatureDetailsCacheEntry(groups = it)
+        }.onFailure {
+            screenCache.featureDetails[featureKey] = latestEntry.copy(
+                loading = false,
+                error = "Feature details are unavailable. Check your connection and try again."
+            )
+        }
+    }
+    val featureCount = module.features?.count ?: return
+
     Column(
         Modifier.fillMaxWidth().animateContentSize().clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onToggle)
+            .clickable { expanded = !expanded }
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -5076,21 +5081,31 @@ private fun ModuleFeaturesSection(
         }
         if (expanded) {
             when {
-                loading -> {
+                entry.loading -> {
                     Spacer(Modifier.height(14.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp), color = Accent, trackColor = Hairline)
                     Spacer(Modifier.height(8.dp))
                     Text("Loading feature details…", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
-                error != null -> {
+                entry.error != null -> {
                     Spacer(Modifier.height(14.dp))
-                    Text(error, color = Danger, style = MaterialTheme.typography.bodySmall)
+                    Text(entry.error, color = Danger, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(8.dp))
-                    OutlinedButton(onClick = onRetry, border = BorderStroke(1.dp, Hairline)) {
+                    OutlinedButton(
+                        onClick = {
+                            screenCache.featureDetails[featureKey] = entry.copy(
+                                groups = null,
+                                loading = false,
+                                error = null,
+                                retryNonce = entry.retryNonce + 1
+                            )
+                        },
+                        border = BorderStroke(1.dp, Hairline)
+                    ) {
                         Text("Try again", color = Accent)
                     }
                 }
-                groups != null -> groups.forEachIndexed { groupIndex, group ->
+                entry.groups != null -> entry.groups.forEachIndexed { groupIndex, group ->
                     Spacer(Modifier.height(if (groupIndex == 0) 14.dp else 16.dp))
                     Text(group.title, color = Color.White, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(5.dp))
@@ -5099,6 +5114,158 @@ private fun ModuleFeaturesSection(
                             Text("•", color = Accent, style = MaterialTheme.typography.bodyMedium)
                             Spacer(Modifier.width(9.dp))
                             Text(feature, color = Muted, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddOnDetailHero(
+    bitmap: ImageBitmap?,
+    title: String,
+    collectionLabel: String,
+    status: String,
+    statusColor: Color,
+    summary: String,
+    facts: List<Pair<String, String>>,
+    localTest: Boolean = false
+) {
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        statusColor.copy(alpha = 0.19f),
+                        AccentBlue.copy(alpha = 0.09f),
+                        SurfaceDark,
+                        Ink
+                    )
+                )
+            )
+            .border(BorderStroke(1.dp, statusColor.copy(alpha = 0.34f)), shape)
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .size(170.dp)
+                .background(
+                    Brush.radialGradient(
+                        listOf(statusColor.copy(alpha = 0.18f), Color.Transparent)
+                    )
+                )
+        )
+        Column(Modifier.fillMaxWidth().padding(22.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    collectionLabel,
+                    color = statusColor,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (localTest) LocalTestBadge()
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(SurfaceRaised)
+                        .border(
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                            RoundedCornerShape(24.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = title,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Text(
+                            title.take(1).uppercase(Locale.ROOT),
+                            color = statusColor,
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+                Spacer(Modifier.width(18.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(statusColor.copy(alpha = 0.15f))
+                            .border(BorderStroke(1.dp, statusColor.copy(alpha = 0.35f)), CircleShape)
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            status,
+                            color = statusColor,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(summary, color = Muted, style = MaterialTheme.typography.bodyMedium)
+            if (facts.isNotEmpty()) {
+                Spacer(Modifier.height(20.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.09f)))
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    facts.forEachIndexed { index, (label, value) ->
+                        if (index > 0) {
+                            Box(
+                                Modifier
+                                    .padding(horizontal = 14.dp)
+                                    .width(1.dp)
+                                    .height(42.dp)
+                                    .background(Color.White.copy(alpha = 0.09f))
+                            )
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                label,
+                                color = Muted.copy(alpha = 0.78f),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                value.ifBlank { "Not specified" },
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -5391,14 +5558,26 @@ private fun LimitedModuleAccessNotice(compact: Boolean = false) {
 }
 
 private fun playStoreReleaseLabel(status: PlayStoreVersionStatus): String =
-    status.latestVersion?.let { "v$it" } ?: when (status.updateAvailable) {
-        true -> "New release detected"
-        false -> "Release checked"
-        null -> "Release checked · version not published"
+    when {
+        status.latestVersion != null -> gameReleaseLabel(status.latestVersion, status.latestVersionCode)
+        status.latestVersionCode != null -> "Build ${status.latestVersionCode} · version not published"
+        else -> when (status.updateAvailable) {
+            true -> "New release detected"
+            false -> "Release checked"
+            null -> "Release checked · version not published"
+        }
     }
 
 private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
-    status?.latestVersion?.let { "Google Play v$it" } ?: "a new Google Play release"
+    status?.latestVersion?.let {
+        "Google Play ${gameReleaseLabel(it, status.latestVersionCode)}"
+    } ?: "a new Google Play release"
+
+private fun gameReleaseLabel(version: String, versionCode: Long?): String =
+    "v$version · ${versionCode ?: "unavailable"}"
+
+private fun supportedBuildsLabel(versionCodes: Set<Long>): String =
+    versionCodes.sorted().joinToString(", ").ifBlank { "Not declared" }
 
 @Composable
 private fun ModuleListingCard(
@@ -5427,7 +5606,7 @@ private fun ModuleListingCard(
         listing.playStoreOutdatedWarning ->
             "Add-on update needed for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
         game == null -> "Install the original game to continue"
-        !game.versionSupported -> "A compatible game version is needed"
+        !game.versionSupported -> "A compatible game version and build are needed"
         !game.abiSupported -> "This installed version isn't supported"
         else -> "Ready to add to your library"
     }
@@ -5473,7 +5652,7 @@ private fun ModuleListingCard(
                 )
                 Text(statusText, color = statusColor, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "Game version ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")}",
+                    "Game ${listing.catalog.config.supportedVersions.sorted().joinToString(", ")} · builds ${supportedBuildsLabel(listing.catalog.config.supportedVersionCodes)}",
                     color = Muted,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -5516,9 +5695,10 @@ private fun rememberListingBitmap(
     localSize: Int
 ): ImageBitmap? {
     val localIcon = listing.game?.icon
+    val gameVersionCode = listing.game?.versionCode
     if (localIcon != null) {
-        val localKey = remember(localIcon, localSize) {
-            "local:${listing.catalog.config.packageName}:$localSize:${System.identityHashCode(localIcon)}"
+        val localKey = remember(gameVersionCode, localSize) {
+            "local:${listing.catalog.config.packageName}:$gameVersionCode:$localSize"
         }
         return rememberCachedBitmap(screenCache, localKey, ICON_BITMAP_DEFER_MS) {
             withContext(Dispatchers.Default) {
@@ -5550,9 +5730,10 @@ private fun rememberLibraryBitmap(
     localSize: Int
 ): ImageBitmap? {
     val localIcon = entry.game?.icon
+    val gameVersionCode = entry.game?.versionCode
     if (localIcon != null) {
-        val localKey = remember(localIcon, localSize) {
-            "local:${entry.packageName}:$localSize:${System.identityHashCode(localIcon)}"
+        val localKey = remember(gameVersionCode, localSize) {
+            "local:${entry.packageName}:$gameVersionCode:$localSize"
         }
         return rememberCachedBitmap(screenCache, localKey, ICON_BITMAP_DEFER_MS) {
             withContext(Dispatchers.Default) {
@@ -5643,7 +5824,7 @@ internal fun libraryStatusLabel(entry: LibraryGame): String {
         LibraryGameStatus.UPDATE_AVAILABLE -> "Update available"
         LibraryGameStatus.REPAIR_NEEDED -> "Repair needed"
         LibraryGameStatus.GAME_REQUIRED -> "Original game required"
-        LibraryGameStatus.UNSUPPORTED_VERSION -> "Unsupported game version"
+        LibraryGameStatus.UNSUPPORTED_VERSION -> "Unsupported game version or build"
         LibraryGameStatus.UNSUPPORTED_ABI -> "Unsupported game architecture"
     }
 }
@@ -6388,40 +6569,27 @@ private fun ModuleScreen(
             )
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = game.title,
-                        modifier = Modifier.size(76.dp).clip(RoundedCornerShape(20.dp))
-                    )
-                }
-                Spacer(Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            game.title,
-                            modifier = Modifier.weight(1f),
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (game.localTest) {
-                            Spacer(Modifier.width(10.dp))
-                            LocalTestBadge()
-                        }
-                    }
-                    Text(
-                        installedGame?.let { "Version ${it.versionName}" } ?: "Original game not installed",
-                        color = if (installedGame == null) Danger else Muted
-                    )
-                    installedGame?.let {
-                        Text("Architecture ${architectureLabel(it.abi)}", color = Muted)
-                    }
-                }
+            val statusColor = when {
+                game.playStoreUpdateInProgress || game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
+                game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Accent
+                game.status == LibraryGameStatus.UPDATE_AVAILABLE -> PrivateGold
+                else -> Danger
             }
+            AddOnDetailHero(
+                bitmap = bitmap,
+                title = game.title,
+                collectionLabel = "LIBRARY ADD-ON",
+                status = libraryStatusLabel(game).uppercase(Locale.ROOT),
+                statusColor = statusColor,
+                summary = "Your complete space to review features, manage compatibility, and launch.",
+                facts = listOf(
+                    "ADD-ON RELEASE" to (game.listing?.catalog?.version ?: game.installedBuild.toString()),
+                    "GAME RELEASE" to (installedGame?.let {
+                        gameReleaseLabel(it.versionName, it.versionCode)
+                    } ?: "Not installed")
+                ),
+                localTest = game.localTest
+            )
         }
         if (game.privateAccessProtected) {
             item {
@@ -6438,6 +6606,19 @@ private fun ModuleScreen(
                 selectionEnabled = !update.inProgress && !launch.inProgress,
                 onSelectNonRootMethod = onSelectNonRootMethod
             )
+        }
+        game.listing?.catalog?.takeIf { it.features != null }?.let { module ->
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(SurfaceDark)
+                        .padding(8.dp)
+                ) {
+                    ModuleFeaturesSection(screenCache = screenCache, module = module)
+                }
+            }
         }
         item {
             Column(
@@ -6800,7 +6981,7 @@ private fun ModuleCompatibilityCard(
     val headline = when {
         installedGame == null -> "Original game needed"
         !installedGame.versionSupported && !installedGame.abiSupported -> "Version and architecture not supported"
-        !installedGame.versionSupported -> "Game version not supported"
+        !installedGame.versionSupported -> "Game version or build not supported"
         !installedGame.abiSupported -> "Architecture not supported"
         !game.installedComplete -> "Add-on needs repair"
         game.launchAction == LibraryLaunchAction.PATCH_AND_INSTALL -> "Patched install required"
@@ -6830,14 +7011,15 @@ private fun ModuleCompatibilityCard(
         game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL ->
             "Jester Mods will preserve the untouched game package and create a shell with its exact name and icon."
         playStoreUpdateInProgress ->
-            "The maintainer is updating this add-on for the newer game version shown by Google Play."
+            "The maintainer is updating this add-on for the newer game release shown by Google Play."
         playStoreOutdatedWarning ->
-            "Google Play is showing a newer game version than this add-on currently supports."
+            "Google Play is showing a newer game release than this add-on currently supports."
         else ->
             "Requirements are satisfied. The in-game menu will show a compact runtime status only."
     }
     val supportedVersions = game.module.supportedVersions.sorted().joinToString(", ")
         .ifBlank { "Declared by add-on" }
+    val supportedBuilds = supportedBuildsLabel(game.module.supportedVersionCodes)
     val supportedArchitectures = architectureSummary(game.module.supportedAbis)
         .ifBlank { "Declared by add-on" }
 
@@ -6868,9 +7050,12 @@ private fun ModuleCompatibilityCard(
         Spacer(Modifier.height(12.dp))
         DownloadInfoRow(
             "Installed game",
-            installedGame?.let { "v${it.versionName} · ${architectureLabel(it.abi)}" } ?: "Not installed"
+            installedGame?.let {
+                "${gameReleaseLabel(it.versionName, it.versionCode)} · ${architectureLabel(it.abi)}"
+            } ?: "Not installed"
         )
         DownloadInfoRow("Supported versions", supportedVersions)
+        DownloadInfoRow("Supported builds", supportedBuilds)
         DownloadInfoRow("Supported architecture", supportedArchitectures)
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))

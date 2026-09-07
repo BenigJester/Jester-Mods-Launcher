@@ -4,6 +4,9 @@
   "supported_versions": [
     "5.4"
   ],
+  "supported_version_codes": [
+    504
+  ],
   "supported_abis": [
     "arm64-v8a"
   ],

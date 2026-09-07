@@ -49,6 +49,7 @@ class PlayStoreVersionClientTest {
                         .put("ok", true)
                         .put("packageName", "com.os.airforce")
                         .put("version", "15.76")
+                        .put("versionCode", 157_600L)
                         .put("listingUpdatedAt", 1_787_824_746L)
                         .put("updateAvailable", false)
                         .put("checkedAt", 1_787_824_800L)
@@ -58,6 +59,19 @@ class PlayStoreVersionClientTest {
 
         assertEquals(setOf("com.os.airforce"), result.keys)
         assertEquals("15.76", result["com.os.airforce"]?.version)
+        assertEquals(157_600L, result["com.os.airforce"]?.versionCode)
+    }
+
+    @Test
+    fun rejectsInvalidPlayStoreBuildNumber() {
+        val body = JSONObject()
+            .put("ok", true)
+            .put("packageName", "com.os.airforce")
+            .put("version", "15.76")
+            .put("versionCode", 0)
+            .put("checkedAt", 1_787_824_800L)
+
+        assertNull(parsePlayStoreVersionResult("com.os.airforce", body))
     }
 
     @Test

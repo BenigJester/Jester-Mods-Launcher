@@ -163,7 +163,7 @@ object ExecutionModeLaunchBridge {
             return false
         }
         if (!game.versionSupported) {
-            onProgress?.invoke("Launch failed", "This installed game version is not supported yet.")
+            onProgress?.invoke("Launch failed", "This installed game version or build is not supported yet.")
             return false
         }
         if (!game.abiSupported) {

@@ -181,8 +181,12 @@ class UpdateClient(private val moduleRoot: File) {
         val moduleConfig = payload.getJSONObject("moduleConfig")
         require(moduleConfig.getString("packageName") == packageName)
         val supportedVersions = moduleConfig.getJSONArray("supportedVersions")
+        val supportedVersionCodes = moduleConfig.optJSONArray("supportedVersionCodes")
         val supportedAbis = moduleConfig.getJSONArray("supportedAbis")
         require(supportedVersions.length() > 0 && supportedAbis.length() > 0)
+        supportedVersionCodes?.let { codes ->
+            require((0 until codes.length()).all { codes.getLong(it) > 0L })
+        }
         require((0 until supportedAbis.length()).any { supportedAbis.getString(it) == abi })
         require(moduleConfig.getString("dexFile") == "classes.dex")
         require(moduleConfig.getString("nativeFile") == "libmenu_native.so")
@@ -264,6 +268,7 @@ class UpdateClient(private val moduleRoot: File) {
                 .put("dex_file", "classes.dex")
                 .put("native_file", "libmenu_native.so")
                 .also {
+                    supportedVersionCodes?.let { codes -> it.put("supported_version_codes", codes) }
                     if (moduleConfig.has("nonrootMethod")) {
                         it.put("nonroot_method", nonRootMethod.jsonValue)
                     }

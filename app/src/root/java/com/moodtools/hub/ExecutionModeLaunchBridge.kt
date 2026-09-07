@@ -126,8 +126,8 @@ object ExecutionModeLaunchBridge {
             return fail(context, "This game can't be opened right now.", "Invalid module package name", onProgress)
         }
         if (!game.versionSupported) {
-            return fail(context, "This game version isn't supported yet.",
-                "Installed ${game.versionName}; supported ${game.module.supportedVersions.joinToString()}", onProgress)
+            return fail(context, "This game version or build isn't supported yet.",
+                "Installed ${game.versionName} (build ${game.versionCode}); supported versions ${game.module.supportedVersions.joinToString()}, builds ${game.module.supportedVersionCodes.joinToString().ifBlank { "not declared" }}", onProgress)
         }
         if (!game.abiSupported) {
             return fail(context, "This game architecture isn't supported by this add-on.",

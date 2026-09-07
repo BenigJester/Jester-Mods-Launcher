@@ -1,6 +1,7 @@
 package com.moodtools.hub
 
 import com.moodtools.hub.modules.PlayStoreVersionStatus
+import com.moodtools.hub.modules.ModuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -30,11 +31,38 @@ class PlayStoreStatusFreshnessTest {
     }
 
     @Test
+    fun buildNumberWinsWhenChecksHaveTheSameTimestamp() {
+        val cached = status(version = "2.0", checkedAt = 200)
+        val richer = cached.copy(latestVersionCode = 20_001L)
+
+        assertEquals(richer, newestPlayStoreStatus(cached, richer))
+    }
+
+    @Test
     fun refreshedCompatibilityResultWinsForTheSameStoreCheck() {
         val cached = status(version = "2.0", checkedAt = 200)
         val refreshed = cached.copy(updateAvailable = true)
 
         assertEquals(refreshed, newestPlayStoreStatus(cached, refreshed))
+    }
+
+    @Test
+    fun compatibilityRequiresTheSupportedGameBuildWhenDeclared() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Game",
+            supportedVersions = setOf("2.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(20_001L)
+        )
+
+        assertEquals(true, status("2.0", 200).copy(latestVersionCode = 20_001L).isSupportedBy(module))
+        assertEquals(false, status("2.0", 200).copy(latestVersionCode = 20_002L).isSupportedBy(module))
+        assertEquals(null, status("2.0", 200).isSupportedBy(module))
     }
 
     private fun status(version: String?, checkedAt: Long) = PlayStoreVersionStatus(

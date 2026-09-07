@@ -79,6 +79,7 @@ class ModuleIntegrityVerifier(
         val entryPoint = signedConfig.getString("entryPoint")
         require(entryPoint.isNotBlank() && entryPoint.length <= 240)
         val supportedVersions = stringSet(signedConfig.getJSONArray("supportedVersions"))
+        val supportedVersionCodes = longSet(signedConfig.optJSONArray("supportedVersionCodes"))
         val supportedAbis = stringSet(signedConfig.getJSONArray("supportedAbis"))
         val nonRootMethod = NonRootMethod.fromJson(
             signedConfig.optString("nonrootMethod").takeIf { it.isNotBlank() },
@@ -95,7 +96,8 @@ class ModuleIntegrityVerifier(
         require(abi in supportedAbis) { "Signed module does not support the installed game ABI" }
 
         require(module.title == title && module.entryPoint == entryPoint)
-        require(module.supportedVersions == supportedVersions && module.supportedAbis == supportedAbis)
+        require(module.supportedVersions == supportedVersions &&
+            module.supportedVersionCodes == supportedVersionCodes && module.supportedAbis == supportedAbis)
         require(module.nonRootMethod == nonRootMethod)
         require(module.nonRootMethods == nonRootMethods)
         require(module.dexFile == DEX_FILE && module.nativeFile == NATIVE_FILE && module.iconFile == null)
@@ -110,6 +112,9 @@ class ModuleIntegrityVerifier(
             .put("dex_file", DEX_FILE)
             .put("native_file", NATIVE_FILE)
             .also {
+                signedConfig.optJSONArray("supportedVersionCodes")?.let {
+                    codes -> it.put("supported_version_codes", codes)
+                }
                 if (signedConfig.has("nonrootMethod")) {
                     it.put("nonroot_method", nonRootMethod.jsonValue)
                 }
@@ -165,6 +170,9 @@ class ModuleIntegrityVerifier(
         }
         require(module.supportedVersions.all { it.isNotBlank() && it.length <= 120 }) {
             "Local test supported versions are invalid"
+        }
+        require(module.supportedVersionCodes.size <= 100 && module.supportedVersionCodes.all { it > 0L }) {
+            "Local test supported game builds are invalid"
         }
         require(module.supportedAbis.isNotEmpty() && module.supportedAbis.size <= 4) {
             "Local test supported ABIs are invalid"
@@ -274,6 +282,19 @@ class ModuleIntegrityVerifier(
             }
         }
         return values
+    }
+
+    private fun longSet(array: JSONArray?): Set<Long> {
+        if (array == null) return emptySet()
+        require(array.length() <= 100)
+        return buildSet {
+            for (index in 0 until array.length()) {
+                val value = array.getLong(index)
+                require(value > 0L && add(value)) {
+                    "Signed module build list contains an invalid or duplicate value"
+                }
+            }
+        }
     }
 
     private fun sha256(file: File): String {

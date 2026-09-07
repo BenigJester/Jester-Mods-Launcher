@@ -8,6 +8,7 @@ import java.net.URL
 data class PlayStoreVersionResult(
     val packageName: String,
     val version: String?,
+    val versionCode: Long?,
     val listingUpdatedAtEpochSeconds: Long?,
     val updateAvailable: Boolean?,
     val checkedAtEpochSeconds: Long,
@@ -99,6 +100,9 @@ internal fun parsePlayStoreVersionResult(
     val version = if (body.has("version") && !body.isNull("version")) {
         body.getString("version").trim().takeIf(String::isNotEmpty)
     } else null
+    val versionCode = if (body.has("versionCode") && !body.isNull("versionCode")) {
+        body.getLong("versionCode").takeIf { it > 0L } ?: return null
+    } else null
     val listingUpdatedAt = body.optLong("listingUpdatedAt", 0L).takeIf { it > 0L }
     val updateAvailable = if (body.has("updateAvailable") && !body.isNull("updateAvailable")) {
         body.getBoolean("updateAvailable")
@@ -113,6 +117,7 @@ internal fun parsePlayStoreVersionResult(
     return PlayStoreVersionResult(
         packageName = responsePackage,
         version = version,
+        versionCode = versionCode,
         listingUpdatedAtEpochSeconds = listingUpdatedAt,
         updateAvailable = updateAvailable,
         checkedAtEpochSeconds = checkedAt,
