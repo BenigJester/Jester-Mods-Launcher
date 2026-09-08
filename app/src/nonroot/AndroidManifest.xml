@@ -10,6 +10,36 @@
         android:name="android.permission.SYSTEM_OVERLAY_WINDOW"
         tools:node="remove" />
 
+    <!-- BlackBox declares a broad compatibility permission set for arbitrary apps. Games
+         supported by this launcher do not use telephony, SMS, call logs, or contacts, and
+         internet-sideloaded APKs declaring SMS access are blocked by Google Play Protect. -->
+    <uses-permission android:name="android.permission.SEND_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.BROADCAST_WAP_PUSH" tools:node="remove" />
+    <uses-permission android:name="android.permission.BROADCAST_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.SEND_RESPOND_VIA_MESSAGE" tools:node="remove" />
+    <uses-permission android:name="android.provider.Telephony.SMS_RECEIVED" tools:node="remove" />
+    <uses-permission android:name="android.permission.CALL_PHONE" tools:node="remove" />
+    <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PRECISE_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.READ_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.WRITE_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.READ_PHONE_NUMBERS" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.READ_PRECISE_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.FOREGROUND_SERVICE_PHONE_CALL" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.READ_CONTACTS" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.WRITE_CONTACTS" tools:node="remove" />
+
     <!-- BlackBox is hosted directly by the single non-root launcher package. -->
     <application android:name=".HubApplication">
         <provider
