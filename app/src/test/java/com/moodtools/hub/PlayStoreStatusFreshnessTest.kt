@@ -111,6 +111,23 @@ class PlayStoreStatusFreshnessTest {
     }
 
     @Test
+    fun availableUnsupportedPlayStoreVersionIsStrictWithoutABuild() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Game",
+            supportedVersions = setOf("2.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(20_001L)
+        )
+
+        assertEquals(false, status("2.1", 200).copy(updateAvailable = true).isSupportedBy(module))
+    }
+
+    @Test
     fun confirmedCatalogReleaseSuppliesBuildMissingFromOlderDeviceCache() {
         val module = ModuleConfig(
             packageName = "com.example.game",
