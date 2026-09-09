@@ -19,6 +19,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -41,6 +44,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text as RawText
 import com.moodtools.hub.LocalizedText as Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moodtools.hub.modules.LauncherTheme
+import com.moodtools.hub.modules.LauncherLanguage
 import com.moodtools.hub.modules.launcherThemePreference
 import java.text.DateFormat
 import java.util.Date
@@ -134,6 +139,171 @@ internal fun launcherGatePresentation(
 }
 
 private const val GATE_BOOT_SETTLE_MS = 460L
+
+@Composable
+internal fun FirstRunLanguageScreen(
+    selectedLanguage: LauncherLanguage,
+    onSelectLanguage: (LauncherLanguage) -> Unit,
+    onConfirm: () -> Unit
+) {
+    val context = LocalContext.current
+    GatePalette = remember(context) { context.launcherThemePreference().palette }
+    val translated: (String) -> String = { LauncherLocalization.translate(it, selectedLanguage) }
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize(), color = GateInk) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(GatePalette.backdropStart, GateInk, GatePalette.backdropEnd)
+                    )
+                )
+            ) {
+                Box(
+                    Modifier.align(Alignment.TopCenter).size(380.dp).alpha(0.12f)
+                        .background(Brush.radialGradient(listOf(GateAccent, Color.Transparent)), CircleShape)
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                    contentPadding = PaddingValues(horizontal = 22.dp, vertical = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item { GateBrandHeader() }
+                    item {
+                        Column(
+                            Modifier.fillMaxWidth().background(
+                                Brush.linearGradient(
+                                    listOf(GateAccent.copy(alpha = 0.20f), GateRaised, GateSurface)
+                                ),
+                                RoundedCornerShape(30.dp)
+                            ).border(1.dp, GateAccent.copy(alpha = 0.22f), RoundedCornerShape(30.dp))
+                                .padding(22.dp)
+                        ) {
+                            Box(
+                                Modifier.size(58.dp).background(GateAccent.copy(alpha = 0.14f), RoundedCornerShape(19.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                RawText("Aa", color = GateAccent, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                            }
+                            Spacer(Modifier.height(20.dp))
+                            RawText(
+                                selectedLanguage.greeting,
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(5.dp))
+                            RawText(
+                                translated("Language"),
+                                color = GateAccent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.4.sp
+                            )
+                            Spacer(Modifier.height(9.dp))
+                            RawText(
+                                translated("Choose your preferred language for Jester Mods."),
+                                color = GateMuted,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                    item {
+                        RawText(
+                            translated("AVAILABLE LANGUAGES"),
+                            color = GateMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                    items(LauncherLanguage.entries, key = { it.ordinal }) { language ->
+                        FirstRunLanguageChoice(
+                            language = language,
+                            selected = language == selectedLanguage,
+                            onClick = { onSelectLanguage(language) }
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(4.dp))
+                        Button(
+                            onClick = onConfirm,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 16.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = GateAccent,
+                                contentColor = GateInk
+                            )
+                        ) {
+                            RawText(translated("Continue") + "  \u2192", fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        RawText(
+                            translated("Your choice is saved offline on this device."),
+                            color = GateMuted,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FirstRunLanguageChoice(
+    language: LauncherLanguage,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = if (selected) GateAccent else GatePalette.accentSecondary
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(
+                Brush.horizontalGradient(
+                    if (selected) listOf(GateAccent.copy(alpha = 0.17f), GateRaised)
+                    else listOf(GateRaised, GateSurface)
+                ),
+                RoundedCornerShape(22.dp)
+            )
+            .border(
+                1.dp,
+                if (selected) GateAccent.copy(alpha = 0.42f) else GatePalette.hairline,
+                RoundedCornerShape(22.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 17.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(44.dp).background(accent.copy(alpha = 0.13f), RoundedCornerShape(15.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            RawText("Aa", color = accent, fontWeight = FontWeight.Black)
+        }
+        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+            RawText(
+                language.nativeName,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            if (language.displayName != language.nativeName) {
+                Spacer(Modifier.height(2.dp))
+                RawText(language.displayName, color = GateMuted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        RawText(
+            if (selected) "\u2713" else "\u203A",
+            color = accent,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
 
 @Composable
 fun LauncherGateScreen(

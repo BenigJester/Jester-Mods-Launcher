@@ -17,7 +17,7 @@
 
 namespace Utils
 {
-    bool android_launch_app(const std::string &pkg);
+    bool android_launch_app(const std::string &pkg, int language = 0);
 
     bool android_stop_app(const std::string &pkg);
 

@@ -129,7 +129,7 @@ object NonRootBlackBoxRuntime {
             val retryInternalStorage = needsInternalStorageRetry(game.packageName, userId)
             if (BlackBoxCore.isRunningApplication(game.packageName, userId) && !retryInternalStorage) {
                 Log.i(TAG, "Resuming existing virtual session for ${game.packageName} user=$userId")
-                check(core.launchApk(game.packageName, userId)) {
+                check(launchApk(context, core, game.packageName, userId)) {
                     "BlackBox could not resume ${game.packageName} on user $userId"
                 }
                 launchedPackages += game.packageName
@@ -160,7 +160,7 @@ object NonRootBlackBoxRuntime {
             retryInternalStorageIfNeeded(game.packageName, userId)
             logGoogleCompatibilityState(core, userId)
 
-            check(core.launchApk(game.packageName, userId)) {
+            check(launchApk(context, core, game.packageName, userId)) {
                 "BlackBox launchApk returned false for ${game.packageName} on user $userId"
             }
             launchedPackages += game.packageName
@@ -171,6 +171,13 @@ object NonRootBlackBoxRuntime {
             Log.e(TAG, "Virtual launch failed for ${game.packageName}: $lastFailureDetail", error)
             runCatching { clearModulePayload(game.packageName, DEFAULT_USER_ID) }
         }.getOrDefault(false)
+    }
+
+    private fun launchApk(context: Context, core: BlackBoxCore, packageName: String, userId: Int): Boolean {
+        val intent = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(packageName, userId)
+            ?.withSelectedMenuLanguage(context) ?: return false
+        core.startActivity(intent, userId)
+        return true
     }
 
     /**

@@ -129,7 +129,8 @@ object ExecutionModeLaunchBridge {
     }
 
     fun launchPackageReplacement(context: Context, request: PackageReplacementRequest): Boolean {
-        val intent = context.packageManager.getLaunchIntentForPackage(request.packageName) ?: return false
+        val intent = context.packageManager.getLaunchIntentForPackage(request.packageName)
+            ?.withSelectedMenuLanguage(context) ?: return false
         return runCatching {
             when (request.kind) {
                 PackageReplacementKind.DIRECT_PATCH ->
@@ -202,6 +203,7 @@ object ExecutionModeLaunchBridge {
             }
             onProgress?.invoke("Opening game", "Starting ${game.module.title} directly on Android.")
             val intent = context.packageManager.getLaunchIntentForPackage(game.packageName)
+                ?.withSelectedMenuLanguage(context)
             if (intent == null) {
                 onProgress?.invoke("Launch failed", "Android could not find ${game.module.title}'s launch activity.")
                 return false

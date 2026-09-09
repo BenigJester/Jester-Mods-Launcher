@@ -88,6 +88,11 @@ int main(int argc, char *args[])
         .store_into(inj_cfg.payload_native)
         .metavar("<path>");
 
+    program.add_argument("--launch-language")
+        .help("Initial Mod Tools menu language index.")
+        .store_into(inj_cfg.launch_language)
+        .metavar("<index>");
+
     auto &pmon_group = program.add_mutually_exclusive_group(false);
     {
         pmon_group.add_argument("--launch").help("Launch process and inject.").store_into(inj_cfg.launch);
@@ -175,6 +180,7 @@ int main(int argc, char *args[])
     }
     KITTY_LOGI("delay: %dus", inj_cfg.delay);
     KITTY_LOGI("timeout: %dms", inj_cfg.timeout);
+    KITTY_LOGI("launch_language: %d", inj_cfg.launch_language);
     KITTY_LOGI("memfd: %d", inj_cfg.memfd ? 1 : 0);
     KITTY_LOGI("free: %d", inj_cfg.free);
     KITTY_LOGI("hide: %d", inj_cfg.hide ? 1 : 0);
@@ -435,7 +441,7 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
                 std::thread([&cfg]() -> void {
                     // give some time
                     SLEEP_SECONDS(1);
-                    if (!Utils::android_launch_app(cfg.package))
+                    if (!Utils::android_launch_app(cfg.package, cfg.launch_language))
                     {
                         KITTY_LOGE("Failed to launch app %s!", cfg.package.c_str());
                         exit(1);

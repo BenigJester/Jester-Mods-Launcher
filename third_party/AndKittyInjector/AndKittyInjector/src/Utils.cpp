@@ -90,7 +90,7 @@ static std::string _resolveActivity(const std::string &pkg)
 
 namespace Utils
 {
-    bool android_launch_app(const std::string &pkg)
+    bool android_launch_app(const std::string &pkg, int language)
     {
         if (!_isValidPackageName(pkg))
             return false;
@@ -100,7 +100,8 @@ namespace Utils
         {
             KittyUtils::String::trim(activity);
 
-            std::string result = _execCmd("am start -n " + activity + " 2>&1");
+            std::string result = _execCmd("am start -n " + activity +
+                    " --ei com.moodtools.menu.LANGUAGE " + std::to_string(language) + " 2>&1");
             if (!KittyUtils::String::contains(result, "Error:", false) &&
                 !KittyUtils::String::contains(result, "does not exist", false) &&
                 !KittyUtils::String::contains(result, "Exception occurred", false) &&

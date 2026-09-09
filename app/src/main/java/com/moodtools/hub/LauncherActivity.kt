@@ -26,6 +26,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import com.moodtools.hub.discovery.GameScanner
 import com.moodtools.hub.modules.GameHubScreen
+import com.moodtools.hub.modules.LauncherLanguage
 import com.moodtools.hub.modules.AccountIdentityUiState
 import com.moodtools.hub.modules.ChangelogUiState
 import com.moodtools.hub.modules.DeviceArchitectureGuard
@@ -95,6 +96,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 
 private enum class ProtectedActionBoundary(val description: String) {
     GAME_LAUNCH("start another game"),
@@ -222,17 +227,38 @@ class LauncherActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
-        viewModel.start(
-            initialLink = intent?.data,
-            debugAccessBypass = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_ACCESS_BYPASS_EXTRA, false) == true,
-            debugLauncherUpdateTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_LAUNCHER_UPDATE_TEST_EXTRA, false) == true,
-            debugModuleUpdatesTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_MODULE_UPDATES_TEST_EXTRA, false) == true
-        )
+        LauncherLocalization.initialize(this)
         restorePackageReplacementRecovery()
         setContent {
+            var languageConfirmed by rememberSaveable {
+                mutableStateOf(!LauncherLocalization.needsLanguageConfirmation(this))
+            }
+            var selectedLanguageOrdinal by rememberSaveable {
+                mutableIntStateOf(LauncherLocalization.language.ordinal)
+            }
+            LaunchedEffect(languageConfirmed) {
+                if (languageConfirmed) {
+                    viewModel.start(
+                        initialLink = intent?.data,
+                        debugAccessBypass = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_ACCESS_BYPASS_EXTRA, false) == true,
+                        debugLauncherUpdateTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_LAUNCHER_UPDATE_TEST_EXTRA, false) == true,
+                        debugModuleUpdatesTest = BuildConfig.DEBUG && intent?.getBooleanExtra(DEBUG_MODULE_UPDATES_TEST_EXTRA, false) == true
+                    )
+                }
+            }
             val startup by viewModel.startupState.collectAsStateWithLifecycle()
             val entered by viewModel.launcherEntered.collectAsStateWithLifecycle()
-            if (shouldEnterLauncherLibrary(startup, entered)) {
+            if (!languageConfirmed) {
+                val selectedLanguage = LauncherLanguage.fromPreference(selectedLanguageOrdinal)
+                FirstRunLanguageScreen(
+                    selectedLanguage = selectedLanguage,
+                    onSelectLanguage = { selectedLanguageOrdinal = it.ordinal },
+                    onConfirm = {
+                        LauncherLocalization.confirmLanguage(this, selectedLanguage)
+                        languageConfirmed = true
+                    }
+                )
+            } else if (shouldEnterLauncherLibrary(startup, entered)) {
                 GameHubScreen(
                     state = viewModel.libraryGames,
                     libraryLoading = viewModel.libraryLoading,

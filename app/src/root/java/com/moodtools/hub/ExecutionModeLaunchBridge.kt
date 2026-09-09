@@ -220,6 +220,7 @@ object ExecutionModeLaunchBridge {
                 "--libs ${quote(remoteBootstrap)} " +
                 "--payload-dex ${quote(remoteDex)} " +
                 "--payload-native ${quote(remoteNative)} " +
+                "--launch-language ${selectedMenuLanguage(context)} " +
                 "--launch --bp-ld --memfd --timeout 8000"
         )
         if (!injection.success) {

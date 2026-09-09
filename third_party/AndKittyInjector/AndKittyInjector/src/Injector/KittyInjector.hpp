@@ -55,7 +55,7 @@ struct inject_elf_info_t
 
 struct inject_elf_config_t
 {
-    int sdk, rtdl_flags, delay, timeout;
+    int sdk, rtdl_flags, delay, timeout, launch_language;
     bool watch, launch, seize, bp, memfd, free, hide;
     std::vector<std::string> bp_args;
     std::string package;
@@ -64,7 +64,7 @@ struct inject_elf_config_t
     std::function<void(inject_elf_info_t &injected)> beforeEntryPoint, afterEntryPoint;
 
     inject_elf_config_t()
-        : sdk(0), rtdl_flags(RTLD_LOCAL | RTLD_NOW), delay(0), timeout(0), watch(false), launch(false), seize(false), bp(false),
+        : sdk(0), rtdl_flags(RTLD_LOCAL | RTLD_NOW), delay(0), timeout(0), launch_language(0), watch(false), launch(false), seize(false), bp(false),
           memfd(false), free(false), hide(false), beforeEntryPoint(nullptr), afterEntryPoint(nullptr)
     {
     }

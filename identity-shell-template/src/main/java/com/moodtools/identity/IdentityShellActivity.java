@@ -2,6 +2,7 @@ package com.moodtools.identity;
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
@@ -91,7 +92,7 @@ public final class IdentityShellActivity extends Activity {
                 Log.i(TAG, "External launch: identity compatibility only");
             }
             updateStatus("Opening game…");
-            if (!core.launchApk(targetPackage, USER_ID)) {
+            if (!launchGame(core, targetPackage)) {
                 throw new IllegalStateException("The game has no launchable activity");
             }
             runOnUiThread(this::finish);
@@ -101,6 +102,17 @@ public final class IdentityShellActivity extends Activity {
         } finally {
             SETUP_IN_PROGRESS.set(false);
         }
+    }
+
+    private boolean launchGame(BlackBoxCore core, String targetPackage) {
+        Intent intent = core.getBPackageManager().getLaunchIntentForPackage(targetPackage, USER_ID);
+        if (intent == null) return false;
+        int language = getIntent().getIntExtra("com.moodtools.menu.LANGUAGE", -1);
+        if (language >= 0 && language <= 8) {
+            intent.putExtra("com.moodtools.menu.LANGUAGE", language);
+        }
+        core.startActivity(intent, USER_ID);
+        return true;
     }
 
     /**

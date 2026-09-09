@@ -58,6 +58,14 @@ class LauncherLanguageTest {
             screenText.forEach { text ->
                 assertTrue(LauncherLocalization.translate(text, language).isNotBlank())
             }
+            assertNotEquals(
+                "Choose your preferred language for Jester Mods.",
+                LauncherLocalization.translate("Choose your preferred language for Jester Mods.", language)
+            )
+            assertNotEquals(
+                "Your choice is saved offline on this device.",
+                LauncherLocalization.translate("Your choice is saved offline on this device.", language)
+            )
             assertNotEquals("Game version 3.0.4", LauncherLocalization.translate("Game version 3.0.4", language))
             assertNotEquals("Sort: Recommended", LauncherLocalization.translate("Sort: Recommended", language))
             assertNotEquals("Copied support code", LauncherLocalization.translate("Copied support code", language))

@@ -45,6 +45,20 @@ internal object LauncherLocalization {
             .edit().putInt(LANGUAGE, selected.ordinal).apply()
     }
 
+    fun needsLanguageConfirmation(context: Context): Boolean =
+        !context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(LANGUAGE_CONFIRMED, false)
+
+    fun confirmLanguage(context: Context, selected: LauncherLanguage) {
+        language = selected
+        initialized = true
+        context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(LANGUAGE, selected.ordinal)
+            .putBoolean(LANGUAGE_CONFIRMED, true)
+            .apply()
+    }
+
     fun translate(text: String): String = translate(text, language)
 
     internal fun translate(text: String, selected: LauncherLanguage): String {
@@ -129,6 +143,8 @@ internal object LauncherLocalization {
         "WHAT'S INCLUDED" to "O QUE ESTÁ INCLUÍDO", "WHAT'S NEW" to "NOVIDADES",
         "COMPATIBILITY" to "COMPATIBILIDADE", "OUTDATED" to "DESATUALIZADO", "UPDATES" to "ATUALIZAÇÕES",
         "AVAILABLE LANGUAGES" to "IDIOMAS DISPONÍVEIS", "CURATED THEMES" to "TEMAS SELECIONADOS",
+        "Choose your preferred language for Jester Mods." to "Escolha seu idioma preferido para o Jester Mods.",
+        "Your choice is saved offline on this device." to "Sua escolha fica salva offline neste dispositivo.",
         "Play" to "Jogar", "Play again" to "Jogar novamente", "Resume" to "Continuar",
         "Update" to "Atualizar", "Check again" to "Verificar novamente", "Ready" to "Pronto",
         "Open GitHub" to "Abrir GitHub", "Watch on YouTube" to "Assistir no YouTube",
@@ -434,6 +450,8 @@ internal object LauncherLocalization {
         "Safe to share when needed" to row("Ligtas ibahagi kapag kailangan", "필요할 때 안전하게 공유", "必要なとき安全に共有", "需要时可安全分享", "Seguro para compartir cuando haga falta", "An toàn để chia sẻ khi cần", "Aman dibagikan saat diperlukan"),
         "It is a device lookup code, not your private access key." to row("Device lookup code ito, hindi ang private access key mo.", "기기 조회 코드이며 개인 접근 키가 아닙니다.", "端末検索コードであり、秘密のアクセスキーではありません。", "这是设备查询代码，不是您的私人访问密钥。", "Es un código de búsqueda del dispositivo, no tu clave privada.", "Đây là mã tra cứu thiết bị, không phải khóa truy cập riêng.", "Ini kode pencarian perangkat, bukan kunci akses pribadi Anda.")
     )
+
+    private const val LANGUAGE_CONFIRMED = "language_confirmed"
 }
 
 @Composable
