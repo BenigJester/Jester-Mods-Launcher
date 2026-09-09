@@ -1313,7 +1313,12 @@ public class Menu {
                     Spinner(linearLayout, featNum, strSplit[1], strSplit[2]);
                     break;
                 case "MultiSelectSpinner":
-                    MultiSelectSpinner(linearLayout, featNum, strSplit[1], strSplit[2]);
+                    MultiSelectSpinner(linearLayout, featNum, strSplit[1], strSplit[2],
+                            strSplit.length > 3 ? Integer.parseInt(strSplit[3]) : 0);
+                    break;
+                case "MultiSelector":
+                    MultiSelector(linearLayout, featNum, strSplit[1], strSplit[2],
+                            strSplit.length > 3 ? Integer.parseInt(strSplit[3]) : 0);
                     break;
                 case "InputText":
                     if (strSplit.length == 3)
@@ -1844,7 +1849,7 @@ public class Menu {
                         stopChecking = true;
                         break;
                 }
-                if (featNum >= 0) {
+                if (featNum >= 0 && featNum != 4) {
                     showOneShotToast(button.getText());
                 }
                 Preferences.changeFeatureInt(featName, featNum, 0);
@@ -2003,13 +2008,14 @@ public class Menu {
     }
 
     // MultiSelectSpinner uses the same inline, non-focus-stealing popup as Spinner. The first
-    // CSV entry is the "select all" row; each later entry maps to one bit in the callback value.
-    // Zero means the default/all-selected state. Explicit subsets (including none selected) set
-    // MULTI_SELECT_EXPLICIT_MARKER so native code can distinguish them from that default.
+    // CSV entry is the "select all" row, or a clear row when a positive selection cap is supplied;
+    // each later entry maps to one bit in the callback value. Zero means the uncapped default/all-
+    // selected state. Explicit subsets (including none selected) set MULTI_SELECT_EXPLICIT_MARKER.
     private static final int MULTI_SELECT_EXPLICIT_MARKER = 1 << 30;
 
     private void MultiSelectSpinner(LinearLayout linLayout, final int featNum,
-                                    final String featName, final String list) {
+                                    final String featName, final String list,
+                                    final int maxSelections) {
         final List<String> entries = new LinkedList<>(Arrays.asList(list.split(",")));
         if (entries.size() < 2) return;
 
@@ -2022,7 +2028,7 @@ public class Menu {
 
         final TextView selected = new TextView(getContext);
         selected.setText(multiSelectSpinnerLabel(
-                featName, entries, Preferences.loadPrefInt(featName, featNum)));
+                featName, entries, Preferences.loadPrefInt(featName, featNum), maxSelections));
         styleSpinnerItem(selected, false);
         selected.setLayoutParams(new LinearLayout.LayoutParams(0, dp(48), 1f));
 
@@ -2074,7 +2080,7 @@ public class Menu {
                 final RadioButton[] choices = new RadioButton[entries.size()];
                 final int allMask = multiSelectAllMask(entries);
                 int current = Preferences.loadPrefInt(featName, featNum);
-                int currentMask = current == 0 ? allMask : current & allMask;
+                int currentMask = current == 0 && maxSelections <= 0 ? allMask : current & allMask;
                 for (int index = 0; index < entries.size(); index++) {
                     final int position = index;
                     LinearLayout optionRow = new LinearLayout(getContext);
@@ -2093,7 +2099,7 @@ public class Menu {
                         choice.setButtonTintList(ColorStateList.valueOf(RadioColor));
                     }
                     choice.setChecked(index == 0
-                            ? currentMask == allMask
+                            ? (maxSelections > 0 ? currentMask == 0 : currentMask == allMask)
                             : (currentMask & multiSelectBit(index)) != 0);
                     choices[index] = choice;
                     optionRow.addView(choice,
@@ -2103,11 +2109,21 @@ public class Menu {
                         @Override
                         public void onClick(View view) {
                             if (position == 0) {
-                                boolean selectAll = !choices[0].isChecked();
                                 for (int item = 1; item < choices.length; item++) {
-                                    choices[item].setChecked(selectAll);
+                                    choices[item].setChecked(maxSelections <= 0 &&
+                                            !choices[0].isChecked());
                                 }
                             } else {
+                                if (!choices[position].isChecked() && maxSelections > 0) {
+                                    int selectedCount = 0;
+                                    for (int item = 1; item < choices.length; item++) {
+                                        if (choices[item].isChecked()) selectedCount++;
+                                    }
+                                    if (selectedCount >= maxSelections) {
+                                        showOneShotToast("Select up to " + maxSelections + " traits");
+                                        return;
+                                    }
+                                }
                                 choices[position].setChecked(!choices[position].isChecked());
                             }
 
@@ -2117,13 +2133,15 @@ public class Menu {
                                     mask |= multiSelectBit(item);
                                 }
                             }
-                            choices[0].setChecked(mask == allMask);
-                            int encoded = mask == allMask
+                            choices[0].setChecked(maxSelections > 0 ? mask == 0 : mask == allMask);
+                            int encoded = maxSelections <= 0 && mask == allMask
                                     ? 0
                                     : MULTI_SELECT_EXPLICIT_MARKER | mask;
                             Preferences.changeFeatureInt(featName, featNum, encoded);
-                            selected.setText(multiSelectSpinnerLabel(featName, entries, encoded));
-                            showOneShotToast(multiSelectSelectionToast(entries, encoded));
+                            selected.setText(multiSelectSpinnerLabel(
+                                    featName, entries, encoded, maxSelections));
+                            showOneShotToast(multiSelectSelectionToast(
+                                    entries, encoded, maxSelections));
                         }
                     });
                     options.addView(optionRow,
@@ -2151,8 +2169,9 @@ public class Menu {
         return mask;
     }
 
-    private String multiSelectSpinnerLabel(String featName, List<String> entries, int encoded) {
-        if (encoded == 0) return featName + ": " + entries.get(0);
+    private String multiSelectSpinnerLabel(String featName, List<String> entries, int encoded,
+                                           int maxSelections) {
+        if (encoded == 0 && maxSelections <= 0) return featName + ": " + entries.get(0);
         int selectedMask = encoded & multiSelectAllMask(entries);
         StringBuilder selected = new StringBuilder(featName).append(": ");
         boolean hasSelection = false;
@@ -2166,10 +2185,58 @@ public class Menu {
         return selected.toString();
     }
 
-    private String multiSelectSelectionToast(List<String> entries, int encoded) {
-        if (encoded == 0) return "Selected: " + entries.get(0);
-        return "Selected: " + multiSelectSpinnerLabel("", entries, encoded)
+    private String multiSelectSelectionToast(List<String> entries, int encoded,
+                                               int maxSelections) {
+        if (encoded == 0 && maxSelections <= 0) return "Selected: " + entries.get(0);
+        return "Selected: " + multiSelectSpinnerLabel("", entries, encoded, maxSelections)
                 .replaceFirst("^: ", "");
+    }
+
+    private void MultiSelector(LinearLayout linLayout, final int featNum,
+                               final String featName, String list, final int maxSelections) {
+        final String[] entries = list.split(",");
+        final TextView selector = new TextView(getContext);
+        selector.setGravity(Gravity.CENTER_VERTICAL);
+        selector.setPadding(dp(12), 0, dp(12), 0);
+        selector.setTextColor(TEXT_COLOR_2);
+        selector.setTextSize(14f);
+        selector.setBackground(roundedBackground(CONTROL_BG_COLOR, 6, DIVIDER_COLOR, 1));
+        final String initial = Preferences.loadPrefString(featName, featNum);
+        selector.setText(multiSelectorLabel(featName, entries, initial));
+        attachPressAnimation(selector);
+        selector.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                MultiSelector.show(getContext, featName, entries, maxSelections,
+                        Preferences.loadPrefString(featName, featNum),
+                        new MultiSelector.Callback() {
+                            @Override
+                            public void onConfirm(String selection) {
+                                Preferences.changeFeatureString(featName, featNum, selection);
+                                selector.setText(multiSelectorLabel(featName, entries, selection));
+                            }
+                        });
+            }
+        });
+        linLayout.addView(selector, new LinearLayout.LayoutParams(MATCH_PARENT, dp(48)));
+    }
+
+    private String multiSelectorLabel(String featName, String[] entries, String selection) {
+        StringBuilder label = new StringBuilder(featName).append(": ");
+        int count = 0;
+        if (selection != null && !selection.isEmpty()) {
+            for (String value : selection.split(";")) {
+                try {
+                    int index = Integer.parseInt(value);
+                    if (index < 0 || index >= entries.length) continue;
+                    if (count > 0) label.append(", ");
+                    label.append(entries[index]);
+                    count++;
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        if (count == 0) label.append("none");
+        return label.toString();
     }
 
     private EditText createInputEditText(AlertDialog.Builder builder) {

@@ -60,7 +60,7 @@ constexpr int kExampleMultiSelectAllMask = (1 << 3) - 1;
 
 // Add explicit feature IDs here to omit those controls from a shared build.
 // Both positive and negative IDs are supported. Keep this list empty to expose
-// the complete catalog. Example: {3, 4, 30, 31, 32, -50}.
+// the complete catalog. Example: {3, 4, 30, 31, 32, 33, -50}.
 constexpr std::initializer_list<int> kHiddenFeatureIds = {
 };
 
@@ -169,6 +169,7 @@ struct TemplateState {
     std::atomic<long long> longValue{0};
     std::string textValue;
     std::string floatText{"0.0"};
+    std::string traitSelection;
 } state;
 
 std::string JStringToUtf8(JNIEnv *env, jstring value) {
@@ -724,7 +725,7 @@ jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
             "RichWebView_<html><body><b>RichWebView</b><br>supports HTML content.</body></html>"));
     features.emplace_back(OBFUSCATE("ButtonLink_Project Website_https://example.com"));
 
-    if (HasVisibleFeature({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29})) {
+    if (HasVisibleFeature({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29, 33})) {
         features.emplace_back(OBFUSCATE("Category_Standalone Callback Controls"));
         AddFeatureIfVisible(&features, 1, OBFUSCATE("1_Toggle_Basic Toggle"));
         AddFeatureIfVisible(&features, 2,
@@ -753,6 +754,11 @@ jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
         AddFeatureIfVisible(
                 &features, 29,
                 OBFUSCATE("29_MultiSelectSpinner_Example Multi Select_All Options,Alpha,Beta,Gamma"));
+        // MultiSelector provides a searchable dialog. Confirm sends semicolon-separated,
+        // zero-based option indexes through the text callback; the final field is the cap.
+        AddFeatureIfVisible(
+                &features, 33,
+                OBFUSCATE("33_MultiSelector_Example Searchable Select_Alpha,Beta,Gamma,Delta,Epsilon_4"));
     }
 
     if (HasVisibleFeature({12, 13, 14, 15, 16, 17, 18, 19})) {
@@ -855,6 +861,7 @@ jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
 // - SeekBar, Spinner, MultiSelectSpinner, RadioButton, and InputValue use value.
 // - MultiSelectSpinner returns 0 for all selected, or (1 << 30) | selectionMask for an
 //   explicit subset. The first selectable CSV item maps to selectionMask bit 0.
+// - MultiSelector uses text with semicolon-separated zero-based indexes; empty means none.
 // - InputLValue uses Lvalue.
 // - InputText and InputFloat use text.
 // - Button and ActionButton signal a press through their feature ID.
@@ -910,6 +917,9 @@ void Changes(JNIEnv *env, jclass clazz, jobject context, jint featNum, jstring f
                     value == 0 ? kExampleMultiSelectAllMask
                                : value & kExampleMultiSelectAllMask,
                     std::memory_order_relaxed);
+            break;
+        case 33:
+            state.traitSelection = JStringToUtf8(env, text);
             break;
         case 12:
         case 13:

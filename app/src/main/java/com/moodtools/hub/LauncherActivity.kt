@@ -138,7 +138,12 @@ internal fun newestPlayStoreStatus(
     received: PlayStoreVersionStatus
 ): PlayStoreVersionStatus = when {
     cached == null -> received
-    received.checkedAtEpochSeconds > cached.checkedAtEpochSeconds -> received
+    received.checkedAtEpochSeconds > cached.checkedAtEpochSeconds ->
+        if (received.latestVersionCode == null &&
+            cached.latestVersionCode != null &&
+            received.latestVersion == cached.latestVersion &&
+            received.listingUpdatedAtEpochSeconds == cached.listingUpdatedAtEpochSeconds
+        ) received.copy(latestVersionCode = cached.latestVersionCode) else received
     received.checkedAtEpochSeconds < cached.checkedAtEpochSeconds -> cached
     (received.listingUpdatedAtEpochSeconds ?: 0L) >
         (cached.listingUpdatedAtEpochSeconds ?: 0L) -> received
@@ -161,6 +166,9 @@ internal fun stableDisplayedPlayStoreStatus(
         displayed.updateAvailable == refreshed.updateAvailable -> displayed
     else -> refreshed
 }
+
+internal fun isPlayStoreCacheExpired(checkedAtEpochSeconds: Long, nowEpochSeconds: Long): Boolean =
+    nowEpochSeconds - checkedAtEpochSeconds >= 60L * 60L
 
 private enum class InstallerPermissionTarget {
     LAUNCHER_UPDATE,
@@ -246,6 +254,7 @@ class LauncherActivity : ComponentActivity() {
                     onOpenGame = viewModel::openLibraryGame,
                     onBack = viewModel::closeGame,
                     onUpdate = viewModel::updateLibraryGame,
+                    onRepair = viewModel::repairLibraryGame,
                     onVerify = ::openTrustedWebPage,
                     onLaunch = ::launchLibraryGame,
                     onSelectNonRootMethod = viewModel::selectNonRootMethod,
@@ -331,9 +340,9 @@ class LauncherActivity : ComponentActivity() {
             }
             (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                 .setPrimaryClip(clip)
-            Toast.makeText(this, "Support code copied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, LauncherLocalization.translate("Support code copied"), Toast.LENGTH_SHORT).show()
         }.onFailure {
-            Toast.makeText(this, "Support code is unavailable", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, LauncherLocalization.translate("Support code is unavailable"), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -409,7 +418,7 @@ class LauncherActivity : ComponentActivity() {
         val targets = entries.distinctBy(LibraryGame::packageName)
         if (targets.isEmpty()) return
         if (pendingIdentityShellRemoval != null || identityShellRemovalQueue.isNotEmpty()) {
-            Toast.makeText(this, "Finish the current shell removal first", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, LauncherLocalization.translate("Finish the current shell removal first"), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -1088,7 +1097,7 @@ class LauncherActivity : ComponentActivity() {
 
     private fun openTrustedWebPage(address: String) {
         val uri = Uri.parse(address)
-        require(uri.scheme == "https" && uri.host.equals("jester.moodtools.workers.dev", ignoreCase = true)) {
+        require(isTrustedLauncherWebAddress(address)) {
             "Refusing to open an untrusted web address"
         }
         val browser = Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE)
@@ -1150,6 +1159,18 @@ class LauncherActivity : ComponentActivity() {
     }
 
 }
+
+internal fun isTrustedLauncherWebAddress(address: String): Boolean = runCatching {
+    val uri = java.net.URI(address)
+    if (!uri.scheme.equals("https", ignoreCase = true)) return@runCatching false
+    val path = uri.path.trimEnd('/')
+    when (uri.host?.lowercase()) {
+        "jester.moodtools.workers.dev" -> true
+        "github.com" -> path.equals("/BenigJester", ignoreCase = true)
+        "youtube.com", "www.youtube.com" -> path.equals("/@jestermods3.0", ignoreCase = true)
+        else -> false
+    }
+}.getOrDefault(false)
 
 class LauncherViewModel(application: android.app.Application) : AndroidViewModel(application) {
     private val _startupState = MutableStateFlow<LauncherStartupState>(LauncherStartupState.CheckingRoot)
@@ -2928,6 +2949,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
+    fun repairLibraryGame(entry: LibraryGame) {
+        entry.listing?.let { installModule(it, forceRepair = true) }
+    }
+
     fun launchLibraryGame(entry: LibraryGame) {
         entry.game?.let(::launchGame)
     }
@@ -3667,7 +3692,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
-    fun installModule(listing: ModuleListing) {
+    fun installModule(listing: ModuleListing) = installModule(listing, forceRepair = false)
+
+    private fun installModule(listing: ModuleListing, forceRepair: Boolean) {
         val game = listing.game ?: return
         if (_updateState.value.inProgress) return
         if (!DeviceArchitectureGuard.supports(listing.catalog.config.supportedAbis)) {
@@ -3678,7 +3705,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             )
             return
         }
-        val action = when (listing.status) {
+        val action = if (forceRepair) "repair" else when (listing.status) {
             com.moodtools.hub.modules.ModuleInstallStatus.UPDATE_AVAILABLE -> "update"
             com.moodtools.hub.modules.ModuleInstallStatus.BROKEN_INSTALL -> "repair"
             else -> "download"
@@ -4579,13 +4606,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     ): Map<String, PlayStoreVersionStatus> {
         if (catalog.isEmpty()) return emptyMap()
         val today = currentLocalDay()
+        val now = System.currentTimeMillis() / 1_000L
         val statuses = mutableMapOf<String, PlayStoreVersionStatus>()
         val editor = playStorePreferences.edit()
         var changed = false
         val modules = catalog.distinctBy { it.config.packageName }
         val cachedByPackage = modules.associate { module ->
             val packageName = module.config.packageName
-            packageName to cachedPlayStoreStatus(packageName, today)
+            packageName to cachedPlayStoreStatus(packageName, now)
         }
         val packagesToRefresh = cachedByPackage
             .filterValues { cached -> cached == null || cached.stale }
@@ -4651,7 +4679,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         return statuses
     }
 
-    private fun cachedPlayStoreStatus(packageName: String, today: Long): PlayStoreVersionStatus? {
+    private fun cachedPlayStoreStatus(packageName: String, now: Long): PlayStoreVersionStatus? {
         val version = playStorePreferences.getString(playStoreVersionKey(packageName), null)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
@@ -4681,7 +4709,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             checkedAtEpochSeconds = checkedAt,
             checkedDay = checkedDay,
             stale = playStorePreferences.getBoolean(playStoreStaleKey(packageName), false) ||
-                checkedDay != today ||
+                isPlayStoreCacheExpired(checkedAt, now) ||
                 playStorePreferences.getInt(playStoreSchemaKey(packageName), 0) != PLAY_STORE_CACHE_SCHEMA
         )
     }
@@ -4689,11 +4717,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun cachedPlayStoreStatusesFor(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
     ): Map<String, PlayStoreVersionStatus> {
-        val today = currentLocalDay()
+        val now = System.currentTimeMillis() / 1_000L
         return catalog.asSequence()
             .distinctBy { it.config.packageName }
             .mapNotNull { module ->
-                cachedPlayStoreStatus(module.config.packageName, today)?.let { status ->
+                cachedPlayStoreStatus(module.config.packageName, now)?.let { status ->
                     module.config.packageName to status
                 }
             }

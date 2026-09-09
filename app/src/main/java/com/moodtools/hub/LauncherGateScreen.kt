@@ -41,7 +41,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.moodtools.hub.LocalizedText as Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
@@ -59,15 +60,18 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moodtools.hub.modules.LauncherTheme
+import com.moodtools.hub.modules.launcherThemePreference
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.delay
 
-private val GateInk = Color(0xFF090B10)
-private val GateSurface = Color(0xFF12161D)
-private val GateRaised = Color(0xFF191F28)
-private val GateAccent = Color(0xFF80E4C6)
-private val GateMuted = Color(0xFFAAB3BF)
+private var GatePalette = LauncherTheme.Midnight.palette
+private val GateInk get() = GatePalette.ink
+private val GateSurface get() = GatePalette.surfaceDark
+private val GateRaised get() = GatePalette.surfaceRaised
+private val GateAccent get() = GatePalette.accent
+private val GateMuted get() = GatePalette.muted
 
 internal enum class GateScene {
     Booting,
@@ -140,6 +144,8 @@ fun LauncherGateScreen(
     onCopySupportCode: () -> Unit,
     onExit: () -> Unit
 ) {
+    val context = LocalContext.current
+    GatePalette = remember(context) { context.launcherThemePreference().palette }
     val bootSettled by produceState(initialValue = false) {
         delay(GATE_BOOT_SETTLE_MS)
         value = true
@@ -168,7 +174,9 @@ fun LauncherGateScreen(
         Surface(Modifier.fillMaxSize(), color = GateInk) {
             Box(
                 Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(Color(0xFF111B1B), GateInk, Color(0xFF0B0E14)))
+                    Brush.verticalGradient(
+                        listOf(GatePalette.backdropStart, GateInk, GatePalette.backdropEnd)
+                    )
                 ).windowInsetsPadding(WindowInsets.safeDrawing).padding(22.dp),
                 contentAlignment = Alignment.Center
             ) {

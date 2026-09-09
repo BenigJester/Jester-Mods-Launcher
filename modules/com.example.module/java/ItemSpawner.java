@@ -11,6 +11,7 @@ import android.os.Build;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
@@ -55,9 +56,7 @@ final class ItemSpawner {
 
         String[] loadItemCatalog();
 
-        String categoryFor(int type);
-
-        void addItems(Context context, int[] itemIds, int[] amounts);
+        void addItems(Context context, String[] itemIds, int[] amounts);
     }
 
     private ItemSpawner() {
@@ -95,10 +94,10 @@ final class ItemSpawner {
         root.setBackground(background(COLOR_SURFACE, dp(dialogContext, 18),
                 COLOR_BORDER, dp(dialogContext, 1)));
 
-        TextView title = text(dialogContext, "Add Items",
+        TextView title = text(dialogContext, "Items",
                 compactLandscape ? 19 : 21, COLOR_TEXT, true);
         TextView subtitle = text(dialogContext,
-                "Choose items to add to your inventory.",
+                "Choose items to add to your inbox.",
                 compactLandscape ? 11 : 12, COLOR_TEXT_SECONDARY, false);
 
         final EditText search = new EditText(dialogContext);
@@ -108,7 +107,12 @@ final class ItemSpawner {
         search.setTextSize(14f);
         search.setTextColor(COLOR_TEXT);
         search.setHintTextColor(COLOR_TEXT_SECONDARY);
-        search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        search.setImeOptions(EditorInfo.IME_ACTION_SEARCH
+                | EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        search.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         search.setPadding(dp(dialogContext, 14), 0, dp(dialogContext, 14), 0);
         search.setBackground(background(COLOR_PANEL, dp(dialogContext, 10),
                 COLOR_BORDER, dp(dialogContext, 1)));
@@ -127,7 +131,9 @@ final class ItemSpawner {
         valueInput.setText("1");
         valueInput.setSelectAllOnFocus(true);
         valueInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        valueInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        valueInput.setImeOptions(EditorInfo.IME_ACTION_DONE
+                | EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         valueInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(3)});
         valueInput.setTextSize(13f);
         valueInput.setTextColor(COLOR_TEXT);
@@ -204,7 +210,7 @@ final class ItemSpawner {
         clearParams.leftMargin = dp(dialogContext, 16);
         selectionBar.addView(clear, clearParams);
 
-        final Set<Integer> selectedIds = new LinkedHashSet<>();
+        final Set<String> selectedIds = new LinkedHashSet<>();
         final ItemAdapter adapter = new ItemAdapter(
                 dialogContext, items, selectedIds, compactLandscape);
         final ListView list = new ListView(dialogContext);
@@ -265,9 +271,15 @@ final class ItemSpawner {
         valueInput.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View view, boolean hasFocus) {
-                if (!hasFocus) valueInput.setText(String.valueOf(parseRequestedValue(valueInput)));
+                if (hasFocus) showKeyboardFor(valueInput);
+                else valueInput.setText(String.valueOf(parseRequestedValue(valueInput)));
             }
         });
+        search.setOnFocusChangeListener((view, hasFocus) -> {
+            if (hasFocus) showKeyboardFor(search);
+        });
+        search.setOnClickListener(view -> showKeyboardFor(search));
+        valueInput.setOnClickListener(view -> showKeyboardFor(valueInput));
 
         search.addTextChangedListener(new TextWatcher() {
             @Override
@@ -320,13 +332,13 @@ final class ItemSpawner {
             @Override
             public void onClick(View view) {
                 if (selectedIds.isEmpty()) return;
-                int[] ids = new int[selectedIds.size()];
+                String[] ids = new String[selectedIds.size()];
                 int[] values = new int[selectedIds.size()];
                 int requestedValue = parseRequestedValue(valueInput);
                 int index = 0;
                 for (Item item : items) {
-                    if (selectedIds.contains(item.id)) {
-                        ids[index] = item.id;
+                    if (selectedIds.contains(item.key)) {
+                        ids[index] = item.key;
                         values[index] = requestedValue;
                         index++;
                     }
@@ -340,7 +352,18 @@ final class ItemSpawner {
         dialog.setContentView(root);
         Window window = dialog.getWindow();
         if (window == null) return;
+        if (dialogContext instanceof Activity) {
+            View gameInput = ((Activity) dialogContext).getCurrentFocus();
+            if (gameInput != null) {
+                hideKeyboard(gameInput);
+                gameInput.clearFocus();
+            }
+        }
         window.setBackgroundDrawableResource(android.R.color.transparent);
+        window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         WindowManager.LayoutParams attributes = window.getAttributes();
         attributes.dimAmount = 0.72f;
@@ -360,6 +383,11 @@ final class ItemSpawner {
                 dp(dialogContext, 680));
         window.setLayout(Math.max(1, width), Math.max(1, height));
         window.setGravity(Gravity.CENTER);
+        dialog.setOnDismissListener(ignored -> {
+            hideKeyboard(search);
+            search.clearFocus();
+            valueInput.clearFocus();
+        });
     }
 
     private static List<Item> loadItems(Backend backend) {
@@ -368,13 +396,9 @@ final class ItemSpawner {
         for (String row : rows) {
             if (row == null) continue;
             String[] fields = row.split("\\t", -1);
-            if (fields.length != 3) continue;
-            try {
-                int type = Integer.parseInt(fields[2]);
-                items.add(new Item(Integer.parseInt(fields[0]), fields[1],
-                        backend.categoryFor(type)));
-            } catch (NumberFormatException ignored) {
-            }
+            if (fields.length < 3 || fields.length > 4) continue;
+            items.add(new Item(items.size() + 1, fields[0], fields[1], fields[2],
+                    fields.length == 4 ? fields[3] : fields[0]));
         }
         return items;
     }
@@ -396,7 +420,7 @@ final class ItemSpawner {
     private static List<String> categoryFilters(List<Item> items) {
         Set<String> categories = new LinkedHashSet<>();
         categories.add(CATEGORY_ALL);
-        for (Item item : items) categories.add(item.category);
+        for (Item item : items) categories.addAll(item.categories);
         return new ArrayList<>(categories);
     }
 
@@ -413,6 +437,17 @@ final class ItemSpawner {
         InputMethodManager keyboard = (InputMethodManager) view.getContext()
                 .getSystemService(Context.INPUT_METHOD_SERVICE);
         if (keyboard != null) keyboard.hideSoftInputFromWindow(view.getWindowToken(), 0);
+    }
+
+    private static void showKeyboardFor(final EditText input) {
+        input.requestFocus();
+        input.post(() -> {
+            InputMethodManager keyboard = (InputMethodManager) input.getContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (keyboard == null || !input.hasWindowFocus()) return;
+            keyboard.restartInput(input);
+            keyboard.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        });
     }
 
     private static LinearLayout vertical(Context context) {
@@ -480,16 +515,28 @@ final class ItemSpawner {
     }
 
     private static final class Item {
-        final int id;
+        final int number;
+        final String id;
         final String name;
         final String category;
+        final List<String> categories;
+        final String key;
         final String searchable;
 
-        Item(int id, String name, String category) {
+        Item(int number, String id, String name, String category, String key) {
+            this.number = number;
             this.id = id;
             this.name = name;
-            this.category = category == null || category.trim().isEmpty()
-                    ? "Other" : category.trim();
+            this.categories = new ArrayList<>();
+            if (category != null) {
+                for (String value : category.split("\u001f")) {
+                    value = value.trim();
+                    if (!value.isEmpty()) categories.add(value);
+                }
+            }
+            if (categories.isEmpty()) categories.add("Other");
+            this.category = TextUtils.join(", ", categories);
+            this.key = key;
             this.searchable = (name + " " + id + " " + category + " "
                     + categoryAliases(category))
                     .toLowerCase(Locale.ROOT);
@@ -500,13 +547,13 @@ final class ItemSpawner {
         private final Context context;
         private final List<Item> allItems;
         private final List<Item> visibleItems = new ArrayList<>();
-        private final Set<Integer> selectedIds;
+        private final Set<String> selectedIds;
         private final boolean compactRows;
         private String query = "";
         private String categoryFilter = CATEGORY_ALL;
         private Runnable selectionChangedListener;
 
-        ItemAdapter(Context context, List<Item> allItems, Set<Integer> selectedIds,
+        ItemAdapter(Context context, List<Item> allItems, Set<String> selectedIds,
                     boolean compactRows) {
             this.context = context;
             this.allItems = allItems;
@@ -540,7 +587,7 @@ final class ItemSpawner {
 
         private boolean matchesCategory(Item item) {
             if (CATEGORY_ALL.equals(categoryFilter)) return true;
-            return categoryFilter.equals(item.category);
+            return item.categories.contains(categoryFilter);
         }
 
         private boolean matchesQuery(Item item) {
@@ -553,7 +600,7 @@ final class ItemSpawner {
         }
 
         void selectVisible() {
-            for (Item item : visibleItems) selectedIds.add(item.id);
+            for (Item item : visibleItems) selectedIds.add(item.key);
             notifyDataSetChanged();
             if (selectionChangedListener != null) selectionChangedListener.run();
         }
@@ -570,7 +617,7 @@ final class ItemSpawner {
 
         @Override
         public long getItemId(int position) {
-            return getItem(position).id;
+            return position;
         }
 
         @Override
@@ -584,8 +631,8 @@ final class ItemSpawner {
                 holder = (Holder) recycled.getTag();
             }
 
-            boolean selected = selectedIds.contains(item.id);
-            holder.id.setText(String.valueOf(item.id));
+            boolean selected = selectedIds.contains(item.key);
+            holder.id.setText(String.valueOf(item.number));
             holder.name.setText(item.name);
             holder.details.setText(item.category + "  \u2022  ID " + item.id);
             holder.check.setChecked(selected);
@@ -602,8 +649,8 @@ final class ItemSpawner {
             holder.root.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    if (selectedIds.contains(item.id)) selectedIds.remove(item.id);
-                    else selectedIds.add(item.id);
+                if (selectedIds.contains(item.key)) selectedIds.remove(item.key);
+                else selectedIds.add(item.key);
                     notifyDataSetChanged();
                     if (selectionChangedListener != null) selectionChangedListener.run();
                 }

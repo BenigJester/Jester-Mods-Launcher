@@ -5,7 +5,7 @@
       "title": "Template controls",
       "features": [
         "Toggles, buttons, check boxes, and action buttons",
-        "Radio buttons, seek bars, single-select spinners, and radio-styled multi-select spinners",
+        "Radio buttons, seek bars, single-select spinners, multi-select spinners, and searchable capped selectors",
         "Text, integer, float, and long integer inputs",
         "Collapsible and nested feature groups",
         "Patch, hook, and direct function call examples"

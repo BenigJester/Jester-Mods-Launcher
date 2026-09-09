@@ -16,10 +16,23 @@ radio-styled choices in the same inline popup used by the ordinary Spinner. The
 native callback receives `0` when all entries are selected; explicit subsets use
 bit 30 as a marker and bits 0 through 29 as the selected-item mask.
 
+The reusable searchable selector uses this descriptor format:
+
+```text
+<id>_MultiSelector_<label>_<comma-separated options>_<maximum selections>
+```
+
+It opens the Itemspawner-style `java/MultiSelector.java` dialog with Search,
+Clear, Cancel, and Confirm controls. Clear changes the pending dialog selection,
+Cancel discards it, and Confirm persists it and invokes `Changes`. The `text`
+argument contains semicolon-separated zero-based option indexes (`0;2;3`), or an
+empty string when nothing is selected. Reaching the cap uses the shared one-shot
+toast lifecycle and displays `Maximum <cap> Selected`.
+
 `java/ItemSpawner.java` is the reusable item-picker UI. A game-specific bridge in
 `com.android.support` implements `ItemSpawner.Backend`, returns catalog rows as
-`id<TAB>name<TAB>type`, maps each type to a category label, and forwards the
-selected IDs and amounts to the game's native add-item path. Runtime catalog
+`id<TAB>name<TAB>category`, and forwards the selected string IDs and amounts to
+the game's native add-item path. Runtime catalog
 access and inventory mutation stay in that bridge rather than the shared helper.
 
 ## Choose which features to expose

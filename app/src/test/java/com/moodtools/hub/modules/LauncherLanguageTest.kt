@@ -1,0 +1,66 @@
+package com.moodtools.hub.modules
+
+import com.moodtools.hub.LauncherLocalization
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class LauncherLanguageTest {
+    @Test
+    fun preferenceOrderMatchesOfflineTranslator() {
+        assertEquals(LauncherLanguage.English, LauncherLanguage.fromPreference(0))
+        assertEquals(LauncherLanguage.Filipino, LauncherLanguage.fromPreference(1))
+        assertEquals(LauncherLanguage.Korean, LauncherLanguage.fromPreference(2))
+        assertEquals(LauncherLanguage.Japanese, LauncherLanguage.fromPreference(3))
+        assertEquals(LauncherLanguage.ChineseSimplified, LauncherLanguage.fromPreference(4))
+        assertEquals(LauncherLanguage.Spanish, LauncherLanguage.fromPreference(5))
+        assertEquals(LauncherLanguage.Vietnamese, LauncherLanguage.fromPreference(6))
+        assertEquals(LauncherLanguage.Indonesian, LauncherLanguage.fromPreference(7))
+        assertEquals(LauncherLanguage.Portuguese, LauncherLanguage.fromPreference(8))
+        assertEquals(LauncherLanguage.English, LauncherLanguage.fromPreference(99))
+    }
+
+    @Test
+    fun themePreferenceUsesMidnightAsSafeFallback() {
+        assertEquals(LauncherTheme.Midnight, LauncherTheme.fromPreference(0))
+        assertEquals(LauncherTheme.Aurora, LauncherTheme.fromPreference(1))
+        assertEquals(LauncherTheme.Royal, LauncherTheme.fromPreference(2))
+        assertEquals(LauncherTheme.Ember, LauncherTheme.fromPreference(3))
+        assertEquals(LauncherTheme.Ocean, LauncherTheme.fromPreference(4))
+        assertEquals(LauncherTheme.Sakura, LauncherTheme.fromPreference(5))
+        assertEquals(LauncherTheme.Obsidian, LauncherTheme.fromPreference(6))
+        assertEquals(LauncherTheme.Midnight, LauncherTheme.fromPreference(-1))
+    }
+
+    @Test
+    fun launcherChromeTranslatesOfflineForEveryLanguage() {
+        LauncherLanguage.entries.drop(1).forEach { language ->
+            val translated = LauncherLocalization.translate("Settings", language)
+            assertTrue(translated.isNotBlank())
+            assertNotEquals("Settings", translated)
+        }
+        assertEquals("Unknown server title", LauncherLocalization.translate("Unknown server title", LauncherLanguage.Japanese))
+    }
+
+    @Test
+    fun launcherScreensAndDynamicLabelsTranslateOffline() {
+        val screenText = listOf(
+            "A NEW ERA AWAITS",
+            "Your support code",
+            "Search update activity",
+            "ADD ADD-ON",
+            "Original game needed",
+            "How exact-package shell works",
+            "Support code copied"
+        )
+        LauncherLanguage.entries.drop(1).forEach { language ->
+            screenText.forEach { text ->
+                assertTrue(LauncherLocalization.translate(text, language).isNotBlank())
+            }
+            assertNotEquals("Game version 3.0.4", LauncherLocalization.translate("Game version 3.0.4", language))
+            assertNotEquals("Sort: Recommended", LauncherLocalization.translate("Sort: Recommended", language))
+            assertNotEquals("Copied support code", LauncherLocalization.translate("Copied support code", language))
+        }
+    }
+}

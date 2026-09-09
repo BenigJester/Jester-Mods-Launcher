@@ -7,11 +7,25 @@ import org.junit.Test
 
 class PlayStoreStatusFreshnessTest {
     @Test
+    fun playStoreCacheExpiresHourlyInsteadOfAtMidnight() {
+        assertEquals(false, isPlayStoreCacheExpired(1_000L, 4_599L))
+        assertEquals(true, isPlayStoreCacheExpired(1_000L, 4_600L))
+    }
+
+    @Test
     fun newerServerMetadataReplacesTheBrowseCache() {
         val cached = status(version = "1.0", checkedAt = 100)
         val updated = status(version = "2.0", checkedAt = 200)
 
         assertEquals(updated, newestPlayStoreStatus(cached, updated))
+    }
+
+    @Test
+    fun newerCheckKeepsAConfirmedBuildForTheSameStoreRelease() {
+        val cached = status(version = "2.0", checkedAt = 100).copy(latestVersionCode = 20_001L)
+        val refreshed = status(version = "2.0", checkedAt = 200)
+
+        assertEquals(refreshed.copy(latestVersionCode = 20_001L), newestPlayStoreStatus(cached, refreshed))
     }
 
     @Test
@@ -75,6 +89,25 @@ class PlayStoreStatusFreshnessTest {
         assertEquals(true, status("2.0", 200).copy(latestVersionCode = 20_001L).isSupportedBy(module))
         assertEquals(false, status("2.0", 200).copy(latestVersionCode = 20_002L).isSupportedBy(module))
         assertEquals(true, status("2.0", 200).isSupportedBy(module))
+    }
+
+    @Test
+    fun unavailablePlayStoreBuildCannotClaimIncompatibility() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Game",
+            supportedVersions = setOf("2.0", "2.1"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(20_001L, 20_002L)
+        )
+        val unavailableBuild = status("2.1", 200).copy(updateAvailable = true)
+
+        assertEquals(null, unavailableBuild.versionCodeFor(module))
+        assertEquals(null, unavailableBuild.isSupportedBy(module))
     }
 
     @Test

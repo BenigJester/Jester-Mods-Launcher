@@ -242,7 +242,8 @@ public final class OfflineTranslator {
         String[] parts = source.split("_", -1);
         if (parts.length > 1) {
             String type = parts[0];
-            if ("Spinner".equals(type) || "MultiSelectSpinner".equals(type)) {
+            if ("Spinner".equals(type) || "MultiSelectSpinner".equals(type)
+                    || "MultiSelector".equals(type)) {
                 parts[1] = tr(parts[1]);
                 if (parts.length > 2) parts[2] = translateCsv(parts[2]);
             } else if ("InputValue".equals(type) || "InputFloat".equals(type)

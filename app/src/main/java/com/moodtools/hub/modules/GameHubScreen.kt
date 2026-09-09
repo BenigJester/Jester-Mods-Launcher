@@ -9,7 +9,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -70,7 +69,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.moodtools.hub.LocalizedText as Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -97,6 +96,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -109,7 +109,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moodtools.hub.BuildConfig
+import com.moodtools.hub.LauncherLocalization
 import com.moodtools.hub.PackageReplacementKind
+import com.moodtools.hub.R
 import com.moodtools.hub.formatRemainingAccessPrimary
 import com.moodtools.hub.networking.CatalogIconClient
 import com.moodtools.hub.networking.LauncherChangelogEntry
@@ -129,13 +131,100 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val Ink = Color(0xFF090B10)
-private val SurfaceDark = Color(0xFF12161D)
-private val SurfaceRaised = Color(0xFF191F28)
-private val Accent = Color(0xFF80E4C6)
-private val AccentBlue = Color(0xFF8CB9FF)
-private val Muted = Color(0xFFAAB3BF)
-private val Hairline = Color(0xFF2A313C)
+internal data class LauncherPalette(
+    val ink: Color,
+    val surfaceDark: Color,
+    val surfaceRaised: Color,
+    val accent: Color,
+    val accentSecondary: Color,
+    val muted: Color,
+    val hairline: Color,
+    val backdropStart: Color,
+    val backdropEnd: Color
+)
+
+internal enum class LauncherTheme(
+    val displayName: String,
+    val detail: String,
+    val palette: LauncherPalette
+) {
+    Midnight(
+        "Midnight",
+        "Jester Mods signature teal in a deep, focused night.",
+        LauncherPalette(
+            Color(0xFF090B10), Color(0xFF12161D), Color(0xFF191F28),
+            Color(0xFF80E4C6), Color(0xFF8CB9FF), Color(0xFFAAB3BF),
+            Color(0xFF2A313C), Color(0xFF111B1B), Color(0xFF0B0E14)
+        )
+    ),
+    Aurora(
+        "Aurora",
+        "Cool cyan and vivid green over a quiet northern sky.",
+        LauncherPalette(
+            Color(0xFF07100F), Color(0xFF0E1B1A), Color(0xFF152523),
+            Color(0xFF8CF5B2), Color(0xFF72DDEB), Color(0xFFA7BDB9),
+            Color(0xFF29403D), Color(0xFF10251F), Color(0xFF071010)
+        )
+    ),
+    Royal(
+        "Royal",
+        "Luminous violet and gold with a refined midnight finish.",
+        LauncherPalette(
+            Color(0xFF0D0913), Color(0xFF181120), Color(0xFF22182D),
+            Color(0xFFD7B5FF), Color(0xFFFFD68A), Color(0xFFBDB0C8),
+            Color(0xFF3B2C49), Color(0xFF21142B), Color(0xFF0E0914)
+        )
+    ),
+    Ember(
+        "Ember",
+        "Warm amber and coral glowing against smoked obsidian.",
+        LauncherPalette(
+            Color(0xFF110B08), Color(0xFF1D1410), Color(0xFF291C16),
+            Color(0xFFFFCF7A), Color(0xFFFF9478), Color(0xFFC8B2A5),
+            Color(0xFF493127), Color(0xFF2A1710), Color(0xFF100907)
+        )
+    ),
+    Ocean(
+        "Ocean",
+        "Crystal cyan and cobalt drifting through the deep blue.",
+        LauncherPalette(
+            Color(0xFF050C14), Color(0xFF0B1724), Color(0xFF112338),
+            Color(0xFF7FE5F4), Color(0xFF78A9FF), Color(0xFFA6B8CB),
+            Color(0xFF263C54), Color(0xFF0B2034), Color(0xFF050C16)
+        )
+    ),
+    Sakura(
+        "Sakura",
+        "Soft rose and lilac blooming over a rich plum night.",
+        LauncherPalette(
+            Color(0xFF110A10), Color(0xFF20131D), Color(0xFF2C1B29),
+            Color(0xFFFFB6D1), Color(0xFFD5B8FF), Color(0xFFC8B1C2),
+            Color(0xFF4A3043), Color(0xFF2A1726), Color(0xFF100910)
+        )
+    ),
+    Obsidian(
+        "Obsidian",
+        "Pure black, polished silver, and a restrained icy glow.",
+        LauncherPalette(
+            Color(0xFF030405), Color(0xFF0B0D10), Color(0xFF14171B),
+            Color(0xFFE5EAF0), Color(0xFF9FB9D4), Color(0xFFA9B0B8),
+            Color(0xFF292E34), Color(0xFF111419), Color(0xFF020304)
+        )
+    );
+
+    companion object {
+        fun fromPreference(value: Int): LauncherTheme = entries.getOrElse(value) { Midnight }
+    }
+}
+
+private var ActivePalette = LauncherTheme.Midnight.palette
+private val Ink get() = ActivePalette.ink
+private val SurfaceDark get() = ActivePalette.surfaceDark
+private val SurfaceRaised get() = ActivePalette.surfaceRaised
+private val Accent get() = ActivePalette.accent
+private val AccentBlue get() = ActivePalette.accentSecondary
+private val Muted get() = ActivePalette.muted
+private val Hairline get() = ActivePalette.hairline
 private val Danger = Color(0xFFFFB4AB)
 private val PrivateGold = Color(0xFFFFD99A)
 private val PrivateViolet = Color(0xFFC7B4FF)
@@ -371,15 +460,51 @@ private const val LOADING_STATE_MIN_VISIBLE_MS = 360L
 private const val ICON_BITMAP_DEFER_MS = 40L
 private const val BROWSE_RESULT_CACHE_LIMIT = 36
 private const val BROWSE_LOAD_MORE_KEY_PREFIX = "catalog-load-more:"
+private const val LAUNCHER_SETTINGS_PREFERENCES = "launcher_settings"
+private const val LAUNCHER_THEME_PREFERENCE = "launcher_theme"
+
+internal fun Context.launcherThemePreference(): LauncherTheme = LauncherTheme.fromPreference(
+    getSharedPreferences(LAUNCHER_SETTINGS_PREFERENCES, Context.MODE_PRIVATE)
+        .getInt(LAUNCHER_THEME_PREFERENCE, 0)
+)
+
+internal enum class LauncherLanguage(
+    val nativeName: String,
+    val greeting: String
+) {
+    English("English", "Hello"),
+    Filipino("Filipino", "Kumusta"),
+    Korean("한국어", "안녕하세요"),
+    Japanese("日本語", "こんにちは"),
+    ChineseSimplified("简体中文", "你好"),
+    Spanish("Español", "Hola"),
+    Vietnamese("Tiếng Việt", "Xin chào"),
+    Indonesian("Bahasa Indonesia", "Halo"),
+    Portuguese("Português", "Olá");
+
+    val displayName: String
+        get() = when (this) {
+            ChineseSimplified -> "Chinese (Simplified)"
+            else -> name
+        }
+
+    companion object {
+        fun fromPreference(value: Int): LauncherLanguage = entries.getOrElse(value) { English }
+    }
+}
 
 private sealed class LauncherPage(val key: String, val rank: Int) {
     object Library : LauncherPage("library", 0)
     data class Module(val game: LibraryGame) : LauncherPage("module:${game.moduleIdentity}", 1)
     object Browse : LauncherPage("browse", 2)
     data class Download(val listing: ModuleListing) : LauncherPage("download:${listing.catalog.slug}", 3)
-    object LauncherUpdate : LauncherPage("launcher-update", 4)
-    object Changelog : LauncherPage("changelog", 5)
-    object AccountIdentity : LauncherPage("account-identity", 6)
+    object Settings : LauncherPage("settings", 4)
+    object Language : LauncherPage("language", 5)
+    object Theme : LauncherPage("theme", 6)
+    object About : LauncherPage("about", 7)
+    object LauncherUpdate : LauncherPage("launcher-update", 8)
+    object Changelog : LauncherPage("changelog", 9)
+    object AccountIdentity : LauncherPage("account-identity", 10)
 }
 
 internal enum class LauncherOverlay {
@@ -510,6 +635,7 @@ fun GameHubScreen(
     onOpenGame: (LibraryGame) -> Unit,
     onBack: () -> Unit,
     onUpdate: (LibraryGame) -> Unit,
+    onRepair: (LibraryGame) -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: (LibraryGame) -> Unit,
     onSelectNonRootMethod: (LibraryGame, NonRootMethod) -> Unit,
@@ -575,9 +701,26 @@ fun GameHubScreen(
     var browseVisibleCount by rememberSaveable { mutableStateOf(BROWSE_PAGE_SIZE) }
     var libraryQuery by rememberSaveable { mutableStateOf("") }
     var libraryManaging by rememberSaveable { mutableStateOf(false) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var languageOpen by rememberSaveable { mutableStateOf(false) }
+    var themeOpen by rememberSaveable { mutableStateOf(false) }
+    var aboutOpen by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val settingsPreferences = remember(context) {
+        context.getSharedPreferences(LAUNCHER_SETTINGS_PREFERENCES, Context.MODE_PRIVATE)
+    }
+    LauncherLocalization.initialize(context)
+    val selectedLanguage = LauncherLocalization.language
+    var themePreference by rememberSaveable { mutableStateOf(context.launcherThemePreference().ordinal) }
+    val selectedTheme = LauncherTheme.fromPreference(themePreference)
+    remember(selectedTheme) { selectedTheme.also { ActivePalette = it.palette } }
     val page = when {
         changelog.open -> LauncherPage.Changelog
         accountIdentity.open -> LauncherPage.AccountIdentity
+        aboutOpen -> LauncherPage.About
+        languageOpen -> LauncherPage.Language
+        themeOpen -> LauncherPage.Theme
+        settingsOpen -> LauncherPage.Settings
         pendingDownload != null -> LauncherPage.Download(pendingDownload!!)
         browsing -> LauncherPage.Browse
         selected != null -> LauncherPage.Module(selected!!)
@@ -585,7 +728,7 @@ fun GameHubScreen(
     }
 
     BackHandler(
-        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || selected != null ||
+        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || aboutOpen || languageOpen || themeOpen || settingsOpen || selected != null ||
             browsing || pendingDownload != null || libraryManaging
     ) {
         when {
@@ -594,6 +737,10 @@ fun GameHubScreen(
                 onCloseModuleChangelog()
             changelog.open -> onCloseChangelog()
             accountIdentity.open -> onCloseAccountIdentity()
+            aboutOpen -> aboutOpen = false
+            languageOpen -> languageOpen = false
+            themeOpen -> themeOpen = false
+            settingsOpen -> settingsOpen = false
             pendingDownload != null -> onCloseDownload()
             browsing -> onCloseBrowser()
             libraryManaging -> libraryManaging = false
@@ -606,11 +753,11 @@ fun GameHubScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xFF111B1B), Ink, Color(0xFF0B0E14))
+                        .background(
+                            Brush.verticalGradient(
+                            listOf(ActivePalette.backdropStart, Ink, ActivePalette.backdropEnd)
+                            )
                         )
-                    )
             ) {
                 AnimatedContent(
                     targetState = page,
@@ -652,6 +799,7 @@ fun GameHubScreen(
                                     refreshing = refreshingCatalog,
                                     onBack = onBack,
                                     onUpdate = { onUpdate(visiblePage.game) },
+                                    onRepair = { onRepair(visiblePage.game) },
                                     onVerify = onVerify,
                                     onLaunch = { onLaunch(visiblePage.game) },
                                     onSelectNonRootMethod = { method ->
@@ -761,6 +909,48 @@ fun GameHubScreen(
                                 )
                             }
                         }
+                        LauncherPage.Settings -> {
+                            SettingsScreen(
+                                launcherUpdateAvailable = launcherUpdate.available,
+                                onBack = { settingsOpen = false },
+                                onOpenAccountIdentity = onOpenAccountIdentity,
+                                onOpenChangelog = onOpenChangelog,
+                                selectedLanguage = selectedLanguage,
+                                onOpenLanguage = { languageOpen = true },
+                                selectedTheme = selectedTheme,
+                                onOpenTheme = { themeOpen = true },
+                                onOpenAbout = { aboutOpen = true }
+                            )
+                        }
+                        LauncherPage.Language -> {
+                            LanguageScreen(
+                                selectedLanguage = selectedLanguage,
+                                onBack = { languageOpen = false },
+                                onSelectLanguage = { language ->
+                                    LauncherLocalization.select(context, language)
+                                }
+                            )
+                        }
+                        LauncherPage.Theme -> {
+                            ThemeScreen(
+                                selectedTheme = selectedTheme,
+                                onBack = { themeOpen = false },
+                                onSelectTheme = { theme ->
+                                    themePreference = theme.ordinal
+                                    ActivePalette = theme.palette
+                                    settingsPreferences.edit()
+                                        .putInt(LAUNCHER_THEME_PREFERENCE, theme.ordinal)
+                                        .apply()
+                                }
+                            )
+                        }
+                        LauncherPage.About -> {
+                            AboutScreen(
+                                onBack = { aboutOpen = false },
+                                onOpenGitHub = { onVerify("https://github.com/BenigJester") },
+                                onOpenYouTube = { onVerify("https://youtube.com/@jestermods3.0?si=eqawQs6Cjsg1OhkV") }
+                            )
+                        }
                         LauncherPage.Changelog -> {
                             DeferredScreenContent(
                                 screenCache = screenCache,
@@ -769,7 +959,7 @@ fun GameHubScreen(
                                     changelog.moduleHistories.isNotEmpty(),
                                 placeholder = {
                                     ScreenTransitionPlaceholder(
-                                        backLabel = "Library",
+                                        backLabel = "Settings",
                                         title = "Changelog",
                                         detail = "Preparing release history…"
                                     )
@@ -792,7 +982,7 @@ fun GameHubScreen(
                                 contentKey = visiblePage.key,
                                 placeholder = {
                                     ScreenTransitionPlaceholder(
-                                        backLabel = "Library",
+                                        backLabel = "Settings",
                                         title = "Account identity",
                                         detail = "Preparing device access details…"
                                     )
@@ -806,21 +996,15 @@ fun GameHubScreen(
                         }
                     }
                 }
-                if (!launcherUpdate.screenOpen && !changelog.open && !accountIdentity.open) {
-                    Row(
+                if (!launcherUpdate.screenOpen && !changelog.open && !accountIdentity.open && !settingsOpen) {
+                    SettingsIconButton(
+                        updateAvailable = launcherUpdate.available,
+                        onClick = { settingsOpen = true },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .windowInsetsPadding(WindowInsets.safeDrawing)
-                            .padding(top = 12.dp, end = 18.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AccountIdentityIconButton(onClick = onOpenAccountIdentity)
-                        ChangelogIconButton(
-                            updateAvailable = launcherUpdate.available,
-                            onClick = onOpenChangelog
-                        )
-                    }
+                            .padding(top = 12.dp, end = 18.dp)
+                    )
                 }
             }
         }
@@ -1349,7 +1533,7 @@ private fun AccountIdentityIconButton(
 }
 
 @Composable
-private fun ChangelogIconButton(
+private fun SettingsIconButton(
     updateAvailable: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1364,28 +1548,733 @@ private fun ChangelogIconButton(
             .background(SurfaceRaised.copy(alpha = 0.98f))
             .semantics {
                 contentDescription = if (updateAvailable) {
-                    "Changelog, launcher update available"
+                    "Settings, launcher update available"
                 } else {
-                    "Changelog"
+                    "Settings"
                 }
             }
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                onClickLabel = if (updateAvailable) "Changelog, launcher update available" else "Changelog",
+                onClickLabel = if (updateAvailable) "Settings, launcher update available" else "Settings",
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.size(22.dp)) {
-            val stroke = 2.2.dp.toPx()
-            listOf(0.25f, 0.5f, 0.75f).forEach { y ->
-                drawCircle(Accent, radius = stroke * 0.75f, center = androidx.compose.ui.geometry.Offset(size.width * 0.16f, size.height * y))
-                drawLine(Accent, androidx.compose.ui.geometry.Offset(size.width * 0.32f, size.height * y), androidx.compose.ui.geometry.Offset(size.width * 0.86f, size.height * y), stroke, StrokeCap.Round)
-            }
-        }
+        SettingsGlyph()
         if (updateAvailable) {
             Box(Modifier.align(Alignment.TopEnd).padding(7.dp).size(7.dp).clip(CircleShape).background(Danger))
+        }
+    }
+}
+
+@Composable
+private fun SettingsGlyph(modifier: Modifier = Modifier.size(24.dp)) {
+    Canvas(modifier) {
+        val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+        val stroke = 2.dp.toPx()
+        repeat(8) { index ->
+            val angle = Math.toRadians((index * 45.0) - 90.0)
+            val inner = size.minDimension * 0.34f
+            val outer = size.minDimension * 0.45f
+            drawLine(
+                color = Accent,
+                start = androidx.compose.ui.geometry.Offset(
+                    center.x + kotlin.math.cos(angle).toFloat() * inner,
+                    center.y + kotlin.math.sin(angle).toFloat() * inner
+                ),
+                end = androidx.compose.ui.geometry.Offset(
+                    center.x + kotlin.math.cos(angle).toFloat() * outer,
+                    center.y + kotlin.math.sin(angle).toFloat() * outer
+                ),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round
+            )
+        }
+        drawCircle(Accent, radius = size.minDimension * 0.29f, center = center, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        drawCircle(AccentBlue, radius = size.minDimension * 0.09f, center = center)
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    launcherUpdateAvailable: Boolean,
+    onBack: () -> Unit,
+    onOpenAccountIdentity: () -> Unit,
+    onOpenChangelog: () -> Unit,
+    selectedLanguage: LauncherLanguage,
+    onOpenLanguage: () -> Unit,
+    selectedTheme: LauncherTheme,
+    onOpenTheme: () -> Unit,
+    onOpenAbout: () -> Unit
+) {
+    val flavor = when (BuildConfig.FLAVOR.lowercase(Locale.ROOT)) {
+        "nonroot" -> "Non-root"
+        "root" -> "Root"
+        else -> BuildConfig.FLAVOR.replaceFirstChar { it.uppercase() }
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text(
+                "‹  Back",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                Accent.copy(alpha = 0.22f),
+                                AccentBlue.copy(alpha = 0.14f),
+                                SurfaceRaised
+                            )
+                        )
+                    )
+                    .border(BorderStroke(1.dp, Accent.copy(alpha = 0.18f)), RoundedCornerShape(32.dp))
+                    .padding(22.dp)
+            ) {
+                Box(
+                    Modifier.size(58.dp).clip(RoundedCornerShape(20.dp))
+                        .background(Color.Black.copy(alpha = 0.24f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    SettingsGlyph(Modifier.size(28.dp))
+                }
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    "YOUR LAUNCHER",
+                    color = Accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black
+                )
+                Spacer(Modifier.height(5.dp))
+                Text("Settings", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "Everything personal, helpful, and new—kept in one refined space.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsMetaPill("Version ${BuildConfig.VERSION_NAME}")
+                    SettingsMetaPill(flavor)
+                }
+            }
+        }
+        item {
+            Text("EXPLORE", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.Account,
+                eyebrow = "ACCOUNT & SUPPORT",
+                title = "My Information",
+                detail = "View your support code, recovery identity, and launcher access details.",
+                accent = AccentBlue,
+                onClick = onOpenAccountIdentity
+            )
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.Changelog,
+                eyebrow = "RELEASE HISTORY",
+                title = "Changelog",
+                detail = "Explore launcher releases and the complete update history for your add-ons.",
+                accent = Accent,
+                badge = if (launcherUpdateAvailable) "UPDATE AVAILABLE" else null,
+                onClick = onOpenChangelog
+            )
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.Language,
+                eyebrow = "DISPLAY & LANGUAGE",
+                title = "Language",
+                detail = listOf(selectedLanguage.displayName, selectedLanguage.nativeName)
+                    .distinct().joinToString(" · "),
+                accent = PrivateGold,
+                onClick = onOpenLanguage
+            )
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.Theme,
+                eyebrow = "LOOK & FEEL",
+                title = "Theme",
+                detail = "${selectedTheme.displayName} · ${selectedTheme.detail}",
+                accent = selectedTheme.palette.accentSecondary,
+                onClick = onOpenTheme
+            )
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.About,
+                eyebrow = "JESTER MODS",
+                title = "About",
+                detail = "Meet the launcher, its design principles, and the creator behind Jester Mods.",
+                accent = PrivateViolet,
+                onClick = onOpenAbout
+            )
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun ThemeScreen(
+    selectedTheme: LauncherTheme,
+    onBack: () -> Unit,
+    onSelectTheme: (LauncherTheme) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text(
+                "‹  Settings",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item { ThemeShowcase(selectedTheme) }
+        item {
+            Text("CURATED THEMES", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        items(LauncherTheme.entries, key = { it.ordinal }) { theme ->
+            ThemeChoiceCard(
+                theme = theme,
+                selected = theme == selectedTheme,
+                onClick = { onSelectTheme(theme) }
+            )
+        }
+        item {
+            Text(
+                "Your theme is applied instantly and saved on this device.",
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemeShowcase(theme: LauncherTheme) {
+    val palette = theme.palette
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(34.dp))
+            .background(Brush.linearGradient(listOf(palette.accent.copy(alpha = 0.25f), palette.surfaceRaised)))
+            .border(BorderStroke(1.dp, palette.accent.copy(alpha = 0.3f)), RoundedCornerShape(34.dp))
+            .padding(22.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(62.dp).clip(RoundedCornerShape(21.dp)).background(Color.Black.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("◐", color = palette.accentSecondary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("MAKE IT YOURS", color = palette.accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(4.dp))
+                Text("Theme", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(5) { index ->
+                val color = when (index) {
+                    0, 3 -> palette.accent
+                    1, 4 -> palette.accentSecondary
+                    else -> palette.surfaceDark
+                }
+                Box(Modifier.weight(1f).height(8.dp).clip(CircleShape).background(color))
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(theme.displayName, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(5.dp))
+        Text(theme.detail, color = palette.muted, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ThemeChoiceCard(
+    theme: LauncherTheme,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val palette = theme.palette
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp))
+            .background(Brush.horizontalGradient(listOf(palette.surfaceRaised, palette.surfaceDark)))
+            .border(
+                BorderStroke(1.dp, if (selected) palette.accent.copy(alpha = 0.7f) else palette.hairline),
+                RoundedCornerShape(26.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(56.dp).clip(RoundedCornerShape(19.dp))
+                .background(Brush.linearGradient(listOf(palette.accent, palette.accentSecondary))),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(Modifier.size(22.dp).clip(CircleShape).background(palette.ink))
+        }
+        Spacer(Modifier.width(15.dp))
+        Column(Modifier.weight(1f)) {
+            Text(theme.displayName, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(theme.detail, color = palette.muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(if (selected) "✓" else "›", color = palette.accent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun LanguageScreen(
+    selectedLanguage: LauncherLanguage,
+    onBack: () -> Unit,
+    onSelectLanguage: (LauncherLanguage) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text(
+                "‹  Settings",
+                color = PrivateGold,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(34.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                PrivateGold.copy(alpha = 0.24f),
+                                PrivateViolet.copy(alpha = 0.13f),
+                                SurfaceRaised
+                            )
+                        )
+                    )
+                    .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.22f)), RoundedCornerShape(34.dp))
+                    .padding(22.dp)
+            ) {
+                Box(
+                    Modifier.size(62.dp).clip(RoundedCornerShape(21.dp))
+                        .background(Color.Black.copy(alpha = 0.24f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Aa", color = PrivateGold, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.height(24.dp))
+                Text("SPEAK YOUR LANGUAGE", color = PrivateGold, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(5.dp))
+                Text("Language", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "Choose your preferred language for Jester Mods.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(20.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(selectedLanguage.greeting, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text(selectedLanguage.nativeName, color = PrivateGold, style = MaterialTheme.typography.bodySmall)
+                    }
+                    SettingsMetaPill("SELECTED")
+                }
+            }
+        }
+        item {
+            Text("AVAILABLE LANGUAGES", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        items(LauncherLanguage.entries, key = { it.ordinal }) { language ->
+            LanguageChoiceCard(
+                language = language,
+                selected = language == selectedLanguage,
+                onClick = { onSelectLanguage(language) }
+            )
+        }
+        item {
+            Text(
+                "Your choice is saved offline on this device.",
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LanguageChoiceCard(
+    language: LauncherLanguage,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = if (selected) PrivateGold else AccentBlue
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+            .background(
+                if (selected) {
+                    Brush.horizontalGradient(listOf(PrivateGold.copy(alpha = 0.16f), SurfaceRaised))
+                } else {
+                    Brush.horizontalGradient(listOf(SurfaceRaised, SurfaceRaised.copy(alpha = 0.88f)))
+                }
+            )
+            .border(BorderStroke(1.dp, if (selected) PrivateGold.copy(alpha = 0.4f) else Hairline), RoundedCornerShape(24.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(46.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = 0.13f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(language.greeting.take(1), color = accent, fontWeight = FontWeight.Black)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(language.nativeName, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (language.displayName != language.nativeName) {
+                Spacer(Modifier.height(2.dp))
+                Text(language.displayName, color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(if (selected) "✓" else "›", color = accent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun AboutScreen(
+    onBack: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onOpenYouTube: () -> Unit
+) {
+    val flavor = when (BuildConfig.FLAVOR.lowercase(Locale.ROOT)) {
+        "nonroot" -> "Non-root edition"
+        "root" -> "Root edition"
+        else -> "${BuildConfig.FLAVOR.replaceFirstChar { it.uppercase() }} edition"
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text(
+                "‹  Settings",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(34.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                PrivateViolet.copy(alpha = 0.22f),
+                                AccentBlue.copy(alpha = 0.13f),
+                                SurfaceRaised
+                            )
+                        )
+                    )
+                    .border(BorderStroke(1.dp, PrivateViolet.copy(alpha = 0.24f)), RoundedCornerShape(34.dp))
+                    .padding(horizontal = 22.dp, vertical = 26.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier.size(112.dp).clip(RoundedCornerShape(34.dp))
+                        .background(Color.Black.copy(alpha = 0.24f))
+                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(34.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.jester_moods_icon),
+                        contentDescription = "Jester Mods",
+                        modifier = Modifier.size(88.dp)
+                    )
+                }
+                Spacer(Modifier.height(22.dp))
+                Text(
+                    "JESTER MODS",
+                    color = Accent,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Black
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    "Launcher",
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(9.dp))
+                Text(
+                    "A curated home for game add-ons—designed to make discovery, compatibility, updates, and play feel effortless.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsMetaPill("v${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}")
+                    SettingsMetaPill(flavor)
+                }
+            }
+        }
+        item {
+            Text("BUILT WITH PURPOSE", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        item {
+            AboutPrincipleCard(
+                number = "01",
+                title = "Curated experiences",
+                detail = "Browse focused add-ons with clear features and compatibility before entering a game.",
+                accent = Accent
+            )
+        }
+        item {
+            AboutPrincipleCard(
+                number = "02",
+                title = "Root and Non-root",
+                detail = "Purpose-built launcher editions deliver the right method for each supported device setup.",
+                accent = AccentBlue
+            )
+        }
+        item {
+            AboutPrincipleCard(
+                number = "03",
+                title = "Verified delivery",
+                detail = "Launcher updates, catalogs, and add-on files are checked against trusted release metadata.",
+                accent = PrivateViolet
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
+                    .background(SurfaceRaised.copy(alpha = 0.94f))
+                    .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(28.dp))
+                    .padding(20.dp)
+            ) {
+                Text("FOLLOW THE JOURNEY", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(6.dp))
+                Text("Stay connected to Jester Mods", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Explore the source and releases on GitHub, then follow Jester Mods on YouTube for videos and updates.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onOpenGitHub,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Open GitHub", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onOpenYouTube,
+                    border = BorderStroke(1.dp, Danger.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Watch on YouTube", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        item {
+            Text(
+                "Made for players who want more from the games they love.",
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutPrincipleCard(
+    number: String,
+    title: String,
+    detail: String,
+    accent: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+            .background(SurfaceRaised.copy(alpha = 0.88f))
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.18f)), RoundedCornerShape(24.dp))
+            .padding(17.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(46.dp).clip(RoundedCornerShape(16.dp)).background(accent.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(number, color = accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun SettingsMetaPill(label: String) {
+    Text(
+        label,
+        color = Color.White,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.22f))
+            .border(BorderStroke(1.dp, Hairline), CircleShape)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    )
+}
+
+@Composable
+private fun SettingsPortalCard(
+    icon: SettingsPortalIcon,
+    eyebrow: String,
+    title: String,
+    detail: String,
+    accent: Color,
+    badge: String? = null,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .scale(if (pressed) 0.985f else 1f)
+            .clip(RoundedCornerShape(26.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(accent.copy(alpha = 0.13f), SurfaceRaised.copy(alpha = 0.96f))
+                )
+            )
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.2f)), RoundedCornerShape(26.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(58.dp).clip(RoundedCornerShape(19.dp)).background(accent.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            SettingsPortalGlyph(icon, accent)
+        }
+        Spacer(Modifier.width(15.dp))
+        Column(Modifier.weight(1f)) {
+            Text(eyebrow, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            badge?.let {
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    it,
+                    color = Danger,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.clip(CircleShape).background(Danger.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text("›", color = accent, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Light)
+    }
+}
+
+private enum class SettingsPortalIcon { Account, Changelog, Language, Theme, About }
+
+@Composable
+private fun SettingsPortalGlyph(icon: SettingsPortalIcon, color: Color) {
+    Canvas(Modifier.size(if (icon == SettingsPortalIcon.Theme) 34.dp else 30.dp)) {
+        val stroke = 2.2.dp.toPx()
+        val outline = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = StrokeCap.Round)
+        val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+        when (icon) {
+            SettingsPortalIcon.Account -> {
+                drawCircle(color, size.minDimension * 0.19f, center.copy(y = size.height * 0.31f), style = outline)
+                drawArc(color, 205f, 130f, false, center.copy(x = size.width * 0.17f, y = size.height * 0.48f), androidx.compose.ui.geometry.Size(size.width * 0.66f, size.height * 0.5f), style = outline)
+            }
+            SettingsPortalIcon.Changelog -> {
+                repeat(3) { index ->
+                    val y = size.height * (0.27f + index * 0.24f)
+                    drawCircle(color, stroke * 0.72f, androidx.compose.ui.geometry.Offset(size.width * 0.2f, y))
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width * 0.34f, y), androidx.compose.ui.geometry.Offset(size.width * 0.82f, y), stroke, StrokeCap.Round)
+                }
+            }
+            SettingsPortalIcon.Language -> {
+                drawCircle(color, size.minDimension * 0.39f, center, style = outline)
+                drawOval(color, center.copy(x = size.width * 0.32f, y = size.height * 0.1f), androidx.compose.ui.geometry.Size(size.width * 0.36f, size.height * 0.8f), style = outline)
+                drawLine(color, androidx.compose.ui.geometry.Offset(size.width * 0.12f, center.y), androidx.compose.ui.geometry.Offset(size.width * 0.88f, center.y), stroke, StrokeCap.Round)
+            }
+            SettingsPortalIcon.Theme -> {
+                drawCircle(color, size.minDimension * 0.2f, center, style = outline)
+                repeat(8) { index ->
+                    val angle = Math.toRadians(index * 45.0)
+                    val inner = size.minDimension * 0.31f
+                    val outer = size.minDimension * 0.46f
+                    drawLine(
+                        color,
+                        androidx.compose.ui.geometry.Offset(center.x + kotlin.math.cos(angle).toFloat() * inner, center.y + kotlin.math.sin(angle).toFloat() * inner),
+                        androidx.compose.ui.geometry.Offset(center.x + kotlin.math.cos(angle).toFloat() * outer, center.y + kotlin.math.sin(angle).toFloat() * outer),
+                        stroke,
+                        StrokeCap.Round
+                    )
+                }
+            }
+            SettingsPortalIcon.About -> {
+                drawCircle(color, size.minDimension * 0.4f, center, style = outline)
+                drawCircle(color, stroke * 0.75f, center.copy(y = size.height * 0.3f))
+                drawLine(color, center.copy(y = size.height * 0.45f), center.copy(y = size.height * 0.72f), stroke, StrokeCap.Round)
+            }
         }
     }
 }
@@ -1410,7 +2299,7 @@ private fun AccountIdentityScreen(
     ) {
         item {
             Text(
-                "‹  Library",
+                "‹  Settings",
                 color = Accent,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
@@ -1653,40 +2542,52 @@ private fun ChangelogScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
         item {
             Text(
-                "‹  Library",
+                "‹  Settings",
                 color = Accent,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
                     .padding(vertical = 8.dp, horizontal = 4.dp)
             )
-            Spacer(Modifier.height(10.dp))
-            Text("Changelog", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Launcher releases and add-on update history.", color = Muted)
+        }
+        item {
+            ChangelogHero(
+                launcherReleases = state.launcherEntries.size,
+                addOns = state.moduleHistories.size
+            )
         }
 
         if (launcherUpdate.available) {
             item {
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                        .background(Accent.copy(alpha = 0.12f)).padding(16.dp),
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp))
+                        .background(Brush.horizontalGradient(listOf(Accent.copy(alpha = 0.18f), SurfaceRaised)))
+                        .border(BorderStroke(1.dp, Accent.copy(alpha = 0.3f)), RoundedCornerShape(26.dp))
+                        .padding(18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Box(
+                        Modifier.size(46.dp).clip(RoundedCornerShape(16.dp)).background(Accent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("↑", color = Accent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                    }
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text("Launcher update available", color = Color.White, fontWeight = FontWeight.SemiBold)
                         Text("Version ${launcherUpdate.version ?: "new"}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     }
-                    OutlinedButton(onClick = onOpenLauncherUpdate, border = BorderStroke(1.dp, Accent)) {
+                    OutlinedButton(onClick = onOpenLauncherUpdate, border = BorderStroke(1.dp, Accent.copy(alpha = 0.7f))) {
                         Text("View update", color = Accent)
                     }
                 }
             }
         }
 
-        item { ChangelogSectionTitle("JESTER MODS") }
+        item { ChangelogSectionTitle("JESTER MODS", "The launcher, refined release by release.") }
         if (state.launcherEntries.isEmpty() && !state.loading) {
             item {
                 ChangelogMessageCard(state.error ?: "Launcher release history will appear after the next successful sync.")
@@ -1696,9 +2597,9 @@ private fun ChangelogScreen(
             item(key = "launcher-latest-${entry.build}") {
                 Text(
                     "LATEST RELEASE",
-                    color = Muted,
+                    color = Accent,
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Black
                 )
                 Spacer(Modifier.height(6.dp))
                 ChangelogEntryCard(
@@ -1711,34 +2612,23 @@ private fun ChangelogScreen(
         }
         if (state.launcherEntries.isNotEmpty()) {
             item {
-                OutlinedButton(
+                Button(
                     onClick = { launcherHistoryOpen = true },
                     modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(1.dp, Hairline)
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
                 ) {
-                    Text("View full history", color = Accent)
+                    Text("View full history", fontWeight = FontWeight.Bold)
                 }
             }
         }
 
         if (state.moduleHistories.isNotEmpty()) {
-            item { ChangelogSectionTitle("ADD-ONS") }
+            item { ChangelogSectionTitle("ADD-ONS", "Every supported game has its own story.") }
             item {
-                OutlinedTextField(
+                ChangelogSearchField(
                     value = moduleQuery,
                     onValueChange = { moduleQuery = it.take(80) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Search update activity") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Accent,
-                        unfocusedBorderColor = Hairline,
-                        focusedLabelColor = Accent,
-                        unfocusedLabelColor = Muted,
-                        cursorColor = Accent
-                    )
+                    label = "Search update activity"
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -1749,27 +2639,10 @@ private fun ChangelogScreen(
             }
             filteredModules.take(visibleModules).forEach { history ->
                 item(key = "module-title-${history.slug}") {
-                    Column(Modifier.padding(top = 4.dp)) {
-                        Text(history.title, color = Color.White, fontWeight = FontWeight.Bold)
-                        Text("Game version ${history.gameVersion}", color = Muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                items(history.entries, key = { "${history.slug}-${it.build}" }) { entry ->
-                    ChangelogEntryCard(
-                        title = entry.version,
-                        meta = "${entry.updateType.replaceFirstChar { it.uppercase() }} · Build ${entry.build}",
-                        notes = entry.notes.ifBlank { "Add-on maintenance update." },
-                        highlighted = entry.build == history.currentBuild
+                    ChangelogAddOnPortal(
+                        history = history,
+                        onClick = { onOpenModuleChangelog(history.slug) }
                     )
-                }
-                item(key = "module-history-${history.slug}") {
-                    OutlinedButton(
-                        onClick = { onOpenModuleChangelog(history.slug) },
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, Hairline)
-                    ) {
-                        Text("View full history", color = Accent)
-                    }
                 }
             }
             if (visibleModules < filteredModules.size) {
@@ -1836,14 +2709,16 @@ private fun LauncherChangelogDetailScreen(
                 modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
                     .padding(vertical = 8.dp, horizontal = 4.dp)
             )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Launcher history",
-                color = Color.White,
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold
+        }
+        item {
+            ChangelogHistoryHero(
+                monogram = "JM",
+                eyebrow = "JESTER MODS ARCHIVE",
+                title = "Launcher history",
+                detail = "Every verified Jester Mods release.",
+                count = entries.size,
+                accent = Accent
             )
-            Text("Every verified Jester Mods release.", color = Muted)
         }
         item {
             ChangelogSearchField(
@@ -1891,7 +2766,7 @@ private fun ModuleChangelogDetailScreen(
     LazyColumn(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Text(
@@ -1901,12 +2776,16 @@ private fun ModuleChangelogDetailScreen(
                 modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
                     .padding(vertical = 8.dp, horizontal = 4.dp)
             )
-            Spacer(Modifier.height(10.dp))
-            Text(history?.title ?: "Add-on history", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text(
-                history?.let { "Game version ${it.gameVersion} · ${it.packageName}" }
+        }
+        item {
+            ChangelogHistoryHero(
+                monogram = history?.title?.take(2)?.uppercase(Locale.getDefault()) ?: "ADD",
+                eyebrow = "ADD-ON ARCHIVE",
+                title = history?.title ?: "Add-on history",
+                detail = history?.let { "Game version ${it.gameVersion} · ${it.packageName}" }
                     ?: "Loading verified release history…",
-                color = Muted
+                count = history?.entries?.size ?: 0,
+                accent = AccentBlue
             )
         }
         if (loading) {
@@ -1956,6 +2835,150 @@ private fun ModuleChangelogDetailScreen(
 }
 
 @Composable
+private fun ChangelogHero(launcherReleases: Int, addOns: Int) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(34.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Accent.copy(alpha = 0.24f),
+                        PrivateViolet.copy(alpha = 0.15f),
+                        SurfaceRaised
+                    )
+                )
+            )
+            .border(BorderStroke(1.dp, Accent.copy(alpha = 0.24f)), RoundedCornerShape(34.dp))
+            .padding(22.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(62.dp).clip(RoundedCornerShape(21.dp))
+                    .background(Color.Black.copy(alpha = 0.24f))
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)), RoundedCornerShape(21.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("LOG", color = Accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text("RELEASE JOURNAL", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(4.dp))
+                Text("Changelog", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "Launcher releases and add-on update history.",
+            color = Muted,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ChangelogMetric(launcherReleases.toString(), "LAUNCHER", Accent, Modifier.weight(1f))
+            ChangelogMetric(addOns.toString(), "ADD-ONS", AccentBlue, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun ChangelogMetric(value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = 0.2f))
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.2f)), RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 11.dp)
+    ) {
+        Text(value, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+        Text(label, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ChangelogHistoryHero(
+    monogram: String,
+    eyebrow: String,
+    title: String,
+    detail: String,
+    count: Int,
+    accent: Color
+) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(32.dp))
+            .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.22f), SurfaceRaised)))
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.24f)), RoundedCornerShape(32.dp))
+            .padding(22.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(58.dp).clip(RoundedCornerShape(20.dp)).background(accent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(monogram, color = accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(15.dp))
+            Column(Modifier.weight(1f)) {
+                Text(eyebrow, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(4.dp))
+                Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(17.dp))
+        Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(14.dp))
+        SettingsMetaPill("$count · RELEASES")
+    }
+}
+
+@Composable
+private fun ChangelogAddOnPortal(history: ModuleChangelog, onClick: () -> Unit) {
+    val latest = history.entries.firstOrNull()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        Modifier.fillMaxWidth().scale(if (pressed) 0.985f else 1f)
+            .clip(RoundedCornerShape(26.dp))
+            .background(Brush.horizontalGradient(listOf(AccentBlue.copy(alpha = 0.13f), SurfaceRaised)))
+            .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.2f)), RoundedCornerShape(26.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(54.dp).clip(RoundedCornerShape(18.dp)).background(AccentBlue.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                history.title.take(2).uppercase(Locale.getDefault()),
+                color = AccentBlue,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Black
+            )
+        }
+        Spacer(Modifier.width(15.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Game version ${history.gameVersion}", color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(history.title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                latest?.let { "${it.version} · ${it.updateType.replaceFirstChar { character -> character.uppercase() }}" }
+                    ?: "Release history",
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(history.entries.size.toString(), color = Color.White, fontWeight = FontWeight.Black)
+            Text("RELEASES", color = Muted, style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(4.dp))
+            Text("›", color = AccentBlue, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Light)
+        }
+    }
+}
+
+@Composable
 private fun ChangelogSearchField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -1967,6 +2990,7 @@ private fun ChangelogSearchField(
         modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
         singleLine = true,
+        shape = RoundedCornerShape(22.dp),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = Color.White,
             unfocusedTextColor = Color.White,
@@ -1980,8 +3004,14 @@ private fun ChangelogSearchField(
 }
 
 @Composable
-private fun ChangelogSectionTitle(label: String) {
-    Text(label, color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+private fun ChangelogSectionTitle(label: String, detail: String? = null) {
+    Column {
+        Text(label, color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+        detail?.let {
+            Spacer(Modifier.height(3.dp))
+            Text(it, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
 
 @Composable
@@ -1990,21 +3020,42 @@ private fun ChangelogMessageCard(message: String) {
         message,
         color = Muted,
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-            .background(SurfaceRaised.copy(alpha = 0.88f)).padding(16.dp)
+            .background(SurfaceRaised.copy(alpha = 0.88f))
+            .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(20.dp))
+            .padding(16.dp)
     )
 }
 
 @Composable
 private fun ChangelogEntryCard(title: String, meta: String, notes: String, highlighted: Boolean) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-            .background(if (highlighted) Accent.copy(alpha = 0.09f) else SurfaceRaised.copy(alpha = 0.88f))
-            .padding(16.dp)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
+            .background(
+                if (highlighted) Brush.linearGradient(listOf(Accent.copy(alpha = 0.17f), SurfaceRaised))
+                else Brush.linearGradient(listOf(SurfaceRaised, SurfaceRaised.copy(alpha = 0.86f)))
+            )
+            .border(
+                BorderStroke(1.dp, if (highlighted) Accent.copy(alpha = 0.28f) else Hairline),
+                RoundedCornerShape(28.dp)
+            )
+            .padding(19.dp)
     ) {
-        Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(3.dp))
-        Text(meta, color = if (highlighted) Accent else AccentBlue, style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(15.dp))
+                    .background((if (highlighted) Accent else AccentBlue).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("✦", color = if (highlighted) Accent else AccentBlue, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(3.dp))
+                Text(meta, color = if (highlighted) Accent else AccentBlue, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
         ChangelogRundown(notes, fallback = "Maintenance and reliability improvements.")
     }
 }
@@ -2013,13 +3064,27 @@ private fun ChangelogEntryCard(title: String, meta: String, notes: String, highl
 private fun LauncherChangelogCompactCard(entry: LauncherChangelogEntry, installedBuild: Long) {
     var expanded by rememberSaveable(entry.build) { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-            .background(if (entry.build >= installedBuild) Accent.copy(alpha = 0.07f) else SurfaceRaised.copy(alpha = 0.72f))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+            .background(
+                if (entry.build >= installedBuild) Brush.horizontalGradient(listOf(Accent.copy(alpha = 0.13f), SurfaceRaised))
+                else Brush.horizontalGradient(listOf(SurfaceRaised, SurfaceRaised.copy(alpha = 0.82f)))
+            )
+            .border(
+                BorderStroke(1.dp, if (entry.build >= installedBuild) Accent.copy(alpha = 0.22f) else Hairline),
+                RoundedCornerShape(24.dp)
+            )
             .animateContentSize()
             .clickable { expanded = !expanded }
-            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .padding(17.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(Accent.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(entry.version.take(1), color = Accent, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("Jester Mods ${entry.version}", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(3.dp))
@@ -2030,15 +3095,15 @@ private fun LauncherChangelogCompactCard(entry: LauncherChangelogEntry, installe
                 )
             }
             Text(
-                if (expanded) "Hide" else "Details",
+                if (expanded) "−" else "+",
                 color = Accent,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Light,
                 modifier = Modifier.padding(start = 12.dp)
             )
         }
         if (expanded) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(15.dp))
             ChangelogRundown(entry.notes, fallback = "Maintenance and reliability improvements.")
         }
     }
@@ -2048,13 +3113,27 @@ private fun LauncherChangelogCompactCard(entry: LauncherChangelogEntry, installe
 private fun ModuleChangelogCompactCard(entry: ModuleChangelogEntry, highlighted: Boolean) {
     var expanded by rememberSaveable(entry.build) { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-            .background(if (highlighted) Accent.copy(alpha = 0.09f) else SurfaceRaised.copy(alpha = 0.72f))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+            .background(
+                if (highlighted) Brush.horizontalGradient(listOf(AccentBlue.copy(alpha = 0.15f), SurfaceRaised))
+                else Brush.horizontalGradient(listOf(SurfaceRaised, SurfaceRaised.copy(alpha = 0.82f)))
+            )
+            .border(
+                BorderStroke(1.dp, if (highlighted) AccentBlue.copy(alpha = 0.26f) else Hairline),
+                RoundedCornerShape(24.dp)
+            )
             .animateContentSize()
             .clickable { expanded = !expanded }
-            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .padding(17.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(AccentBlue.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(entry.version.take(1), color = AccentBlue, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(entry.version, color = Color.White, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(3.dp))
@@ -2066,15 +3145,15 @@ private fun ModuleChangelogCompactCard(entry: ModuleChangelogEntry, highlighted:
                 )
             }
             Text(
-                if (expanded) "Hide" else "Details",
-                color = Accent,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
+                if (expanded) "−" else "+",
+                color = AccentBlue,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Light,
                 modifier = Modifier.padding(start = 12.dp)
             )
         }
         if (expanded) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(15.dp))
             ChangelogRundown(entry.notes, fallback = "Add-on maintenance update.")
         }
     }
@@ -2083,18 +3162,29 @@ private fun ModuleChangelogCompactCard(entry: ModuleChangelogEntry, highlighted:
 @Composable
 private fun ChangelogRundown(notes: String, fallback: String) {
     val groups = remember(notes, fallback) { changelogRundown(notes, fallback) }
-    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         groups.forEach { group ->
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            val accent = when (group.category) {
+                ChangelogCategory.FIX -> AccentBlue
+                ChangelogCategory.ADD -> Accent
+                ChangelogCategory.IMPROVEMENTS -> PrivateViolet
+            }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
+                    .background(Color.Black.copy(alpha = 0.14f))
+                    .border(BorderStroke(1.dp, accent.copy(alpha = 0.16f)), RoundedCornerShape(17.dp))
+                    .padding(horizontal = 13.dp, vertical = 11.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
                 Text(
                     "${group.category.label}:",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold
+                    color = accent,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Black
                 )
                 group.items.forEach { item ->
                     Row(verticalAlignment = Alignment.Top) {
-                        Text("•", color = Accent, style = MaterialTheme.typography.bodySmall)
+                        Text("•", color = accent, style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.width(7.dp))
                         Text(
                             item,
@@ -2311,7 +3401,11 @@ private fun InstallerDiagnosticsPanel(
                 onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText(clipboardLabel, report))
-                    android.widget.Toast.makeText(context, "Diagnostics copied", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(
+                        context,
+                        LauncherLocalization.translate("Diagnostics copied"),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -4362,6 +5456,8 @@ private fun ModuleBrowserScreen(
         }
     }
     val visibleListings = result.items.take(visibleCount)
+    val catalogListings = remember(listings) { listings.filter(ModuleListing::isVisibleInBrowse) }
+    val catalogRecommendedCount = remember(catalogListings) { catalogListings.count(ModuleListing::isRecommendedForDevice) }
     val defaultSections = query.isBlank() && filter == BrowseFilter.ALL && category == null
     val recommended = if (defaultSections) visibleListings.filter(ModuleListing::isRecommendedForDevice) else emptyList()
     val remaining = if (defaultSections) visibleListings.filterNot(ModuleListing::isRecommendedForDevice) else visibleListings
@@ -4404,16 +5500,12 @@ private fun ModuleBrowserScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
         item {
-            Text(
-                "‹  Library",
-                color = Accent,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
-                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            CatalogHero(
+                totalCount = catalogListings.size,
+                recommendedCount = catalogRecommendedCount,
+                categoryCount = result.categories.size,
+                onBack = onBack
             )
-            Spacer(Modifier.height(10.dp))
-            Text("Browse add-ons", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("Choose an add-on for a supported game, then add it to your Jester Mods library.", color = Muted)
         }
         if (listings.isNotEmpty()) {
             item(key = "catalog-search") {
@@ -4434,52 +5526,96 @@ private fun ModuleBrowserScreen(
                         }
                     } else null,
                     singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(22.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
                         cursorColor = Accent,
                         focusedBorderColor = Accent,
                         unfocusedBorderColor = Hairline,
-                        focusedContainerColor = SurfaceDark,
-                        unfocusedContainerColor = SurfaceDark
+                        focusedContainerColor = SurfaceRaised.copy(alpha = 0.72f),
+                        unfocusedContainerColor = SurfaceRaised.copy(alpha = 0.52f)
                     )
                 )
             }
             item(key = "catalog-filters") {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(BrowseFilter.entries, key = BrowseFilter::name) { choice ->
-                        CatalogFilterChip(
-                            label = choice.label,
-                            selected = choice == filter,
-                            onClick = { onFilterChange(choice) }
-                        )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SurfaceRaised.copy(alpha = 0.52f))
+                        .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(22.dp))
+                        .padding(vertical = 12.dp)
+                ) {
+                    Text(
+                        "DISCOVER",
+                        color = AccentBlue,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(BrowseFilter.entries, key = BrowseFilter::name) { choice ->
+                            CatalogFilterChip(
+                                label = choice.label,
+                                selected = choice == filter,
+                                onClick = { onFilterChange(choice) }
+                            )
+                        }
                     }
                 }
             }
             if (result.categories.size > 1) {
                 item(key = "catalog-categories") {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item {
-                            CatalogFilterChip(
-                                label = "All categories",
-                                selected = category == null,
-                                onClick = { onCategoryChange(null) }
-                            )
-                        }
-                        items(result.categories, key = { it }) { choice ->
-                            CatalogFilterChip(
-                                label = choice,
-                                selected = choice.equals(category, ignoreCase = true),
-                                onClick = { onCategoryChange(choice) }
-                            )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(SurfaceRaised.copy(alpha = 0.42f))
+                            .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(22.dp))
+                            .padding(vertical = 12.dp)
+                    ) {
+                        Text(
+                            "CATEGORIES",
+                            color = PrivateViolet,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                        Spacer(Modifier.height(7.dp))
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item {
+                                CatalogFilterChip(
+                                    label = "All categories",
+                                    selected = category == null,
+                                    onClick = { onCategoryChange(null) }
+                                )
+                            }
+                            items(result.categories, key = { it }) { choice ->
+                                CatalogFilterChip(
+                                    label = choice,
+                                    selected = choice.equals(category, ignoreCase = true),
+                                    onClick = { onCategoryChange(choice) }
+                                )
+                            }
                         }
                     }
                 }
             }
             item(key = "catalog-summary") {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(SurfaceDark.copy(alpha = 0.54f))
+                        .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -4491,8 +5627,10 @@ private fun ModuleBrowserScreen(
                     Box {
                         OutlinedButton(
                             onClick = { sortMenuOpen = true },
+                            shape = RoundedCornerShape(14.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent),
+                            border = BorderStroke(1.dp, Accent.copy(alpha = 0.28f))
                         ) {
                             Text("Sort: ${sort.label}", style = MaterialTheme.typography.labelMedium)
                         }
@@ -4521,18 +5659,31 @@ private fun ModuleBrowserScreen(
             }
         }
         if (listings.isEmpty()) {
-            item { Text("The add-on catalog is unavailable. Check your connection and try again.", color = Muted, modifier = Modifier.padding(top = 30.dp)) }
+            item {
+                CatalogMessageCard(
+                    title = "Catalog unavailable",
+                    detail = "The add-on catalog is unavailable. Check your connection and try again."
+                )
+            }
         } else if (listings.none(ModuleListing::isVisibleInBrowse)) {
             item {
-                Text(
-                    "All available add-ons are already installed. You can find them in your library.",
-                    color = Muted,
-                    modifier = Modifier.padding(top = 30.dp)
+                CatalogMessageCard(
+                    title = "Your collection is complete",
+                    detail = "All available add-ons are already installed. You can find them in your library.",
+                    color = Accent
                 )
             }
         } else if (result.items.isEmpty()) {
             item(key = "catalog-no-results") {
-                Column(Modifier.fillMaxWidth().padding(top = 26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(SurfaceRaised.copy(alpha = 0.62f))
+                        .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(26.dp))
+                        .padding(vertical = 30.dp, horizontal = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text("No add-ons match these filters", color = Color.White, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(5.dp))
                     Text("Try another search, category, or filter.", color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -4591,6 +5742,76 @@ private fun ModuleBrowserScreen(
 }
 
 @Composable
+private fun CatalogMessageCard(title: String, detail: String, color: Color = AccentBlue) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.12f), SurfaceRaised.copy(alpha = 0.70f))))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.22f)), RoundedCornerShape(28.dp))
+            .padding(vertical = 30.dp, horizontal = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.height(14.dp))
+        Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(7.dp))
+        Text(detail, color = Muted, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun CatalogHero(
+    totalCount: Int,
+    recommendedCount: Int,
+    categoryCount: Int,
+    onBack: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(32.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(AccentBlue.copy(alpha = 0.22f), Accent.copy(alpha = 0.10f), SurfaceDark)
+                )
+            )
+            .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.28f)), RoundedCornerShape(32.dp))
+            .padding(22.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "‹  Library",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onBack)
+                    .padding(vertical = 7.dp, horizontal = 2.dp)
+            )
+            Spacer(Modifier.weight(1f))
+            Text("ADD-ON CATALOG", color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Browse add-ons", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Discover your next game upgrade in a catalog curated for this device.",
+            color = Muted,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        if (totalCount > 0) {
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                LibraryMetric(totalCount, "ADD-ONS", AccentBlue, Modifier.weight(1f))
+                LibraryMetric(recommendedCount, "MATCHES", Accent, Modifier.weight(1f))
+                LibraryMetric(categoryCount, "CATEGORIES", PrivateViolet, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
 private fun CatalogFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
@@ -4614,12 +5835,22 @@ private fun CatalogFilterChip(label: String, selected: Boolean, onClick: () -> U
 @Composable
 private fun CatalogSectionHeader(title: String, count: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.horizontalGradient(listOf(Accent.copy(alpha = 0.09f), Color.Transparent)))
+            .padding(horizontal = 13.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(title.uppercase(), color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-        Text(count.toString(), color = Muted, style = MaterialTheme.typography.labelSmall)
+        Box(
+            modifier = Modifier.size(26.dp).clip(CircleShape).background(Accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(count.toString(), color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -5555,7 +6786,9 @@ private fun LimitedModuleAccessNotice(compact: Boolean = false) {
 
 private fun playStoreReleaseLabel(status: PlayStoreVersionStatus, module: ModuleConfig): String =
     when {
-        status.latestVersion != null -> gameReleaseLabel(status.latestVersion, status.versionCodeFor(module))
+        status.latestVersion != null -> status.versionCodeFor(module)?.let {
+            gameReleaseLabel(status.latestVersion, it)
+        } ?: "v${status.latestVersion} · build unavailable"
         status.latestVersionCode != null -> "${status.latestVersionCode} · version not published"
         else -> when (status.updateAvailable) {
             true -> "New release detected"
@@ -5601,11 +6834,6 @@ private fun ModuleListingCard(
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "browse-card-scale"
     )
-    val cardColor by animateColorAsState(
-        targetValue = if (game != null && game.moduleSupported) Color(0xFF153129) else SurfaceDark,
-        animationSpec = tween(durationMillis = 220),
-        label = "browse-card-color"
-    )
     val statusText = when {
         listing.playStoreUpdateInProgress ->
             "Add-on update in progress for ${playStoreReleaseReference(listing.playStoreVersionStatus)}"
@@ -5617,7 +6845,8 @@ private fun ModuleListingCard(
     val statusColor = when {
         listing.playStoreUpdateInProgress -> AccentBlue
         game != null && game.moduleSupported -> Accent
-        else -> Muted
+        game == null -> PrivateGold
+        else -> Danger
     }
     val actionLabel = when {
         game == null -> "Get game"
@@ -5629,19 +6858,31 @@ private fun ModuleListingCard(
         modifier
             .fillMaxWidth()
             .scale(cardScale)
-            .clip(RoundedCornerShape(22.dp))
-            .background(cardColor)
+            .clip(RoundedCornerShape(26.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(statusColor.copy(alpha = 0.11f), SurfaceDark.copy(alpha = 0.96f))
+                )
+            )
+            .border(BorderStroke(1.dp, statusColor.copy(alpha = 0.18f)), RoundedCornerShape(26.dp))
             .clickable(
                 interactionSource = interaction,
                 indication = null,
                 onClick = onInstall
             )
             .animateContentSize()
-            .padding(16.dp)
+            .padding(17.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (bitmap != null) Image(bitmap, listing.catalog.config.title, Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)))
-            else Box(Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceRaised), contentAlignment = Alignment.Center) {
+            if (bitmap != null) Image(
+                bitmap,
+                listing.catalog.config.title,
+                Modifier
+                    .size(62.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), RoundedCornerShape(18.dp))
+            )
+            else Box(Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(SurfaceRaised), contentAlignment = Alignment.Center) {
                 Text(listing.catalog.config.title.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.width(14.dp))
@@ -5649,6 +6890,7 @@ private fun ModuleListingCard(
                 Text(
                     listing.catalog.config.title,
                     color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -5683,6 +6925,8 @@ private fun ModuleListingCard(
         Button(
             onClick = onInstall,
             modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(vertical = 12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink)
         ) {
             Text(actionLabel, fontWeight = FontWeight.Bold)
@@ -6021,6 +7265,12 @@ private fun LibraryScreen(
     }
     val filteredPackageNames = remember(filteredGames) { filteredGames.mapTo(linkedSetOf()) { it.packageName } }
     val allFilteredSelected = filteredPackageNames.isNotEmpty() && filteredPackageNames.all(selectedPackages::contains)
+    val readyCount = remember(games) {
+        games.count {
+            it.status in setOf(LibraryGameStatus.RUNNING, LibraryGameStatus.READY) &&
+                !it.playStoreOutdatedWarning
+        }
+    }
     LaunchedEffect(managing, games) {
         selectedPackages = if (managing) {
             selectedPackages.intersect(games.mapTo(hashSetOf()) { it.packageName })
@@ -6040,111 +7290,80 @@ private fun LibraryScreen(
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 20.dp),
+            contentPadding = PaddingValues(top = 18.dp, bottom = 104.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Spacer(Modifier.height(18.dp))
-            Text(
-                "Jester Mods",
-                color = Color.White,
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "Your games, ready when you are",
-                color = Muted,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(Modifier.height(24.dp))
-
-            if (showInitialLoading) {
-                LoadingLibrary()
-            } else if (games.isEmpty()) {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(bottom = 96.dp)
-                ) {
-                    item { EmptyLibrary() }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "YOUR ADD-ONS",
-                            color = Accent,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "${games.size} installed",
-                            color = Muted,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+            item {
+                LibraryHero(
+                    totalCount = games.size,
+                    readyCount = readyCount,
+                    managing = managing,
+                    showMetrics = !showInitialLoading && games.isNotEmpty(),
+                    onManage = {
+                        if (managing) selectedPackages = emptySet()
+                        onManagingChange(!managing)
                     }
-                    OutlinedButton(
-                        onClick = {
-                            if (managing) selectedPackages = emptySet()
-                            onManagingChange(!managing)
-                        },
-                        border = BorderStroke(1.dp, if (managing) AccentBlue else Hairline),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (managing) AccentBlue else Accent
-                        ),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text(if (managing) "Done" else "Manage", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Find add-ons") },
-                    placeholder = { Text("Game name or package") },
-                    trailingIcon = if (query.isNotEmpty()) {
-                        {
-                            Text(
-                                "Clear",
-                                color = Accent,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { onQueryChange("") }
-                                    .padding(8.dp)
-                            )
-                        }
-                    } else null,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Accent,
-                        unfocusedBorderColor = Hairline,
-                        focusedLabelColor = Accent,
-                        unfocusedLabelColor = Muted,
-                        focusedPlaceholderColor = Muted,
-                        unfocusedPlaceholderColor = Muted,
-                        cursorColor = Accent
-                    ),
-                    shape = RoundedCornerShape(18.dp)
                 )
-                if (managing) {
-                    Spacer(Modifier.height(10.dp))
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(SurfaceRaised.copy(alpha = 0.82f))
-                            .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(18.dp))
-                            .padding(12.dp)
-                    ) {
+            }
+            when {
+                showInitialLoading -> item { LoadingLibrary() }
+                games.isEmpty() -> item { EmptyLibrary(onBrowse) }
+                else -> {
+                    item {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Find add-ons") },
+                            placeholder = { Text("Game name or package") },
+                            trailingIcon = if (query.isNotEmpty()) {
+                                {
+                                    Text(
+                                        "Clear",
+                                        color = Accent,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { onQueryChange("") }
+                                            .padding(8.dp)
+                                    )
+                                }
+                            } else null,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedContainerColor = SurfaceRaised.copy(alpha = 0.72f),
+                                unfocusedContainerColor = SurfaceRaised.copy(alpha = 0.52f),
+                                focusedBorderColor = Accent,
+                                unfocusedBorderColor = Hairline,
+                                focusedLabelColor = Accent,
+                                unfocusedLabelColor = Muted,
+                                focusedPlaceholderColor = Muted,
+                                unfocusedPlaceholderColor = Muted,
+                                cursorColor = Accent
+                            ),
+                            shape = RoundedCornerShape(22.dp)
+                        )
+                    }
+                    if (managing) item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(AccentBlue.copy(alpha = 0.14f), SurfaceRaised.copy(alpha = 0.88f))
+                                    )
+                                )
+                                .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.28f)), RoundedCornerShape(22.dp))
+                                .padding(14.dp)
+                        ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -6193,18 +7412,39 @@ private fun LibraryScreen(
                                 )
                             }
                         }
+                        }
                     }
-                }
-                Spacer(Modifier.height(12.dp))
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    "YOUR ADD-ONS",
+                                    color = Accent,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "${games.size} installed",
+                                    color = Muted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(if (refreshing) AccentBlue else Accent))
+                        }
+                    }
                     if (filteredGames.isEmpty()) {
                         item {
                             Column(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(SurfaceRaised.copy(alpha = 0.62f))
+                                    .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(24.dp))
+                                    .padding(vertical = 34.dp, horizontal = 20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text("No add-ons found", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -6232,7 +7472,7 @@ private fun LibraryScreen(
             }
         }
 
-        if (!managing) {
+        if (!managing && games.isNotEmpty()) {
             SupportedGamesFab(
                 onBrowse = onBrowse,
                 modifier = Modifier
@@ -6308,9 +7548,102 @@ private fun LibraryScreen(
 }
 
 @Composable
+private fun LibraryHero(
+    totalCount: Int,
+    readyCount: Int,
+    managing: Boolean,
+    showMetrics: Boolean,
+    onManage: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(32.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(Accent.copy(alpha = 0.22f), AccentBlue.copy(alpha = 0.10f), SurfaceDark)
+                )
+            )
+            .border(BorderStroke(1.dp, Accent.copy(alpha = 0.26f)), RoundedCornerShape(32.dp))
+            .padding(22.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(Brush.linearGradient(listOf(Accent, AccentBlue))),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.jester_moods_icon),
+                    contentDescription = "Jester Mods",
+                    modifier = Modifier.size(40.dp)
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("YOUR LIBRARY", color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("Jester Mods", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            }
+            if (showMetrics) {
+                OutlinedButton(
+                    onClick = onManage,
+                    border = BorderStroke(1.dp, if (managing) AccentBlue else Color.White.copy(alpha = 0.20f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = if (managing) AccentBlue else Color.White),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(if (managing) "Done" else "Manage", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "Your games, ready when you are",
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            "A polished home for every add-on you keep close.",
+            color = Muted,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        if (showMetrics) {
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                LibraryMetric(totalCount, "ADD-ONS", Accent, Modifier.weight(1f))
+                LibraryMetric(readyCount, "READY", AccentBlue, Modifier.weight(1f))
+                LibraryMetric(totalCount - readyCount, "TO REVIEW", PrivateGold, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryMetric(count: Int, label: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.Black.copy(alpha = 0.18f))
+            .border(BorderStroke(1.dp, color.copy(alpha = 0.20f)), RoundedCornerShape(18.dp))
+            .padding(horizontal = 12.dp, vertical = 11.dp)
+    ) {
+        Text(count.toString(), color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(label, color = color, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+@Composable
 private fun LoadingLibrary() {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 36.dp, bottom = 96.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(SurfaceRaised.copy(alpha = 0.68f))
+            .border(BorderStroke(1.dp, Hairline), RoundedCornerShape(26.dp))
+            .padding(vertical = 30.dp, horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Loading your library", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -6330,25 +7663,47 @@ private fun LoadingLibrary() {
 }
 
 @Composable
-private fun EmptyLibrary() {
+private fun EmptyLibrary(onBrowse: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 36.dp, bottom = 96.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(AccentBlue.copy(alpha = 0.12f), SurfaceRaised.copy(alpha = 0.72f))
+                )
+            )
+            .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.22f)), RoundedCornerShape(28.dp))
+            .padding(vertical = 30.dp, horizontal = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("No games ready yet", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Box(
+            modifier = Modifier.size(58.dp).clip(CircleShape).background(AccentBlue.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("+", color = AccentBlue, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "No games ready yet",
+            color = Color.White,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
         Spacer(Modifier.height(8.dp))
         Text(
             "Browse available add-ons and add them to supported games. Library entries stay here even if the original game later needs to be reinstalled.",
             color = Muted,
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
         )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "Pull down to refresh your library and the add-on catalog.",
-            color = Accent,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold
-        )
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onBrowse,
+            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Ink),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp)
+        ) { Text("Browse add-ons", fontWeight = FontWeight.Bold) }
     }
 }
 
@@ -6427,16 +7782,28 @@ private fun CompactGameCard(
     val haptic = LocalHapticFeedback.current
     val addOnOutdated = game.playStoreOutdatedWarning
     val addOnUpdating = game.playStoreUpdateInProgress
+    val statusColor = when {
+        addOnUpdating || game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
+        game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Accent
+        game.status == LibraryGameStatus.UPDATE_AVAILABLE -> PrivateGold
+        else -> Danger
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .scale(scale)
-            .clip(RoundedCornerShape(22.dp))
-            .background(if (selected) AccentBlue.copy(alpha = 0.12f) else SurfaceDark.copy(alpha = 0.94f))
+            .clip(RoundedCornerShape(26.dp))
+            .background(
+                if (selected) {
+                    Brush.horizontalGradient(listOf(AccentBlue.copy(alpha = 0.20f), SurfaceRaised))
+                } else {
+                    Brush.horizontalGradient(listOf(statusColor.copy(alpha = 0.11f), SurfaceDark.copy(alpha = 0.96f)))
+                }
+            )
             .border(
-                BorderStroke(1.dp, if (selected) AccentBlue.copy(alpha = 0.7f) else Color.Transparent),
-                RoundedCornerShape(22.dp)
+                BorderStroke(1.dp, if (selected) AccentBlue.copy(alpha = 0.72f) else statusColor.copy(alpha = 0.18f)),
+                RoundedCornerShape(26.dp)
             )
             .clickable(
                 interactionSource = interaction,
@@ -6446,7 +7813,7 @@ private fun CompactGameCard(
                     if (managing) onToggleSelection() else onOpenGame(game)
                 }
             )
-            .padding(horizontal = 14.dp, vertical = 13.dp)
+            .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -6456,11 +7823,14 @@ private fun CompactGameCard(
                 Image(
                     bitmap = bitmap,
                     contentDescription = game.title,
-                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp))
+                    modifier = Modifier
+                        .size(62.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), RoundedCornerShape(18.dp))
                 )
             } else {
                 Box(
-                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).background(SurfaceRaised),
+                    modifier = Modifier.size(62.dp).clip(RoundedCornerShape(18.dp)).background(SurfaceRaised),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(game.title.take(1).uppercase(), color = Accent, fontWeight = FontWeight.Bold)
@@ -6476,21 +7846,15 @@ private fun CompactGameCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
                     libraryStatusLabel(game),
-                    color = when {
-                        addOnUpdating -> AccentBlue
-                        game.launchAction != LibraryLaunchAction.PLAY -> AccentBlue
-                        game.status == LibraryGameStatus.RUNNING || game.status == LibraryGameStatus.READY -> Muted
-                        game.status == LibraryGameStatus.UPDATE_AVAILABLE -> Accent
-                        else -> Danger
-                    },
+                    color = statusColor,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(9.dp))
                 LauncherMethodBadges(
                     launcherMethodBadgePresentations(
                         module = game.module,
@@ -6525,12 +7889,16 @@ private fun CompactGameCard(
                     if (selected) Text("✓", color = Ink, fontWeight = FontWeight.Bold)
                 }
             } else {
-                Text(
-                    "›",
-                    color = Accent,
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.align(Alignment.CenterVertically)
-                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(statusColor.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("›", color = statusColor, style = MaterialTheme.typography.titleLarge)
+                }
             }
         }
         if (game.privateAccessProtected) {
@@ -6556,6 +7924,7 @@ private fun ModuleScreen(
     refreshing: Boolean,
     onBack: () -> Unit,
     onUpdate: () -> Unit,
+    onRepair: () -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: () -> Unit,
     onSelectNonRootMethod: (NonRootMethod) -> Unit,
@@ -6714,27 +8083,81 @@ private fun ModuleScreen(
                     }
                     Spacer(Modifier.height(10.dp))
                 }
-                OutlinedButton(
+                if (game.status != LibraryGameStatus.REPAIR_NEEDED) {
+                    OutlinedButton(
+                        onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            if (installedGame == null) onResolve?.invoke() else onUpdate()
+                        },
+                        enabled = !update.inProgress && (installedGame != null || onResolve != null),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp)
+                    ) {
+                        Text(
+                            when {
+                                installedGame == null -> "Install original game"
+                                game.status == LibraryGameStatus.UPDATE_AVAILABLE -> "Download update"
+                                update.updateAvailable -> "Download update"
+                                update.failed -> "Try again"
+                                update.completed -> "Check again"
+                                else -> "Check for updates"
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(PrivateViolet.copy(alpha = 0.18f), SurfaceRaised, SurfaceDark)
+                        )
+                    )
+                    .border(BorderStroke(1.dp, PrivateViolet.copy(alpha = 0.30f)), RoundedCornerShape(26.dp))
+                    .padding(18.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(RoundedCornerShape(17.dp))
+                            .background(PrivateViolet.copy(alpha = 0.15f))
+                            .border(BorderStroke(1.dp, PrivateViolet.copy(alpha = 0.24f)), RoundedCornerShape(17.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("↻", color = PrivateViolet, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("CARE & RECOVERY", color = PrivateViolet, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Fresh start, same add-on.", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Download a fresh, verified copy of this add-on whenever its files need attention.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
                     onClick = {
                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                        if (installedGame == null) onResolve?.invoke() else onUpdate()
+                        onRepair()
                     },
-                    enabled = !update.inProgress && (installedGame != null || onResolve != null),
+                    enabled = !update.inProgress && !launch.inProgress && !gameDataReset.inProgress &&
+                        installedGame != null && game.listing != null,
                     modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp)
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = PrivateViolet, contentColor = Ink)
                 ) {
-                    Text(
-                        when {
-                            installedGame == null -> "Install original game"
-                            game.status == LibraryGameStatus.REPAIR_NEEDED -> "Repair add-on"
-                            game.status == LibraryGameStatus.UPDATE_AVAILABLE -> "Download update"
-                            update.updateAvailable -> "Download update"
-                            update.failed -> "Try again"
-                            update.completed -> "Check again"
-                            else -> "Check for updates"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Repair add-on", fontWeight = FontWeight.Bold)
                 }
             }
         }
