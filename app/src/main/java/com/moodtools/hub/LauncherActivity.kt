@@ -1192,7 +1192,8 @@ internal fun isTrustedLauncherWebAddress(address: String): Boolean = runCatching
     val path = uri.path.trimEnd('/')
     when (uri.host?.lowercase()) {
         "jester.moodtools.workers.dev" -> true
-        "github.com" -> path.equals("/BenigJester", ignoreCase = true)
+        "github.com" -> path.equals("/BenigJester", ignoreCase = true) ||
+            path.equals("/BenigJester/Jester-Mods-Launcher/issues", ignoreCase = true)
         "youtube.com", "www.youtube.com" -> path.equals("/@jestermods3.0", ignoreCase = true)
         else -> false
     }

@@ -502,9 +502,10 @@ private sealed class LauncherPage(val key: String, val rank: Int) {
     object Language : LauncherPage("language", 5)
     object Theme : LauncherPage("theme", 6)
     object About : LauncherPage("about", 7)
-    object LauncherUpdate : LauncherPage("launcher-update", 8)
-    object Changelog : LauncherPage("changelog", 9)
-    object AccountIdentity : LauncherPage("account-identity", 10)
+    object Help : LauncherPage("help", 8)
+    object LauncherUpdate : LauncherPage("launcher-update", 9)
+    object Changelog : LauncherPage("changelog", 10)
+    object AccountIdentity : LauncherPage("account-identity", 11)
 }
 
 internal enum class LauncherOverlay {
@@ -705,6 +706,7 @@ fun GameHubScreen(
     var languageOpen by rememberSaveable { mutableStateOf(false) }
     var themeOpen by rememberSaveable { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
+    var helpOpen by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val settingsPreferences = remember(context) {
         context.getSharedPreferences(LAUNCHER_SETTINGS_PREFERENCES, Context.MODE_PRIVATE)
@@ -717,6 +719,7 @@ fun GameHubScreen(
     val page = when {
         changelog.open -> LauncherPage.Changelog
         accountIdentity.open -> LauncherPage.AccountIdentity
+        helpOpen -> LauncherPage.Help
         aboutOpen -> LauncherPage.About
         languageOpen -> LauncherPage.Language
         themeOpen -> LauncherPage.Theme
@@ -728,7 +731,7 @@ fun GameHubScreen(
     }
 
     BackHandler(
-        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || aboutOpen || languageOpen || themeOpen || settingsOpen || selected != null ||
+        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || helpOpen || aboutOpen || languageOpen || themeOpen || settingsOpen || selected != null ||
             browsing || pendingDownload != null || libraryManaging
     ) {
         when {
@@ -737,6 +740,7 @@ fun GameHubScreen(
                 onCloseModuleChangelog()
             changelog.open -> onCloseChangelog()
             accountIdentity.open -> onCloseAccountIdentity()
+            helpOpen -> helpOpen = false
             aboutOpen -> aboutOpen = false
             languageOpen -> languageOpen = false
             themeOpen -> themeOpen = false
@@ -919,7 +923,8 @@ fun GameHubScreen(
                                 onOpenLanguage = { languageOpen = true },
                                 selectedTheme = selectedTheme,
                                 onOpenTheme = { themeOpen = true },
-                                onOpenAbout = { aboutOpen = true }
+                                onOpenAbout = { aboutOpen = true },
+                                onOpenHelp = { helpOpen = true }
                             )
                         }
                         LauncherPage.Language -> {
@@ -949,6 +954,14 @@ fun GameHubScreen(
                                 onBack = { aboutOpen = false },
                                 onOpenGitHub = { onVerify("https://github.com/BenigJester") },
                                 onOpenYouTube = { onVerify("https://youtube.com/@jestermods3.0?si=eqawQs6Cjsg1OhkV") }
+                            )
+                        }
+                        LauncherPage.Help -> {
+                            HelpScreen(
+                                onBack = { helpOpen = false },
+                                onOpenIssues = {
+                                    onVerify("https://github.com/BenigJester/Jester-Mods-Launcher/issues")
+                                }
                             )
                         }
                         LauncherPage.Changelog -> {
@@ -1606,7 +1619,8 @@ private fun SettingsScreen(
     onOpenLanguage: () -> Unit,
     selectedTheme: LauncherTheme,
     onOpenTheme: () -> Unit,
-    onOpenAbout: () -> Unit
+    onOpenAbout: () -> Unit,
+    onOpenHelp: () -> Unit
 ) {
     val flavor = when (BuildConfig.FLAVOR.lowercase(Locale.ROOT)) {
         "nonroot" -> "Non-root"
@@ -1725,6 +1739,16 @@ private fun SettingsScreen(
                 detail = "Meet the launcher, its design principles, and the creator behind Jester Mods.",
                 accent = PrivateViolet,
                 onClick = onOpenAbout
+            )
+        }
+        item {
+            SettingsPortalCard(
+                icon = SettingsPortalIcon.Help,
+                eyebrow = "HELP & SUPPORT",
+                title = "Help",
+                detail = "Find guidance and report issues through the official public repository.",
+                accent = AccentBlue,
+                onClick = onOpenHelp
             )
         }
         item { Spacer(Modifier.height(24.dp)) }
@@ -2161,6 +2185,115 @@ private fun AboutPrincipleCard(
 }
 
 @Composable
+private fun HelpScreen(
+    onBack: () -> Unit,
+    onOpenIssues: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text(
+                "‹  Settings",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(34.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(AccentBlue.copy(alpha = 0.24f), Accent.copy(alpha = 0.14f), SurfaceRaised)
+                        )
+                    )
+                    .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.24f)), RoundedCornerShape(34.dp))
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    Modifier.size(82.dp).clip(RoundedCornerShape(27.dp))
+                        .background(Color.Black.copy(alpha = 0.24f))
+                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(27.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    SettingsPortalGlyph(SettingsPortalIcon.Help, AccentBlue, Modifier.size(42.dp))
+                }
+                Spacer(Modifier.height(20.dp))
+                Text("JESTER MODS SUPPORT", color = AccentBlue, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(5.dp))
+                Text("Help & Support", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Turn a problem into a clear report so it can be understood and fixed faster.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        item {
+            Text("BEFORE YOU REPORT", color = Muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        }
+        item {
+            AboutPrincipleCard(
+                number = "01",
+                title = "Update first",
+                detail = "Install the latest launcher and add-on update, then try the action again.",
+                accent = Accent
+            )
+        }
+        item {
+            AboutPrincipleCard(
+                number = "02",
+                title = "Capture the details",
+                detail = "Include your launcher edition, game version, build number, and the steps that caused the issue.",
+                accent = AccentBlue
+            )
+        }
+        item {
+            AboutPrincipleCard(
+                number = "03",
+                title = "Protect your privacy",
+                detail = "Never post access codes, recovery details, or other personal information.",
+                accent = PrivateViolet
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
+                    .background(SurfaceRaised.copy(alpha = 0.94f))
+                    .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.24f)), RoundedCornerShape(28.dp))
+                    .padding(20.dp)
+            ) {
+                Text("OFFICIAL SUPPORT", color = AccentBlue, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(6.dp))
+                Text("Report an issue", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Open the public issue page to report a bug, request help, or suggest an improvement.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onOpenIssues,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Open issue page", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
 private fun SettingsMetaPill(label: String) {
     Text(
         label,
@@ -2230,11 +2363,15 @@ private fun SettingsPortalCard(
     }
 }
 
-private enum class SettingsPortalIcon { Account, Changelog, Language, Theme, About }
+private enum class SettingsPortalIcon { Account, Changelog, Language, Theme, About, Help }
 
 @Composable
-private fun SettingsPortalGlyph(icon: SettingsPortalIcon, color: Color) {
-    Canvas(Modifier.size(if (icon == SettingsPortalIcon.Theme) 34.dp else 30.dp)) {
+private fun SettingsPortalGlyph(
+    icon: SettingsPortalIcon,
+    color: Color,
+    modifier: Modifier = Modifier.size(if (icon == SettingsPortalIcon.Theme) 34.dp else 30.dp)
+) {
+    Canvas(modifier) {
         val stroke = 2.2.dp.toPx()
         val outline = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = StrokeCap.Round)
         val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
@@ -2274,6 +2411,20 @@ private fun SettingsPortalGlyph(icon: SettingsPortalIcon, color: Color) {
                 drawCircle(color, size.minDimension * 0.4f, center, style = outline)
                 drawCircle(color, stroke * 0.75f, center.copy(y = size.height * 0.3f))
                 drawLine(color, center.copy(y = size.height * 0.45f), center.copy(y = size.height * 0.72f), stroke, StrokeCap.Round)
+            }
+            SettingsPortalIcon.Help -> {
+                drawCircle(color, size.minDimension * 0.4f, center, style = outline)
+                drawArc(
+                    color,
+                    startAngle = 205f,
+                    sweepAngle = 250f,
+                    useCenter = false,
+                    topLeft = center.copy(x = size.width * 0.31f, y = size.height * 0.21f),
+                    size = androidx.compose.ui.geometry.Size(size.width * 0.38f, size.height * 0.38f),
+                    style = outline
+                )
+                drawLine(color, center.copy(y = size.height * 0.56f), center.copy(y = size.height * 0.67f), stroke, StrokeCap.Round)
+                drawCircle(color, stroke * 0.7f, center.copy(y = size.height * 0.78f))
             }
         }
     }

@@ -69,6 +69,8 @@ class LauncherLanguageTest {
             assertNotEquals("Game version 3.0.4", LauncherLocalization.translate("Game version 3.0.4", language))
             assertNotEquals("Sort: Recommended", LauncherLocalization.translate("Sort: Recommended", language))
             assertNotEquals("Copied support code", LauncherLocalization.translate("Copied support code", language))
+            assertNotEquals("Help", LauncherLocalization.translate("Help", language))
+            assertNotEquals("Open issue page", LauncherLocalization.translate("Open issue page", language))
         }
     }
 }
