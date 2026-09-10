@@ -415,6 +415,11 @@ data class LibraryGame(
     val privateScope: String? = listing?.catalog?.privateScope,
     val privateAccessExpiresAtEpochSeconds: Long? = listing?.privateAccessExpiresAtEpochSeconds
 ) {
+    val requiresOfficialGameRefresh: Boolean
+        get() = status == LibraryGameStatus.UNSUPPORTED_VERSION &&
+            (installedNonRootMethod == NonRootMethod.IDENTITY_SHELL ||
+                installedNonRootMethod == NonRootMethod.DIRECT_PATCH)
+
     val privateAccessProtected: Boolean
         get() = privateScope != null
 

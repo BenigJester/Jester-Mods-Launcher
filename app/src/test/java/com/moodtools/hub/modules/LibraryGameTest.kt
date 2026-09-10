@@ -32,6 +32,29 @@ class LibraryGameTest {
     }
 
     @Test
+    fun onlyOutdatedReplacementInstallsRequireTheOfficialGameRefreshFlow() {
+        val unsupported = libraryGame("Unsupported", versionSupported = false)
+
+        assertTrue(unsupported.copy(installedNonRootMethod = NonRootMethod.IDENTITY_SHELL)
+            .requiresOfficialGameRefresh)
+        assertTrue(unsupported.copy(installedNonRootMethod = NonRootMethod.DIRECT_PATCH)
+            .requiresOfficialGameRefresh)
+        assertEquals(
+            "Restore official game",
+            libraryPrimaryActionLabel(
+                unsupported.status,
+                unsupported.launchAction,
+                LaunchUiState(),
+                requiresOfficialGameRefresh = true
+            )
+        )
+        assertFalse(unsupported.copy(installedNonRootMethod = NonRootMethod.INJECTION)
+            .requiresOfficialGameRefresh)
+        assertFalse(libraryGame("Supported").copy(installedNonRootMethod = NonRootMethod.IDENTITY_SHELL)
+            .requiresOfficialGameRefresh)
+    }
+
+    @Test
     fun libraryIsAlwaysAlphabeticalRegardlessOfRunningOrRecentState() {
         val alpha = libraryGame("Alpha", lastLaunchedAt = 10)
         val beta = libraryGame("Beta", lastLaunchedAt = 20)

@@ -288,7 +288,7 @@ class LauncherActivity : ComponentActivity() {
                     directPatchPromptState = viewModel.directPatchPromptState,
                     onOpenGame = viewModel::openLibraryGame,
                     onBack = viewModel::closeGame,
-                    onUpdate = viewModel::updateLibraryGame,
+                    onUpdate = ::updateLibraryGame,
                     onRepair = viewModel::repairLibraryGame,
                     onVerify = ::openTrustedWebPage,
                     onLaunch = ::launchLibraryGame,
@@ -439,6 +439,16 @@ class LauncherActivity : ComponentActivity() {
         viewModel.authorizePackageReplacement(game) {
             preparePackageReplacement(entry, game)
         }
+    }
+
+    private fun updateLibraryGame(entry: LibraryGame) {
+        if (!entry.requiresOfficialGameRefresh) {
+            viewModel.updateLibraryGame(entry)
+            return
+        }
+        if (pendingPackageReplacement != null || pendingLegacyPatchMigration != null) return
+        pendingLegacyPatchMigration = entry
+        viewModel.showLegacyPatchMigration(entry.title)
     }
 
     private fun requestRemoveFromLibrary(entry: LibraryGame) {

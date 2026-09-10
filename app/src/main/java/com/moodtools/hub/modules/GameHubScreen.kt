@@ -426,12 +426,14 @@ data class PackageSetupUiState(
 internal fun libraryPrimaryActionLabel(
     status: LibraryGameStatus,
     launchAction: LibraryLaunchAction,
-    launch: LaunchUiState
+    launch: LaunchUiState,
+    requiresOfficialGameRefresh: Boolean = false
 ): String = when {
     launch.inProgress && launchAction == LibraryLaunchAction.SHELL_AND_INSTALL -> "Preparing shell…"
     launch.inProgress && launchAction == LibraryLaunchAction.RESTORE_OFFICIAL_FOR_SHELL -> "Checking migration…"
     launch.inProgress && launchAction != LibraryLaunchAction.PLAY -> "Preparing patch…"
     status == LibraryGameStatus.RUNNING -> "Resume"
+    requiresOfficialGameRefresh -> "Restore official game"
     status !in setOf(
         LibraryGameStatus.READY,
         LibraryGameStatus.UPDATE_AVAILABLE
@@ -812,7 +814,7 @@ fun GameHubScreen(
                                     onRemoveFromLibrary = { onRemoveFromLibrary(visiblePage.game) },
                                     onClearGameData = { onClearGameData(visiblePage.game) },
                                     onRefresh = onRefreshCatalog,
-                                    onResolve = visiblePage.game.listing?.let { listing -> { onOpenDownload(listing) } }
+                                    onResolve = visiblePage.game.listing?.let { { onUpdate(visiblePage.game) } }
                                 )
                             }
                         }
@@ -8430,7 +8432,12 @@ private fun ModuleScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
                 ) {
                     Text(
-                        libraryPrimaryActionLabel(game.status, game.launchAction, launch),
+                        libraryPrimaryActionLabel(
+                            game.status,
+                            game.launchAction,
+                            launch,
+                            game.requiresOfficialGameRefresh
+                        ),
                         fontWeight = FontWeight.Bold
                     )
                 }
