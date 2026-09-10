@@ -182,11 +182,20 @@ class ModuleCatalogClient(
                 val supportedVersions = buildSet {
                     for (versionIndex in 0 until versions.length()) add(versions.getString(versionIndex))
                 }
-                val supportedVersionCodes = buildSet {
+                val rawVersionCodes = buildSet {
                     val codes = item.optJSONArray("supportedVersionCodes") ?: return@buildSet
                     for (codeIndex in 0 until codes.length()) {
                         add(codes.getLong(codeIndex).also { require(it > 0L) })
                     }
+                }
+                val supportedVersionCodes = if (rawVersionCodes.isNotEmpty() && rawVersionCodes.size != supportedVersions.size) {
+                    if (rawVersionCodes.size > supportedVersions.size) {
+                        rawVersionCodes.take(supportedVersions.size).toSet()
+                    } else {
+                        emptySet()
+                    }
+                } else {
+                    rawVersionCodes
                 }
                 val supportedAbis = buildSet {
                     for (abiIndex in 0 until abis.length()) add(abis.getString(abiIndex))

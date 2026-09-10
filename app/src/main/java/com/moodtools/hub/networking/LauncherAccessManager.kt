@@ -282,6 +282,7 @@ class LauncherAccessManager(context: Context) {
                                 .put("flavor", BuildConfig.FLAVOR)
                                 .put("accessVersion", ACCESS_VERSION)
                                 .put("managedExpiry", true)
+                                .put("proofKeyId", proofIdentity.keyId)
                         )
                         if (!response.optBoolean("ok")) {
                             clearLease()

@@ -182,7 +182,7 @@ const DEFAULT_MODULES: ModuleItem[] = [
     publishedAt: 1705000000,
     updatedAt: 1706000000,
     build: 21,
-    supportedVersions: ["2.0.0", "2.1.0", "latest"],
+    supportedVersions: ["2.0.0", "2.1.0"],
     supportedVersionCodes: [201, 202],
     supportedAbis: ["arm64-v8a", "armeabi-v7a"],
     downloadSizeByAbi: { "arm64-v8a": 15360, "armeabi-v7a": 14200 },
@@ -200,7 +200,7 @@ const DEFAULT_MODULES: ModuleItem[] = [
       nativeFile: "libvelocity.so",
       title: "Jester Velocity Engine",
       entryPoint: "com.jester.speed.Bootstrap",
-      supportedVersions: ["2.0.0", "2.1.0", "latest"],
+      supportedVersions: ["2.0.0", "2.1.0"],
       supportedAbis: ["arm64-v8a", "armeabi-v7a"],
       nonrootMethod: "injection",
     },
@@ -356,25 +356,56 @@ async function computeSha256UrlSafe(text: string): Promise<string> {
 // 5. Persistence Service (KV + Fallback Memory Cache)
 // ============================================================================
 
+function sanitizeModules(modules: ModuleItem[]): { list: ModuleItem[]; changed: boolean } {
+  let changed = false;
+  const list = modules.map((m) => {
+    const copy = { ...m };
+    if (copy.supportedVersions && copy.supportedVersionCodes && copy.supportedVersionCodes.length > 0) {
+      if (copy.supportedVersions.length !== copy.supportedVersionCodes.length) {
+        changed = true;
+        if (copy.supportedVersions.length > copy.supportedVersionCodes.length) {
+          copy.supportedVersions = copy.supportedVersions.slice(0, copy.supportedVersionCodes.length);
+        } else {
+          copy.supportedVersionCodes = copy.supportedVersionCodes.slice(0, copy.supportedVersions.length);
+        }
+        if (copy.moduleConfig) {
+          copy.moduleConfig = {
+            ...copy.moduleConfig,
+            supportedVersions: [...copy.supportedVersions],
+          };
+        }
+      }
+    }
+    return copy;
+  });
+  return { list, changed };
+}
+
 async function getStoredModules(env: Env): Promise<ModuleItem[]> {
   if (env.LAUNCHER_KV) {
     const raw = await env.LAUNCHER_KV.get("modules:catalog", "json");
     if (raw && Array.isArray(raw) && raw.length > 0) {
-      return raw as ModuleItem[];
+      const { list, changed } = sanitizeModules(raw as ModuleItem[]);
+      if (changed) {
+        await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(list));
+      }
+      return list;
     }
     // Seed KV initially if empty
     await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(DEFAULT_MODULES));
   }
-  return Array.from(memoryModules.values());
+  const { list } = sanitizeModules(Array.from(memoryModules.values()));
+  return list;
 }
 
 async function saveStoredModules(modules: ModuleItem[], env: Env): Promise<void> {
+  const { list } = sanitizeModules(modules);
   memoryModules.clear();
-  for (const m of modules) {
+  for (const m of list) {
     memoryModules.set(m.slug, m);
   }
   if (env.LAUNCHER_KV) {
-    await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(modules));
+    await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(list));
   }
 }
 
@@ -961,10 +992,29 @@ export default {
     // API: PLAY STORE VERSIONS, CHANGELOGS & FEATURES
     // ------------------------------------------------------------------------
     if (url.pathname === "/api/launcher-play-store-versions") {
+      const now = Math.floor(Date.now() / 1000);
+      let packageNames: string[] = [];
+      if (method === "POST") {
+        try {
+          const body: any = await request.json();
+          if (Array.isArray(body.packageNames)) {
+            packageNames = body.packageNames;
+          }
+        } catch {}
+      }
+      const results = packageNames.map((pkg) => ({
+        ok: true,
+        packageName: pkg,
+        version: "5.4.0",
+        versionCode: 5400,
+        checkedAt: now,
+        listingUpdatedAt: now - 86400,
+        stale: false,
+      }));
       return okJson({
         ok: true,
         schema: 1,
-        results: [],
+        results,
       });
     }
 
