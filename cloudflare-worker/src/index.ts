@@ -3518,7 +3518,15 @@ npx wrangler r2 object put \\
         </div>
       </div>
       <div class="form-group">
-        <label>Features (one per line)</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+          <label style="margin-bottom: 0;">Features (one per line or upload .json)</label>
+          <div style="display: flex; gap: 0.4rem; align-items: center;">
+            <input type="file" id="mFeaturesJsonInput" accept=".json,application/json" style="display: none;" onchange="handleFeaturesJsonUpload(event)">
+            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('mFeaturesJsonInput').click()" title="Upload features.json or config.json from module">📁 Upload .json</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="loadExampleFeaturesJson()" title="Load module example features.json template">⚡ Example .json</button>
+          </div>
+        </div>
+        <div id="featuresJsonStatus" style="display: none; margin-bottom: 0.5rem;"></div>
         <textarea id="mFeatures" rows="3" placeholder="Damage Multiplier&#10;Defense Boost&#10;Radar Map Reveal"></textarea>
       </div>
       <div class="form-group">
@@ -3784,7 +3792,10 @@ npx wrangler r2 object put \\
       }
     }
 
+    let currentFeatureGroups = null;
+
     function openModuleModal(mod) {
+      currentFeatureGroups = mod ? (mod.featureGroups || null) : null;
       const modal = document.getElementById("moduleModal");
       document.getElementById("modalModuleTitle").innerText = mod ? "Edit Module" : "Add New Module";
       document.getElementById("mSlug").value = mod ? mod.slug : "";
@@ -3806,11 +3817,125 @@ npx wrangler r2 object put \\
       document.getElementById("mFeatures").value = mod ? (mod.features || []).join(String.fromCharCode(10)) : "";
       document.getElementById("mTags").value = mod ? (mod.tags || []).join(", ") : "action, injection, featured";
       document.getElementById("mNotes").value = mod ? mod.notes : "";
+
+      const statusEl = document.getElementById("featuresJsonStatus");
+      if (currentFeatureGroups && currentFeatureGroups.length > 0) {
+        statusEl.innerHTML = '<span class="badge badge-purple">&#10003; ' + currentFeatureGroups.length + ' Feature Groups Configured</span>';
+        statusEl.style.display = "block";
+      } else {
+        statusEl.style.display = "none";
+      }
+
       modal.showModal();
     }
 
     function closeModuleModal() {
+      currentFeatureGroups = null;
+      document.getElementById("featuresJsonStatus").style.display = "none";
       document.getElementById("moduleModal").close();
+    }
+
+    function handleFeaturesJsonUpload(e) {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const json = JSON.parse(evt.target.result);
+          applyLoadedModuleJson(json, file.name);
+        } catch (err) {
+          alert("Invalid JSON file: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    }
+
+    function applyLoadedModuleJson(json, filename) {
+      let extractedFeatures = [];
+      let groups = null;
+
+      if (json.groups && Array.isArray(json.groups)) {
+        groups = json.groups;
+        json.groups.forEach(g => {
+          if (Array.isArray(g.features)) {
+            extractedFeatures.push(...g.features);
+          }
+        });
+      } else if (Array.isArray(json.features)) {
+        extractedFeatures = json.features;
+      } else if (Array.isArray(json)) {
+        extractedFeatures = json.map(f => typeof f === "string" ? f : (f.title || f.name || JSON.stringify(f)));
+      }
+
+      if (extractedFeatures.length > 0) {
+        currentFeatureGroups = groups || [{ title: "Core Features", features: extractedFeatures }];
+        document.getElementById("mFeatures").value = extractedFeatures.join(String.fromCharCode(10));
+        const statusEl = document.getElementById("featuresJsonStatus");
+        statusEl.innerHTML = '<span class="badge badge-green">&#10003; Imported ' + extractedFeatures.length + ' features from ' + (filename || "JSON") + (groups ? ' (' + groups.length + ' groups)' : '') + '</span>';
+        statusEl.style.display = "block";
+        showToast("Loaded " + extractedFeatures.length + " features from " + (filename || "JSON"));
+      }
+
+      if (json.package_name || json.packageName) {
+        document.getElementById("mPkg").value = json.package_name || json.packageName;
+      }
+      if (json.title) {
+        document.getElementById("mTitle").value = json.title;
+      }
+      if (json.entry_point || json.entryPoint) {
+        document.getElementById("mEntryPoint").value = json.entry_point || json.entryPoint;
+      }
+      if (json.nonroot_method || json.nonrootMethod) {
+        const meth = json.nonroot_method || json.nonrootMethod;
+        const sel = document.getElementById("mMethod");
+        if (sel) {
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === meth) { sel.selectedIndex = i; break; }
+          }
+        }
+      }
+      if (json.supported_versions || json.supportedVersions) {
+        const v = json.supported_versions || json.supportedVersions;
+        if (Array.isArray(v)) document.getElementById("mVersions").value = v.join(", ");
+      }
+      if (json.supported_version_codes || json.supportedVersionCodes) {
+        const vc = json.supported_version_codes || json.supportedVersionCodes;
+        if (Array.isArray(vc)) document.getElementById("mVersionCodes").value = vc.join(", ");
+      }
+      if (json.supported_abis || json.supportedAbis) {
+        const abis = json.supported_abis || json.supportedAbis;
+        if (Array.isArray(abis)) {
+          document.getElementById("mAbiArm64").checked = abis.includes("arm64-v8a");
+          document.getElementById("mAbiArmeabi").checked = abis.includes("armeabi-v7a");
+        }
+      }
+    }
+
+    function loadExampleFeaturesJson() {
+      const exampleJson = {
+        schema: 1,
+        groups: [
+          {
+            title: "Template controls",
+            features: [
+              "Toggles, buttons, check boxes, and action buttons",
+              "Radio buttons, seek bars, single-select spinners, and radio-styled multi-select spinners",
+              "Text, integer, float, and long integer inputs",
+              "Collapsible and nested feature groups",
+              "Patch, hook, and direct function call examples"
+            ]
+          },
+          {
+            title: "Non-root method templates",
+            features: [
+              "BlackBox injection configuration",
+              "Direct patch configuration and launcher-only menu guard"
+            ]
+          }
+        ]
+      };
+      applyLoadedModuleJson(exampleJson, "features.json template");
     }
 
     async function saveModule(e) {
@@ -3849,6 +3974,9 @@ npx wrangler r2 object put \\
             supportedVersionCodes: supportedVersionCodes.length > 0 ? supportedVersionCodes : [build],
             supportedAbis,
             features: features.length > 0 ? features : [title + " enhancements"],
+            featureGroups: currentFeatureGroups && currentFeatureGroups.length > 0 ? currentFeatureGroups : [
+              { title: "Core Features", features: features.length > 0 ? features : [title + " enhancements"] }
+            ],
             tags: tags.length > 0 ? tags : ["action", "injection"],
             featured,
             popularity
