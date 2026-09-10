@@ -1,9 +1,15 @@
 package com.moodtools.hub.networking
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import com.moodtools.hub.modules.CatalogModule
+import com.moodtools.hub.modules.GameInstallSource
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class PlayStoreVersionResult(
     val packageName: String,
@@ -15,7 +21,31 @@ data class PlayStoreVersionResult(
     val stale: Boolean
 )
 
-class PlayStoreVersionClient {
+data class PlayStoreBuildObservation(
+    val packageName: String,
+    val version: String,
+    val versionCode: Long,
+    val installerPackageName: String,
+    val signingCertificateSha256: String
+) {
+    val key: String get() = "$packageName|$version|$versionCode"
+}
+
+data class PlayStoreObservationResponse(
+    val status: PlayStoreVersionResult,
+    val acknowledged: Boolean
+)
+
+internal fun shouldReportPlayStoreBuild(
+    observation: PlayStoreBuildObservation,
+    knownVersion: String?,
+    knownVersionCode: Long?,
+    updateAvailable: Boolean?,
+    acknowledgedKey: String?
+): Boolean = acknowledgedKey != observation.key && knownVersion == observation.version &&
+    updateAvailable == true && observation.versionCode > (knownVersionCode ?: 0L)
+
+class PlayStoreVersionClient(private val context: Context? = null) {
     fun load(packageNames: Set<String>): Map<String, PlayStoreVersionResult> {
         require(packageNames.size <= MAX_BATCH_PACKAGES && packageNames.all(PACKAGE_PATTERN::matches)) {
             "Invalid Play Store package names"
@@ -53,6 +83,76 @@ class PlayStoreVersionClient {
         }
     }
 
+    fun installedObservation(module: CatalogModule): PlayStoreBuildObservation? {
+        val appContext = context ?: return null
+        val expectedSigner = (module.installSource as? GameInstallSource.DirectDownload)
+            ?.signingCertificateSha256 ?: return null
+        return runCatching {
+            val packageManager = appContext.packageManager
+            val applicationInfo = packageManager.getApplicationInfo(
+                module.config.packageName,
+                PackageManager.GET_META_DATA
+            )
+            if (applicationInfo.metaData?.getBoolean(IDENTITY_SHELL_METADATA, false) == true) return null
+            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                packageManager.getInstallSourceInfo(module.config.packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getInstallerPackageName(module.config.packageName)
+            }
+            if (installer != PLAY_STORE_PACKAGE) return null
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+            }
+            val packageInfo = packageManager.getPackageInfo(module.config.packageName, flags)
+            val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val signingInfo = packageInfo.signingInfo ?: return null
+                if (signingInfo.hasMultipleSigners()) signingInfo.apkContentsSigners.toList()
+                else signingInfo.signingCertificateHistory.toList()
+            } else {
+                @Suppress("DEPRECATION") packageInfo.signatures?.toList().orEmpty()
+            }
+            val signer = signatures.asSequence()
+                .map { signature -> sha256(signature.toByteArray()) }
+                .firstOrNull { digest -> digest == expectedSigner } ?: return null
+            val version = packageInfo.versionName?.trim()?.takeIf(VERSION_PATTERN::matches) ?: return null
+            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION") packageInfo.versionCode.toLong()
+            }
+            if (versionCode <= 0L) return null
+            PlayStoreBuildObservation(module.config.packageName, version, versionCode, installer, signer)
+        }.getOrNull()
+    }
+
+    fun report(observation: PlayStoreBuildObservation): PlayStoreObservationResponse? {
+        val connection = open("${ModuleCatalogClient.BASE_URL}/api/launcher-play-store-observation").apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        return try {
+            val request = JSONObject()
+                .put("packageName", observation.packageName)
+                .put("version", observation.version)
+                .put("versionCode", observation.versionCode)
+                .put("installerPackageName", observation.installerPackageName)
+                .put("signingCertificateSha256", observation.signingCertificateSha256)
+            connection.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
+            if (connection.responseCode !in 200..299) return null
+            val body = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            PlayStoreObservationResponse(
+                status = parsePlayStoreVersionResult(observation.packageName, body) ?: return null,
+                acknowledged = body.optBoolean("acknowledged", false)
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun open(address: String): HttpURLConnection {
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
@@ -67,8 +167,14 @@ class PlayStoreVersionClient {
 
     companion object {
         private const val HOST = "jester.moodtools.workers.dev"
+        private const val PLAY_STORE_PACKAGE = "com.android.vending"
+        private const val IDENTITY_SHELL_METADATA = "com.moodtools.identity_shell"
         private const val MAX_BATCH_PACKAGES = 2_000
         private val PACKAGE_PATTERN = Regex("^[A-Za-z0-9_.]{3,200}$")
+
+        private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
     }
 }
 

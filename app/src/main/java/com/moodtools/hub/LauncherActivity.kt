@@ -72,6 +72,7 @@ import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
 import com.moodtools.hub.networking.ModuleDownloadAuthorizationExpired
 import com.moodtools.hub.networking.PlayStoreVersionClient
+import com.moodtools.hub.networking.shouldReportPlayStoreBuild
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
 import com.moodtools.hub.networking.StandaloneUpdateStage
@@ -160,6 +161,8 @@ internal fun newestPlayStoreStatus(
         (cached.listingUpdatedAtEpochSeconds ?: 0L) -> received
     received.latestVersion != null && cached.latestVersion == null -> received
     received.latestVersionCode != null && cached.latestVersionCode == null -> received
+    received.latestVersion == cached.latestVersion &&
+        (received.latestVersionCode ?: 0L) > (cached.latestVersionCode ?: 0L) -> received
     !received.stale && cached.stale -> received
     received.updateAvailable != cached.updateAvailable -> received
     else -> cached
@@ -1275,7 +1278,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val launcherUpdateClient = LauncherUpdateClient(application)
     private val moduleChangelogClient = ModuleChangelogClient(application)
     private val gameInstallClient = GameInstallClient(application)
-    private val playStoreVersionClient = PlayStoreVersionClient()
+    private val playStoreVersionClient = PlayStoreVersionClient(application)
     private val storageManager = SmartStorageManager(application.filesDir, application.cacheDir)
     private val embeddedPrivateModuleInstaller = EmbeddedPrivateModuleInstaller(application)
     private val embeddedLocalTestModuleInstaller = EmbeddedLocalTestModuleInstaller(application)
@@ -4668,8 +4671,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             val packageName = module.config.packageName
             val cached = cachedByPackage[packageName]
             val fresh = freshByPackage[packageName]
-            if (fresh != null) {
-                val received = PlayStoreVersionStatus(
+            val received = fresh?.let {
+                PlayStoreVersionStatus(
                     latestVersion = fresh.version,
                     latestVersionCode = fresh.versionCode,
                     listingUpdatedAtEpochSeconds = fresh.listingUpdatedAtEpochSeconds,
@@ -4678,34 +4681,56 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     checkedDay = today,
                     stale = fresh.stale
                 )
-                val status = newestPlayStoreStatus(cached, received)
+            }
+            var status = received?.let { newestPlayStoreStatus(cached, it) } ?: cached
+            val observation = status?.let { playStoreVersionClient.installedObservation(module) }
+            val observationResponse = if (observation != null && shouldReportPlayStoreBuild(
+                    observation,
+                    status?.latestVersion,
+                    status?.latestVersionCode,
+                    status?.updateAvailable,
+                    playStorePreferences.getString(playStoreObservationKey(packageName), null)
+                )) {
+                runCatching { playStoreVersionClient.report(observation) }
+                    .onFailure { android.util.Log.w("JesterMoodsPlayStore", "Could not report Play Store build", it) }
+                    .getOrNull()
+            } else null
+            if (observation != null && observationResponse?.acknowledged == true) {
+                editor.putString(playStoreObservationKey(packageName), observation.key)
+                changed = true
+                val reported = observationResponse.status
+                status = newestPlayStoreStatus(status, PlayStoreVersionStatus(
+                    latestVersion = reported.version,
+                    latestVersionCode = reported.versionCode,
+                    listingUpdatedAtEpochSeconds = reported.listingUpdatedAtEpochSeconds,
+                    updateAvailable = reported.updateAvailable,
+                    checkedAtEpochSeconds = reported.checkedAtEpochSeconds,
+                    checkedDay = today,
+                    stale = reported.stale
+                ))
+            }
+            if (status != null) {
                 statuses[packageName] = status
-                if (status.latestVersion != null) editor.putString(playStoreVersionKey(packageName), status.latestVersion)
-                else editor.remove(playStoreVersionKey(packageName))
-                if (status.latestVersionCode != null) {
-                    editor.putLong(playStoreVersionCodeKey(packageName), status.latestVersionCode)
-                } else editor.remove(playStoreVersionCodeKey(packageName))
-                if (status.listingUpdatedAtEpochSeconds != null) {
-                    editor.putLong(
-                        playStoreListingUpdatedAtKey(packageName),
-                        status.listingUpdatedAtEpochSeconds
-                    )
-                } else editor.remove(playStoreListingUpdatedAtKey(packageName))
-                editor.putInt(
-                    playStoreUpdateAvailableKey(packageName),
-                    when (status.updateAvailable) {
+                if (fresh != null || observationResponse != null) {
+                    if (status.latestVersion != null) editor.putString(playStoreVersionKey(packageName), status.latestVersion)
+                    else editor.remove(playStoreVersionKey(packageName))
+                    if (status.latestVersionCode != null) {
+                        editor.putLong(playStoreVersionCodeKey(packageName), status.latestVersionCode)
+                    } else editor.remove(playStoreVersionCodeKey(packageName))
+                    if (status.listingUpdatedAtEpochSeconds != null) {
+                        editor.putLong(playStoreListingUpdatedAtKey(packageName), status.listingUpdatedAtEpochSeconds)
+                    } else editor.remove(playStoreListingUpdatedAtKey(packageName))
+                    editor.putInt(playStoreUpdateAvailableKey(packageName), when (status.updateAvailable) {
                         true -> 1
                         false -> 0
                         null -> -1
-                    }
-                )
-                editor.putLong(playStoreCheckedAtKey(packageName), status.checkedAtEpochSeconds)
-                editor.putLong(playStoreCheckedDayKey(packageName), status.checkedDay)
-                editor.putBoolean(playStoreStaleKey(packageName), status.stale)
-                editor.putInt(playStoreSchemaKey(packageName), PLAY_STORE_CACHE_SCHEMA)
-                changed = true
-            } else if (cached != null) {
-                statuses[packageName] = cached
+                    })
+                    editor.putLong(playStoreCheckedAtKey(packageName), status.checkedAtEpochSeconds)
+                    editor.putLong(playStoreCheckedDayKey(packageName), status.checkedDay)
+                    editor.putBoolean(playStoreStaleKey(packageName), status.stale)
+                    editor.putInt(playStoreSchemaKey(packageName), PLAY_STORE_CACHE_SCHEMA)
+                    changed = true
+                }
             }
         }
         if (changed) editor.apply()
@@ -4780,6 +4805,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         PLAY_STORE_UPDATE_AVAILABLE_PREFIX + packageName
     private fun playStoreStaleKey(packageName: String): String = PLAY_STORE_STALE_PREFIX + packageName
     private fun playStoreSchemaKey(packageName: String): String = PLAY_STORE_SCHEMA_PREFIX + packageName
+    private fun playStoreObservationKey(packageName: String): String = PLAY_STORE_OBSERVATION_PREFIX + packageName
 
     private fun resolvePrivateAccessExpiries(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
@@ -5302,6 +5328,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
         private const val PLAY_STORE_SCHEMA_PREFIX = "schema_"
+        private const val PLAY_STORE_OBSERVATION_PREFIX = "observed_"
         private const val PLAY_STORE_CACHE_SCHEMA = 1
         private const val NON_ROOT_METHOD_CHOICE_PREFIX = "non_root_method_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L

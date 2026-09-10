@@ -2,6 +2,8 @@ package com.moodtools.hub
 
 import com.moodtools.hub.modules.PlayStoreVersionStatus
 import com.moodtools.hub.modules.ModuleConfig
+import com.moodtools.hub.networking.PlayStoreBuildObservation
+import com.moodtools.hub.networking.shouldReportPlayStoreBuild
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -67,6 +69,9 @@ class PlayStoreStatusFreshnessTest {
         val richer = cached.copy(latestVersionCode = 20_001L)
 
         assertEquals(richer, newestPlayStoreStatus(cached, richer))
+
+        val advanced = richer.copy(latestVersionCode = 20_002L)
+        assertEquals(advanced, newestPlayStoreStatus(richer, advanced))
     }
 
     @Test
@@ -183,6 +188,22 @@ class PlayStoreStatusFreshnessTest {
 
         assertEquals(20_001L, status("2.0", 200).versionCodeFor(module))
         assertEquals(null, status("2.0", 200).copy(updateAvailable = true).versionCodeFor(module))
+    }
+
+    @Test
+    fun officialInstalledBuildIsReportedOnlyWhileNewerAndUnacknowledged() {
+        val observation = PlayStoreBuildObservation(
+            "com.example.game",
+            "8.5.1",
+            80_513L,
+            "com.android.vending",
+            "a".repeat(64)
+        )
+
+        assertEquals(true, shouldReportPlayStoreBuild(observation, "8.5.1", 80_512L, true, null))
+        assertEquals(false, shouldReportPlayStoreBuild(observation, "8.5.1", 80_513L, true, null))
+        assertEquals(false, shouldReportPlayStoreBuild(observation, "8.5.1", 80_512L, true, observation.key))
+        assertEquals(false, shouldReportPlayStoreBuild(observation, "8.5.0", 80_512L, true, null))
     }
 
     private fun status(version: String?, checkedAt: Long) = PlayStoreVersionStatus(
