@@ -4,7 +4,7 @@ set -e
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_PKG="${1:-com.bandainamcoent.opbrww}"
 TITLE="${2:-ONE PIECE Bounty Rush Mod}"
-VERSION="${3:-93010}"
+VERSION="${3:-9.3.0}"
 BUILD_CODE="${4:-93010}"
 
 echo "=== Building Module for target: $TARGET_PKG ($TITLE v$VERSION code $BUILD_CODE) ==="
@@ -59,7 +59,7 @@ cat <<EOF > "$STAGE_DIR/config.json"
 {
   "package_name": "$TARGET_PKG",
   "title": "$TITLE",
-  "supported_versions": ["$VERSION"],
+  "supported_versions": ["$VERSION", "$BUILD_CODE"],
   "supported_version_codes": [$BUILD_CODE],
   "supported_abis": ["arm64-v8a"],
   "nonroot_method": "injection",

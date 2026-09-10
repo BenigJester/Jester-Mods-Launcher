@@ -61,7 +61,7 @@ async function runTests() {
   console.log("\n[2] Web Frontend: Mobile Unlock UI");
   const resUnlock = await worker.fetch(new Request("https://worker.test/launcher/unlock?challenge=chal_123&deviceId=dev_456"), env);
   assert(resUnlock.status === 200, "Unlock UI returns HTTP 200");
-  assert((await resUnlock.text()).includes("Activate Launcher"), "Unlock UI contains Activate Launcher title");
+  assert((await resUnlock.text()).includes("Digital Pass Gateway"), "Unlock UI contains Digital Pass Gateway title");
 
   // Test 3: Challenge Endpoint
   console.log("\n[3] Android Proof Challenge");
@@ -178,7 +178,7 @@ async function runTests() {
     new Request("https://worker.test/api/launcher-module", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug: "com-example-module", keyId: "test-key-id-123" }),
+      body: JSON.stringify({ slug: "opbr-bounty-rush-mod", keyId: "test-key-id-123" }),
     }),
     env
   );
@@ -202,13 +202,13 @@ async function runTests() {
 
   // Test 10: Module Features & Changelog
   console.log("\n[10] Module Features & Changelog");
-  const resModCl = await worker.fetch(new Request("https://worker.test/api/launcher-module-changelog/com-example-module/1"), env);
+  const resModCl = await worker.fetch(new Request("https://worker.test/api/launcher-module-changelog/opbr-bounty-rush-mod/93010"), env);
   const jsonModCl = await resModCl.json();
   const modClPayload = JSON.parse(Buffer.from(jsonModCl.payload, "base64").toString("utf-8"));
   assert(modClPayload.audience === "moodtools-standalone-module-changelog", "Module changelog audience is valid");
-  assert(modClPayload.slug === "com-example-module", "Module changelog echoes slug");
+  assert(modClPayload.slug === "opbr-bounty-rush-mod", "Module changelog echoes slug");
 
-  const resModFeat = await worker.fetch(new Request("https://worker.test/api/launcher-module-features/com-example-module/1"), env);
+  const resModFeat = await worker.fetch(new Request("https://worker.test/api/launcher-module-features/opbr-bounty-rush-mod/93010"), env);
   const jsonModFeat = await resModFeat.json();
   const modFeatPayload = JSON.parse(Buffer.from(jsonModFeat.payload, "base64").toString("utf-8"));
   assert(modFeatPayload.audience === "moodtools-standalone-module-features", "Module features audience is valid");
