@@ -143,6 +143,12 @@ internal fun newestPlayStoreStatus(
     received: PlayStoreVersionStatus
 ): PlayStoreVersionStatus = when {
     cached == null -> received
+    cached.latestVersion != null && cached.latestVersionCode != null &&
+        (received.latestVersion == null || received.latestVersionCode == null) &&
+        received.checkedAtEpochSeconds >= cached.checkedAtEpochSeconds -> received.copy(
+            latestVersion = cached.latestVersion,
+            latestVersionCode = cached.latestVersionCode
+        )
     received.checkedAtEpochSeconds > cached.checkedAtEpochSeconds ->
         if (received.latestVersionCode == null &&
             cached.latestVersionCode != null &&

@@ -1510,11 +1510,11 @@ private fun AccountIdentityIconButton(
             .scale(if (pressed) 0.92f else 1f)
             .clip(CircleShape)
             .background(SurfaceRaised.copy(alpha = 0.98f))
-            .semantics { contentDescription = "Account identity" }
+            .semantics { contentDescription = LauncherLocalization.translate("Account identity") }
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                onClickLabel = "Account identity",
+                onClickLabel = LauncherLocalization.translate("Account identity"),
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -1560,16 +1560,18 @@ private fun SettingsIconButton(
             .clip(CircleShape)
             .background(SurfaceRaised.copy(alpha = 0.98f))
             .semantics {
-                contentDescription = if (updateAvailable) {
+                contentDescription = LauncherLocalization.translate(if (updateAvailable) {
                     "Settings, launcher update available"
                 } else {
                     "Settings"
-                }
+                })
             }
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                onClickLabel = if (updateAvailable) "Settings, launcher update available" else "Settings",
+                onClickLabel = LauncherLocalization.translate(
+                    if (updateAvailable) "Settings, launcher update available" else "Settings"
+                ),
                 onClick = onClick
             ),
         contentAlignment = Alignment.Center
@@ -4710,7 +4712,11 @@ private fun InstallerDeterminateProgress(
             .height(7.dp)
             .clip(CircleShape)
             .background(Hairline)
-            .semantics { contentDescription = "$label ${(progress * 100).toInt()} percent complete" }
+            .semantics {
+                contentDescription = LauncherLocalization.translate(
+                    "$label ${(progress * 100).toInt()} percent complete"
+                )
+            }
     ) {
         Box(
             Modifier
@@ -4735,7 +4741,7 @@ private fun InstallerIndeterminateProgress(
             .fillMaxWidth()
             .height(7.dp)
             .clip(CircleShape)
-            .semantics { this.contentDescription = contentDescription },
+            .semantics { this.contentDescription = LauncherLocalization.translate(contentDescription) },
         color = color,
         trackColor = Hairline
     )
@@ -5319,7 +5325,7 @@ private fun SecureTransferEmblem(
                 )
             )
             .border(1.dp, accent.copy(alpha = 0.55f), CircleShape)
-            .semantics { this.contentDescription = contentDescription },
+            .semantics { this.contentDescription = LauncherLocalization.translate(contentDescription) },
         contentAlignment = Alignment.Center
     ) {
         if (stage == SecureTransferStage.ACTIVATING || stage == SecureTransferStage.WAITING_FOR_ANDROID) {
@@ -5538,7 +5544,11 @@ private fun UpdateEmblem(contentDescription: String = "Launcher update") {
             .border(1.dp, Accent.copy(alpha = 0.42f), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.size(28.dp).semantics { this.contentDescription = contentDescription }) {
+        Canvas(
+            Modifier.size(28.dp).semantics {
+                this.contentDescription = LauncherLocalization.translate(contentDescription)
+            }
+        ) {
             val centerX = size.width / 2f
             drawLine(
                 color = Accent,
@@ -6678,7 +6688,9 @@ private fun DownloadProgressBar(
                 .fillMaxWidth()
                 .height(6.dp)
                 .clip(CircleShape)
-                .semantics { contentDescription = "Preparing download" },
+                .semantics {
+                    contentDescription = LauncherLocalization.translate("Preparing download")
+                },
             color = color,
             trackColor = Hairline
         )
@@ -6704,7 +6716,11 @@ private fun DownloadProgressBar(
             .height(6.dp)
             .clip(CircleShape)
             .background(Hairline)
-            .semantics { contentDescription = "Download ${(progress * 100).toInt()} percent complete" }
+            .semantics {
+                contentDescription = LauncherLocalization.translate(
+                    "Download ${(progress * 100).toInt()} percent complete"
+                )
+            }
     ) {
         Box(Modifier.fillMaxWidth(progress).height(6.dp).clip(CircleShape).background(color))
     }
@@ -6783,11 +6799,11 @@ private fun PrivateModuleAccessTimer(
             )
             .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.38f)), shape)
             .semantics {
-                contentDescription = if (expiryText != null) {
+                contentDescription = LauncherLocalization.translate(if (expiryText != null) {
                     "Private access $remainingText, available until $expiryText"
                 } else {
                     "Private add-on, approval is verified before use"
-                }
+                })
             }
             .padding(
                 horizontal = if (compact) 13.dp else 20.dp,
@@ -6889,7 +6905,9 @@ private fun LimitedModuleAccessNotice(compact: Boolean = false) {
             )
             .border(BorderStroke(1.dp, LimitedAmber.copy(alpha = 0.42f)), shape)
             .semantics {
-                contentDescription = "Limited access public add-on. In-game eligibility requirements may apply."
+                contentDescription = LauncherLocalization.translate(
+                    "Limited access public add-on. In-game eligibility requirements may apply."
+                )
             }
             .padding(
                 horizontal = if (compact) 13.dp else 20.dp,
@@ -7229,7 +7247,7 @@ internal fun libraryStatusLabel(entry: LibraryGame): String {
 private fun LocalTestBadge(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .semantics { contentDescription = "Local test add-on" }
+            .semantics { contentDescription = LauncherLocalization.translate("Local test add-on") }
             .clip(RoundedCornerShape(999.dp))
             .background(AccentBlue.copy(alpha = 0.18f))
             .border(BorderStroke(1.dp, AccentBlue.copy(alpha = 0.55f)), RoundedCornerShape(999.dp))
@@ -7249,7 +7267,7 @@ private fun LocalTestBadge(modifier: Modifier = Modifier) {
 private fun OutdatedBadge(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .semantics { contentDescription = "Outdated add-on" }
+            .semantics { contentDescription = LauncherLocalization.translate("Outdated add-on") }
             .clip(RoundedCornerShape(999.dp))
             .background(PrivateGold.copy(alpha = 0.16f))
             .border(BorderStroke(1.dp, PrivateGold.copy(alpha = 0.5f)), RoundedCornerShape(999.dp))
@@ -7277,7 +7295,9 @@ private fun LauncherMethodBadge(
     }
     Box(
         modifier = modifier
-            .semantics { contentDescription = presentation.badgeDescription }
+            .semantics {
+                contentDescription = LauncherLocalization.translate(presentation.badgeDescription)
+            }
             .clip(RoundedCornerShape(999.dp))
             .background(color.copy(alpha = 0.14f))
             .border(BorderStroke(1.dp, color.copy(alpha = 0.48f)), RoundedCornerShape(999.dp))
@@ -7890,7 +7910,7 @@ private fun SupportedGamesFab(
                 interactionSource = interaction,
                 indication = null,
                 enabled = !redirecting,
-                onClickLabel = "Browse add-ons",
+                onClickLabel = LauncherLocalization.translate("Browse add-ons"),
                 onClick = {
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     redirecting = true
@@ -8029,11 +8049,11 @@ private fun CompactGameCard(
                         )
                         .clickable(onClick = onToggleSelection)
                         .semantics {
-                            contentDescription = if (selected) {
+                            contentDescription = LauncherLocalization.translate(if (selected) {
                                 "Unselect ${game.title}"
                             } else {
                                 "Select ${game.title}"
-                            }
+                            })
                         },
                     contentAlignment = Alignment.Center
                 ) {

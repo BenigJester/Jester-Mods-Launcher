@@ -25,7 +25,24 @@ class PlayStoreStatusFreshnessTest {
         val cached = status(version = "2.0", checkedAt = 100).copy(latestVersionCode = 20_001L)
         val refreshed = status(version = "2.0", checkedAt = 200)
 
-        assertEquals(refreshed.copy(latestVersionCode = 20_001L), newestPlayStoreStatus(cached, refreshed))
+        assertEquals(
+            refreshed.copy(latestVersionCode = 20_001L),
+            newestPlayStoreStatus(cached, refreshed)
+        )
+    }
+
+    @Test
+    fun incompleteNewReleaseCannotReplaceAConfirmedCachedVersionAndBuild() {
+        val cached = status(version = "2.0", checkedAt = 100).copy(latestVersionCode = 20_001L)
+        val incomplete = status(version = "2.1", checkedAt = 200).copy(
+            listingUpdatedAtEpochSeconds = 1_800_000_000,
+            updateAvailable = true
+        )
+
+        assertEquals(
+            incomplete.copy(latestVersion = "2.0", latestVersionCode = 20_001L),
+            newestPlayStoreStatus(cached, incomplete)
+        )
     }
 
     @Test
@@ -125,6 +142,29 @@ class PlayStoreStatusFreshnessTest {
         )
 
         assertEquals(false, status("2.1", 200).copy(updateAvailable = true).isSupportedBy(module))
+    }
+
+    @Test
+    fun newerPlayStoreListingIsOutdatedWhenVersionNameAndCachedBuildStayTheSame() {
+        val module = ModuleConfig(
+            packageName = "com.example.game",
+            title = "Game",
+            supportedVersions = setOf("2.0"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(20_001L)
+        )
+
+        assertEquals(
+            false,
+            status("2.0", 200).copy(
+                latestVersionCode = 20_001L,
+                updateAvailable = true
+            ).isSupportedBy(module)
+        )
     }
 
     @Test

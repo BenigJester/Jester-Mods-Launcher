@@ -1,6 +1,7 @@
 package com.moodtools.hub.modules
 
 import com.moodtools.hub.LauncherLocalization
+import com.moodtools.hub.LauncherAdditionalTranslations
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -71,6 +72,51 @@ class LauncherLanguageTest {
             assertNotEquals("Copied support code", LauncherLocalization.translate("Copied support code", language))
             assertNotEquals("Help", LauncherLocalization.translate("Help", language))
             assertNotEquals("Open issue page", LauncherLocalization.translate("Open issue page", language))
+        }
+    }
+
+    @Test
+    fun previouslyHardcodedLauncherStatusAndAccessibilityTextTranslateOffline() {
+        val staticText = listOf(
+            "Preparing download",
+            "Account identity",
+            "Installation permission is needed",
+            "Settings, launcher update available",
+            "Limited access public add-on. In-game eligibility requirements may apply."
+        )
+        LauncherLanguage.entries.drop(1).forEach { language ->
+            staticText.forEach { text ->
+                assertNotEquals(text, LauncherLocalization.translate(text, language))
+            }
+            val progress = LauncherLocalization.translate("Download 73 percent complete", language)
+            assertNotEquals("Download 73 percent complete", progress)
+            assertTrue(progress.contains("73"))
+
+            val selection = LauncherLocalization.translate("Select Soul Knight", language)
+            assertNotEquals("Select Soul Knight", selection)
+            assertTrue(selection.contains("Soul Knight"))
+        }
+    }
+
+    @Test
+    fun generatedLauncherTranslationsPreserveEveryDynamicValue() {
+        LauncherAdditionalTranslations.sourceText.forEach { source ->
+            val placeholders = Regex("\\{(\\d+)}").findAll(source)
+                .map { it.groupValues[1].toInt() }
+                .toSet()
+            val rendered = placeholders.fold(source) { text, index ->
+                text.replace("{$index}", "VALUE_$index")
+            }
+            LauncherLanguage.entries.drop(1).forEach { language ->
+                val translated = LauncherLocalization.translate(rendered, language)
+                assertTrue("Blank $language translation for $source", translated.isNotBlank())
+                placeholders.forEach { index ->
+                    assertTrue(
+                        "$language translation lost placeholder {$index} for $source",
+                        translated.contains("VALUE_$index")
+                    )
+                }
+            }
         }
     }
 }

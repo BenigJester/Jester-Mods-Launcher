@@ -69,6 +69,7 @@ internal object LauncherLocalization {
         TRANSLATIONS[text]?.getOrNull(selected.ordinal - 1)?.let { return it }
         if (text.startsWith("‹  ")) return "‹  ${translate(text.removePrefix("‹  "), selected)}"
         return translateTemplate(text, selected).takeUnless { it == text }
+            ?: LauncherAdditionalTranslations.translate(text, selected)
             ?: translateComposite(text, selected)
     }
 
@@ -108,7 +109,10 @@ internal object LauncherLocalization {
         for (separator in listOf(" · ", "\n")) {
             if (separator !in text) continue
             val source = text.split(separator)
-            val translated = source.map { translate(it, selected) }
+            val translated = source.map { segment ->
+                val content = segment.trim()
+                segment.replace(content, translate(content, selected))
+            }
             if (translated.zip(source).any { (after, before) -> after != before }) {
                 return translated.joinToString(separator)
             }
