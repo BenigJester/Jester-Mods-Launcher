@@ -64,12 +64,14 @@ internal object LauncherLocalization {
     internal fun translate(text: String, selected: LauncherLanguage): String {
         if (selected == LauncherLanguage.English || text.isBlank()) return text
         if (selected == LauncherLanguage.Portuguese) {
-            PORTUGUESE[text]?.let { return it }
+            PORTUGUESE[text]?.takeUnless { it == text }?.let { return it }
         }
-        TRANSLATIONS[text]?.getOrNull(selected.ordinal - 1)?.let { return it }
+        TRANSLATIONS[text]?.getOrNull(selected.ordinal - 1)
+            ?.takeUnless { it == text }
+            ?.let { return it }
         if (text.startsWith("‹  ")) return "‹  ${translate(text.removePrefix("‹  "), selected)}"
-        return translateTemplate(text, selected).takeUnless { it == text }
-            ?: LauncherAdditionalTranslations.translate(text, selected)
+        return LauncherAdditionalTranslations.translate(text, selected)
+            ?: translateTemplate(text, selected).takeUnless { it == text }
             ?: translateComposite(text, selected)
     }
 

@@ -3921,7 +3921,7 @@ private fun ModuleTransferDialog(
                         )
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            "SECURE ${state.actionLabel.uppercase()}",
+                            "SECURE ${LauncherLocalization.translate(state.actionLabel).uppercase()}",
                             color = AccentBlue,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
@@ -6005,7 +6005,12 @@ private fun CatalogSectionHeader(title: String, count: Int) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(title.uppercase(), color = Accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        Text(
+            LauncherLocalization.translate(title).uppercase(),
+            color = Accent,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
         Box(
             modifier = Modifier.size(26.dp).clip(CircleShape).background(Accent.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center

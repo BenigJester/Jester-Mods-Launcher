@@ -10,7 +10,7 @@ internal object LauncherAdditionalTranslations {
         val placeholders: List<Int>
     )
 
-    private val placeholder = Regex("\\{(\\d+)}")
+    private val placeholder = Regex("\\{(\\d+)\\}")
     private val entries = buildMap {
         put(
             "Settings, launcher update available",
@@ -66,6 +66,12 @@ internal object LauncherAdditionalTranslations {
         putAll(LauncherTranslationChunk10.entries)
         putAll(LauncherTranslationChunk11.entries)
         putAll(LauncherTranslationChunk12.entries)
+        putAll(LauncherTranslationChunk13.entries)
+        putAll(LauncherTranslationChunk14.entries)
+        putAll(LauncherTranslationChunk15.entries)
+        putAll(LauncherTranslationChunk16.entries)
+        putAll(LauncherTranslationChunk17.entries)
+        putAll(LauncherTranslationChunk18.entries)
     }
     private val exact = entries.filterKeys { !placeholder.containsMatchIn(it) }
     private val templates = entries
@@ -89,7 +95,8 @@ internal object LauncherAdditionalTranslations {
                     placeholder.replace(translated) { token ->
                         val requested = token.groupValues[1].toInt()
                         val capture = template.placeholders.indexOf(requested)
-                        match.groupValues.getOrElse(capture + 1) { token.value }
+                        val value = match.groupValues.getOrElse(capture + 1) { token.value }
+                        LauncherLocalization.translate(value, language)
                     }
                 }
         }?.also { cache[cacheKey] = it }
