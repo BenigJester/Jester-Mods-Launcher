@@ -2,10 +2,12 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MODULE_NAME="com.example.module"
-TARGET_PKG="com.android.support"
+TARGET_PKG="${1:-com.bandainamcoent.opbrww}"
+TITLE="${2:-ONE PIECE Bounty Rush Mod}"
+VERSION="${3:-93010}"
+BUILD_CODE="${4:-93010}"
 
-echo "=== Building Module for target: $TARGET_PKG ==="
+echo "=== Building Module for target: $TARGET_PKG ($TITLE v$VERSION code $BUILD_CODE) ==="
 
 ANDROID_HOME="${ANDROID_HOME:-/Users/merlinegomez/Library/Android/sdk}"
 ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
@@ -19,7 +21,7 @@ STAGE_DIR="$REPO_ROOT/build/module-stage/$TARGET_PKG"
 rm -rf "$WORK_DIR" "$STAGE_DIR"
 mkdir -p "$WORK_DIR/classes" "$WORK_DIR/dex" "$WORK_DIR/cmake" "$STAGE_DIR"
 
-MODULE_SRC="$REPO_ROOT/modules/$MODULE_NAME"
+MODULE_SRC="${MODULE_SRC:-$REPO_ROOT/modules/com.example.module}"
 
 # 1. Compile Java Sources
 echo "[1/4] Compiling Java classes..."
@@ -56,9 +58,9 @@ echo "[3/4] Generating config.json and features.json..."
 cat <<EOF > "$STAGE_DIR/config.json"
 {
   "package_name": "$TARGET_PKG",
-  "title": "Mod Menu Template",
-  "supported_versions": ["3.2"],
-  "supported_version_codes": [1],
+  "title": "$TITLE",
+  "supported_versions": ["$VERSION"],
+  "supported_version_codes": [$BUILD_CODE],
   "supported_abis": ["arm64-v8a"],
   "nonroot_method": "injection",
   "entry_point": "com.android.support.Main",

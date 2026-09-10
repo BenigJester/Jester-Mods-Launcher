@@ -233,6 +233,65 @@ const DEFAULT_MODULES: ModuleItem[] = [
       },
     ],
   },
+  {
+    packageName: "com.bandainamcoent.opbrww",
+    slug: "opbr-bounty-rush-mod",
+    title: "ONE PIECE Bounty Rush Mod",
+    version: "9.3.0",
+    notes: "Action enhancement module with native overlay menu for ONE PIECE Bounty Rush.",
+    category: "Action",
+    tags: ["action", "anime", "pvp", "mod"],
+    publishedAt: 1710000000,
+    updatedAt: 1710000000,
+    build: 93010,
+    supportedVersions: ["93010"],
+    supportedVersionCodes: [93010],
+    supportedAbis: ["arm64-v8a"],
+    downloadSizeByAbi: { "arm64-v8a": 20480 },
+    nonrootMethod: "injection",
+    nonrootMethods: ["injection"],
+    features: ["Damage Multiplier", "Defense Boost", "Cooldown Reduction", "Radar Map Expand"],
+    source: {
+      path: "/api/launcher-module-payload/com.bandainamcoent.opbrww/93010/module.zip",
+      sizeBytes: 20480,
+      sha256: "0".repeat(64),
+    },
+    moduleConfig: {
+      packageName: "com.bandainamcoent.opbrww",
+      dexFile: "classes.dex",
+      nativeFile: "libmenu_native.so",
+      title: "ONE PIECE Bounty Rush Mod",
+      entryPoint: "com.android.support.Main",
+      supportedVersions: ["93010"],
+      supportedAbis: ["arm64-v8a"],
+      nonrootMethod: "injection",
+    },
+    files: {
+      dex: { path: "classes.dex", size: 5120, sha256: "0".repeat(64) },
+      native: {
+        "arm64-v8a": { path: "libmenu_native.so", size: 15360, sha256: "0".repeat(64) },
+      },
+    },
+    changelogEntries: [
+      {
+        build: 93010,
+        version: "9.3.0",
+        notes: "Full non-root native injection compatibility for v93010.",
+        publishedAt: 1710000000,
+        updateType: "feature",
+      },
+    ],
+    featureGroups: [
+      {
+        title: "Combat & Stats",
+        features: ["Damage Multiplier", "Defense Boost", "Cooldown Reduction"],
+      },
+      {
+        title: "Visuals & Radar",
+        features: ["Radar Map Expand", "Camera Distance FOV", "Custom Battle UI"],
+      },
+    ],
+  },
 ];
 
 const DEFAULT_KEYS: DigitalKeyRecord[] = [
@@ -385,11 +444,19 @@ async function getStoredModules(env: Env): Promise<ModuleItem[]> {
   if (env.LAUNCHER_KV) {
     const raw = await env.LAUNCHER_KV.get("modules:catalog", "json");
     if (raw && Array.isArray(raw) && raw.length > 0) {
-      const { list, changed } = sanitizeModules(raw as ModuleItem[]);
-      if (changed) {
-        await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(list));
+      const list = raw as ModuleItem[];
+      let changed = false;
+      for (const defMod of DEFAULT_MODULES) {
+        if (!list.some((m) => m.slug === defMod.slug || m.packageName === defMod.packageName)) {
+          list.push(defMod);
+          changed = true;
+        }
       }
-      return list;
+      const { list: sanitizedList, changed: sanitizeChanged } = sanitizeModules(list);
+      if (changed || sanitizeChanged) {
+        await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(sanitizedList));
+      }
+      return sanitizedList;
     }
     // Seed KV initially if empty
     await env.LAUNCHER_KV.put("modules:catalog", JSON.stringify(DEFAULT_MODULES));
