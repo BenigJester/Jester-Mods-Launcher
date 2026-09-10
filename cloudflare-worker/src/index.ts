@@ -790,6 +790,11 @@ export default {
     }
 
     // ------------------------------------------------------------------------
+    // API: PRIVATE-ACCESS — ensure proofKeyId echoed at top level
+    // (already handled above, keeping for docs)
+    // ------------------------------------------------------------------------
+
+    // ------------------------------------------------------------------------
     // API: DYNAMIC MODULE CATALOGS (KV-Backed)
     // ------------------------------------------------------------------------
     if (url.pathname === "/api/launcher-modules") {
@@ -913,6 +918,43 @@ export default {
         }
       }
       return new Response("ZIP Payload Stream", { status: 200 });
+    }
+
+    // ------------------------------------------------------------------------
+    // API: APK DOWNLOAD PROXY (Stable + Test channels)
+    // Android LauncherUpdateClient.kt downloads from /api/launcher-download/:build/:flavor.apk
+    // Trusted path validated by: isTrustedStableLauncherDownloadPath()
+    // ------------------------------------------------------------------------
+    if (
+      url.pathname.startsWith("/api/launcher-download/") ||
+      url.pathname.startsWith("/api/launcher-test-download/")
+    ) {
+      const isTest = url.pathname.startsWith("/api/launcher-test-download/");
+      const objectKey = isTest
+        ? url.pathname.replace("/api/launcher-test-download/", "launcher-test/")
+        : url.pathname.replace("/api/launcher-download/", "launcher-stable/");
+
+      if (env.PAYLOAD_BUCKET) {
+        const object = await env.PAYLOAD_BUCKET.get(objectKey);
+        if (object) {
+          return new Response(object.body, {
+            headers: {
+              "Content-Type": "application/vnd.android.package-archive",
+              "Content-Disposition": `attachment; filename="${objectKey.split("/").pop() || "launcher.apk"}"`,
+            },
+          });
+        }
+      }
+
+      // No R2 bucket or object not found — return informative 404
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "APK not available. Upload the APK to R2 bucket at: " + objectKey,
+          hint: "Run: npx wrangler r2 object put launcher-modules/" + objectKey + " --file=<path-to-apk>",
+        }),
+        { status: 404, headers: jsonHeaders }
+      );
     }
 
     // ------------------------------------------------------------------------
@@ -1265,6 +1307,53 @@ export default {
         await saveStoredModules(DEFAULT_MODULES, env);
         await saveStoredKeys(DEFAULT_KEYS, env);
         return okJson({ ok: true, message: "Catalog and Keys seeded with defaults" });
+      }
+
+      // GET /api/admin/releases — current OTA release manifest info
+      if (url.pathname === "/api/admin/releases" && method === "GET") {
+        const BUILD = 301;
+        const VERSION = "3.0.1";
+        const r2Configured = !!env.PAYLOAD_BUCKET;
+        return okJson({
+          ok: true,
+          release: {
+            build: BUILD,
+            version: VERSION,
+            stableEndpoint: "/api/launcher-release",
+            changelogEndpoint: "/api/launcher-changelog",
+            downloads: {
+              root: {
+                endpoint: `/api/launcher-download/${BUILD}/root.apk`,
+                r2Key: `launcher-stable/${BUILD}/root.apk`,
+                available: r2Configured,
+              },
+              nonroot: {
+                endpoint: `/api/launcher-download/${BUILD}/nonroot.apk`,
+                r2Key: `launcher-stable/${BUILD}/nonroot.apk`,
+                available: r2Configured,
+              },
+            },
+            r2Configured,
+            uploadHint: r2Configured
+              ? null
+              : "Enable R2 by uncommenting [[r2_buckets]] in wrangler.toml, then upload APKs with: npx wrangler r2 object put launcher-modules/launcher-stable/<build>/<flavor>.apk --file=<path>",
+          },
+        });
+      }
+
+      // POST /api/admin/release/publish — update the build number & version in KV
+      if (url.pathname === "/api/admin/release/publish" && method === "POST") {
+        const body: any = await request.json().catch(() => ({}));
+        const build = Number(body.build) || 301;
+        const version = String(body.version || "3.0.1");
+        const notes = String(body.notes || "");
+        if (env.LAUNCHER_KV) {
+          await env.LAUNCHER_KV.put(
+            "release:current",
+            JSON.stringify({ build, version, notes, publishedAt: Math.floor(Date.now() / 1000) })
+          );
+        }
+        return okJson({ ok: true, published: { build, version, notes } });
       }
 
       return errJson("Admin route not found", 404);
@@ -1942,26 +2031,62 @@ export default {
 
     <!-- TAB 5: OTA RELEASES -->
     <div id="tab-releases" class="tab-pane">
-      <div class="card" style="margin-bottom: 1.5rem;">
-        <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Launcher Release Channel</h2>
-        <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem;">
-          The update client (<code>LauncherUpdateClient.kt</code>) polls this manifest to trigger automated APK updates.
-        </p>
-        <div class="grid-2">
-          <div>
-            <label>Current Launcher Version</label>
-            <div class="code-pill" style="display: inline-block; margin-bottom: 0.75rem;">Build 301 (v3.0.1)</div>
-            <label>Stable Endpoint</label>
-            <pre>/api/launcher-release</pre>
-            <label style="margin-top: 0.75rem;">Changelog Endpoint</label>
-            <pre>/api/launcher-changelog</pre>
+      <div class="grid-2" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+            <div>
+              <h2 style="font-size: 1.1rem; font-weight: 700;">Live Release Channel</h2>
+              <p style="font-size: 0.8rem; color: var(--muted);">
+                Polled by <code>LauncherUpdateClient.kt</code> on every app launch.
+              </p>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="loadRelease()">↻ Refresh</button>
           </div>
-          <div>
-            <label>Root APK Download Target</label>
-            <pre>/api/launcher-download/301/root.apk</pre>
-            <label style="margin-top: 0.75rem;">Non-Root APK Download Target</label>
-            <pre>/api/launcher-download/301/nonroot.apk</pre>
+          <div id="releaseInfo" style="font-size: 0.85rem; line-height: 2; color: var(--muted);">
+            <div>Build: <strong id="rBuild" style="color:#fff">—</strong></div>
+            <div>Version: <strong id="rVersion" style="color:#fff">—</strong></div>
+            <div>Root APK: <span id="rRootAvail" class="badge badge-indigo">Checking…</span></div>
+            <div>Non-Root APK: <span id="rNonrootAvail" class="badge badge-indigo">Checking…</span></div>
+            <div>R2 Storage: <span id="rR2" class="badge badge-indigo">Checking…</span></div>
           </div>
+          <hr style="border: none; border-top: 1px solid var(--card-border); margin: 1rem 0;">
+          <div>
+            <label>Stable Manifest Endpoint</label>
+            <pre style="cursor: pointer;" onclick="runApiTest('/api/launcher-release')">/api/launcher-release</pre>
+            <label style="margin-top: 0.5rem;">Signed Changelog Endpoint</label>
+            <pre style="cursor: pointer;" onclick="runApiTest('/api/launcher-changelog')">/api/launcher-changelog</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">Publish New Release</h2>
+          <p style="font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem;">Update the build manifest served to all Android devices.</p>
+          <div class="form-group">
+            <label>Build Code (Integer)</label>
+            <input type="number" id="rNewBuild" value="302" min="1">
+          </div>
+          <div class="form-group">
+            <label>Version String</label>
+            <input type="text" id="rNewVersion" value="3.0.2">
+          </div>
+          <div class="form-group">
+            <label>Release Notes</label>
+            <textarea id="rNewNotes" rows="2" placeholder="What changed in this release?"></textarea>
+          </div>
+          <button class="btn" onclick="publishRelease()">🚀 Publish Manifest</button>
+
+          <hr style="border: none; border-top: 1px solid var(--card-border); margin: 1.25rem 0;">
+          <h3 style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--muted);">Upload APK to R2 Storage</h3>
+          <p style="font-size: 0.78rem; color: #64748b; line-height: 1.6; margin-bottom: 0.75rem;">
+            Run these commands to upload your signed APKs to Cloudflare R2 so the download endpoints serve them:
+          </p>
+          <pre style="font-size: 0.72rem; line-height: 1.7;">npx wrangler r2 object put \\
+  launcher-modules/launcher-stable/302/nonroot.apk \\
+  --file=./release/nonroot.apk
+
+npx wrangler r2 object put \\
+  launcher-modules/launcher-stable/302/root.apk \\
+  --file=./release/root.apk</pre>
         </div>
       </div>
     </div>
@@ -1978,6 +2103,8 @@ export default {
             <button class="btn btn-outline" onclick="runApiTest('/api/launcher-module-changelog/com-example-module/1')">GET /api/launcher-module-changelog</button>
             <button class="btn btn-outline" onclick="runApiTest('/api/launcher-module-features/com-example-module/1')">GET /api/launcher-module-features</button>
             <button class="btn btn-outline" onclick="runApiTest('/api/launcher-play-store-version/com.example.module')">GET /api/launcher-play-store-version</button>
+            <button class="btn btn-outline" onclick="runApiTest('/api/admin/releases', true)">GET /api/admin/releases</button>
+            <button class="btn btn-outline" onclick="runApiTest('/api/admin/stats', true)">GET /api/admin/stats</button>
           </div>
         </div>
         <div class="card">
@@ -2084,6 +2211,7 @@ export default {
       if (btn) btn.classList.add("active");
       const pane = document.getElementById("tab-" + name);
       if (pane) pane.classList.add("active");
+      if (name === "releases") loadRelease();
     }
 
     function getAuthHeaders() {
@@ -2358,21 +2486,69 @@ export default {
       }
     }
 
-    async function runApiTest(endpoint) {
+    async function runApiTest(endpoint, useAuth = false) {
       const box = document.getElementById("apiResponse");
-      box.innerText = "Querying " + endpoint + "...";
+      box.innerText = "⏳ Querying " + endpoint + "...";
       try {
-        const res = await fetch(endpoint, { headers: getAuthHeaders() });
+        const headers = useAuth ? getAuthHeaders() : { "Content-Type": "application/json" };
+        const res = await fetch(endpoint, { headers });
         const json = await res.json();
         box.innerText = JSON.stringify(json, null, 2);
       } catch (e) {
-        box.innerText = "Error fetching endpoint: " + e.message;
+        box.innerText = "❌ Error fetching endpoint: " + e.message;
       }
     }
 
     function testCatalogEndpoint() {
       switchTab('api');
       runApiTest('/api/launcher-modules');
+    }
+
+    async function loadRelease() {
+      try {
+        const res = await fetch("/api/admin/releases", { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (data.ok && data.release) {
+          const r = data.release;
+          const el = (id) => document.getElementById(id);
+          el("rBuild").innerText = r.build || "—";
+          el("rVersion").innerText = r.version || "—";
+          const rootOk = r.downloads?.root?.available;
+          const nonrootOk = r.downloads?.nonroot?.available;
+          const r2Ok = r.r2Configured;
+          el("rRootAvail").innerText = rootOk ? "Available" : "Not Uploaded";
+          el("rRootAvail").className = rootOk ? "badge badge-green" : "badge badge-red";
+          el("rNonrootAvail").innerText = nonrootOk ? "Available" : "Not Uploaded";
+          el("rNonrootAvail").className = nonrootOk ? "badge badge-green" : "badge badge-red";
+          el("rR2").innerText = r2Ok ? "Connected" : "Not Configured";
+          el("rR2").className = r2Ok ? "badge badge-green" : "badge badge-purple";
+        }
+      } catch (e) {
+        console.error("loadRelease failed", e);
+      }
+    }
+
+    async function publishRelease() {
+      const build = parseInt(document.getElementById("rNewBuild").value, 10) || 302;
+      const version = document.getElementById("rNewVersion").value.trim() || "3.0.2";
+      const notes = document.getElementById("rNewNotes").value.trim();
+      if (!confirm("Publish Build " + build + " (v" + version + ") to all Android devices?")) return;
+      try {
+        const res = await fetch("/api/admin/release/publish", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ build, version, notes })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast("\u2705 Released Build " + build + " (v" + version + ")");
+          await loadRelease();
+        } else {
+          alert("Publish failed: " + (data.error || "Unknown error"));
+        }
+      } catch (e) {
+        alert("Publish error: " + e.message);
+      }
     }
 
     function openTokenDialog() {
@@ -2414,6 +2590,7 @@ export default {
     loadModules();
     loadKeys();
     loadDevices();
+    loadRelease();
   </script>
 </body>
 </html>`;
