@@ -7,7 +7,7 @@
 
   [![Android](https://img.shields.io/badge/platform-Android-7B2CBF?style=for-the-badge&logo=android&logoColor=white)](#compatibility) [![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack_Compose-5A189A?style=for-the-badge&logo=kotlin&logoColor=white)](#technology) [![Flavors](https://img.shields.io/badge/flavors-Root_%7C_Non--root-3C096C?style=for-the-badge)](#execution-flavors) [![Source Available](https://img.shields.io/badge/source-available-240046?style=for-the-badge)](SOURCE_AVAILABLE.md)
 
-  [![YouTube](https://img.shields.io/badge/YouTube-JesterMODS-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://youtube.com/@jestermods3.0) [![Security](https://img.shields.io/badge/security-private_advisories-6f42c1?style=flat-square&logo=github)](https://github.com/BenigJester/Jester-Mods-Launcher/security/advisories/new)
+  [![YouTube](https://img.shields.io/badge/YouTube-JesterMODS-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://youtube.com/@jestermods3.0) [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-FF5E5B?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/jestermods) [![Security](https://img.shields.io/badge/security-private_advisories-6f42c1?style=flat-square&logo=github)](https://github.com/BenigJester/Jester-Mods-Launcher/security/advisories/new)
 
   [Overview](#overview) · [Features](#features) · [Authenticity](#verify-an-official-apk) · [Build](#build-from-source) · [Security](#security-model) · [Privacy](#privacy-and-permissions)
 </div>
@@ -286,11 +286,13 @@ Use a private GitHub Security Advisory for vulnerabilities. For authenticity con
 
 Created and maintained by **[JesterMODS](https://youtube.com/@jestermods3.0)**.
 
+Enjoying the project? [Buy JesterMODS a coffee on Ko-fi](https://ko-fi.com/jestermods).
+
 Third-party components remain governed by their own licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`THIRD_PARTY_LICENSES/`](THIRD_PARTY_LICENSES/).
 
 <div align="center">
 
-  [![Watch JesterMODS on YouTube](https://img.shields.io/badge/Watch_JesterMODS_on_YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtube.com/@jestermods3.0)
+  [![Watch JesterMODS on YouTube](https://img.shields.io/badge/Watch_JesterMODS_on_YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtube.com/@jestermods3.0) [![Support JesterMODS on Ko-fi](https://img.shields.io/badge/Support_JesterMODS_on_Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/jestermods)
 
   <sub>Official binaries are identified by their release signing certificate—not by filename, mirror, or visual appearance.</sub>
 </div>
