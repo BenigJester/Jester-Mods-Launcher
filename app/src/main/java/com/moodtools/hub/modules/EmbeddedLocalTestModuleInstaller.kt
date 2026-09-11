@@ -8,10 +8,10 @@ import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import org.json.JSONObject
 
-/** Installs the module carried by a debug launcher APK as a visible local TEST build. */
+/** Installs the module carried by a launcher APK as a visible local TEST build. */
 class EmbeddedLocalTestModuleInstaller(private val context: Context) {
     fun installIfConfigured(): String? {
-        if (!BuildConfig.DEBUG || !BuildConfig.LOCAL_TEST_MODULE_ENABLED) return null
+        if (!BuildConfig.LOCAL_TEST_MODULE_ENABLED) return null
         require(BuildConfig.LOCAL_TEST_MODULE_PACKAGE.matches(PACKAGE_PATTERN)) {
             "The embedded local test package is invalid"
         }
@@ -119,7 +119,7 @@ class EmbeddedLocalTestModuleInstaller(private val context: Context) {
         File(directory, ModuleRepository.LOCAL_TEST_INSTALL_MARKER).writeText(
             JSONObject()
                 .put("schema", 1)
-                .put("source", "embedded-debug-launcher")
+                .put("source", "embedded-launcher")
                 .put("packageName", BuildConfig.LOCAL_TEST_MODULE_PACKAGE)
                 .put("bundleSha256", BuildConfig.LOCAL_TEST_MODULE_SHA256)
                 .toString(),
@@ -133,7 +133,7 @@ class EmbeddedLocalTestModuleInstaller(private val context: Context) {
             File(directory, ModuleRepository.LOCAL_TEST_INSTALL_MARKER).readText(Charsets.UTF_8)
         )
         marker.optInt("schema") == 1 &&
-            marker.optString("source") == "embedded-debug-launcher" &&
+            marker.optString("source") == "embedded-launcher" &&
             marker.optString("packageName") == BuildConfig.LOCAL_TEST_MODULE_PACKAGE &&
             marker.optString("bundleSha256") == BuildConfig.LOCAL_TEST_MODULE_SHA256 &&
             REQUIRED_FILES.all { File(directory, it).isFile }

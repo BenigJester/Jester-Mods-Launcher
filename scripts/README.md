@@ -14,12 +14,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-embedded
 
 `WebsiteCatalogPath` is optional. When supplied, the helper fails unless the module package and private scope exactly match the website operator catalog. The same flow is available interactively under **Build launcher → Allowlisted embedded private module build**.
 
-For a shareable Debug launcher that carries one local TEST module, use **Build launcher → Debug launcher with embedded local TEST module**, or run:
+For a shareable Debug or Release launcher that carries one local TEST module, use **Build launcher → Debug/Release launcher with embedded local TEST module**, or run:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-embedded-local-test.ps1 `
   -ModuleBundle .\module-output\com.ChillyRoom.DungeonShooter.zip -Flavor nonroot
 ```
+
+For Release, also pass `-BuildType release -VersionName 4.1.1`.
 
 It covers module debug/release builds, Root and Non-root launcher builds, complete production packages, guided device testing, APK installation, output inspection, tests, and cleanup. The guided device test is local-only and intentionally stages only the manually selected module folder or folders, or runs launcher-only, so old module-output folders cannot pollute a test run. Its module-only scope reuses an installed launcher without rebuilding or reinstalling it.
 

@@ -24,6 +24,7 @@ jstring IconWebViewData(JNIEnv *env, jobject thiz);
 jobjectArray SettingsList(JNIEnv *env, jobject activityObject);
 
 jobjectArray GetFeatureList(JNIEnv *env, jobject context);
+jstring GetNativeDiagnostics(JNIEnv *env, jobject context);
 
 void Changes(JNIEnv *env, jclass clazz, jobject obj,
              jint featNum, jstring featName, jint value, jlong Lvalue,

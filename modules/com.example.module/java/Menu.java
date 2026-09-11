@@ -7,6 +7,8 @@ import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -30,8 +32,10 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.text.Html;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -68,13 +72,22 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Stack;
+import java.util.concurrent.TimeUnit;
 
 import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
@@ -178,9 +191,208 @@ public class Menu {
 
     native String[] GetFeatureList();
 
+    native String GetNativeDiagnostics();
+
     native String[] SettingsList();
 
     native boolean IsGameLibLoaded();
+
+    private void dumpDiagnostics() {
+        showOneShotToast("Collecting diagnostics…");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String location = writeDiagnosticReport(buildDiagnosticReport());
+                    Log.i(TAG, "Diagnostics saved to " + location);
+                    showOneShotToast("Diagnostics saved to " + location, Toast.LENGTH_LONG);
+                } catch (Throwable error) {
+                    Log.e(TAG, "Diagnostic dump failed", error);
+                    String reason = error.getMessage();
+                    showOneShotToast("Diagnostic dump failed" +
+                            (reason == null || reason.trim().length() == 0 ? "" : ": " + reason),
+                            Toast.LENGTH_LONG);
+                }
+            }
+        }, "MoodToolsDiagnostics").start();
+    }
+
+    private String buildDiagnosticReport() {
+        Context context = getContext.getApplicationContext();
+        StringBuilder report = new StringBuilder(256 * 1024);
+        report.append("MoodTools module diagnostics\n");
+        report.append("Captured: ").append(new Date()).append('\n');
+        report.append("Package: ").append(context.getPackageName()).append('\n');
+        report.append("PID: ").append(android.os.Process.myPid()).append('\n');
+        report.append("Device: ").append(Build.MANUFACTURER).append(' ')
+                .append(Build.MODEL).append(" (device=").append(Build.DEVICE).append(")\n");
+        report.append("Android: ").append(Build.VERSION.RELEASE)
+                .append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n");
+        report.append("ABIs: ").append(Arrays.toString(Build.SUPPORTED_ABIS)).append('\n');
+        report.append("Compatibility: ").append(compactCompatibilityStatus(
+                getCurrentCompatibilityStatusText())).append('\n');
+        report.append("Game: ").append(detectedGameIdentity()).append("\n\n");
+        report.append("Native runtime state:\n").append(GetNativeDiagnostics()).append('\n');
+
+        File externalDirectory = context.getExternalFilesDir(null);
+        appendDirectoryState(report, "Context external files", externalDirectory);
+        appendDirectoryContents(report, externalDirectory);
+        report.append("\nRelevant /proc/self/maps entries:\n");
+        appendRelevantMaps(report);
+        report.append("\nProcess logcat (latest 3000 lines):\n");
+        report.append(readProcessLogcat());
+        return report.toString();
+    }
+
+    private static void appendDirectoryState(StringBuilder report, String label, File directory) {
+        report.append(label).append(": ");
+        if (directory == null) {
+            report.append("null\n");
+            return;
+        }
+        report.append(directory.getAbsolutePath())
+                .append(" exists=").append(directory.exists())
+                .append(" directory=").append(directory.isDirectory())
+                .append(" readable=").append(directory.canRead())
+                .append(" writable=").append(directory.canWrite())
+                .append(" freeBytes=").append(directory.getUsableSpace()).append('\n');
+    }
+
+    private static void appendDirectoryContents(StringBuilder report, File directory) {
+        report.append("External file snapshot:\n");
+        File[] files = directory == null ? null : directory.listFiles();
+        if (files == null) {
+            report.append("Unavailable\n");
+            return;
+        }
+        Arrays.sort(files);
+        int count = Math.min(files.length, 200);
+        for (int index = 0; index < count; index++) {
+            File file = files[index];
+            report.append(file.getName())
+                    .append(" directory=").append(file.isDirectory())
+                    .append(" size=").append(file.length())
+                    .append(" modified=").append(new Date(file.lastModified())).append('\n');
+        }
+        if (files.length > count) report.append("[truncated after 200 entries]\n");
+    }
+
+    private static void appendRelevantMaps(StringBuilder report) {
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    new java.io.FileInputStream("/proc/self/maps"), StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String lower = line.toLowerCase(Locale.ROOT);
+                if (lower.contains("libil2cpp") || lower.contains("libunity") ||
+                        lower.contains("libmenu_native") || lower.contains("libyoursaviour") ||
+                        lower.contains("libhoudini") || lower.contains("libndk_translation")) {
+                    report.append(line).append('\n');
+                }
+            }
+            reader.close();
+        } catch (Throwable error) {
+            report.append("Unavailable: ").append(error).append('\n');
+        }
+    }
+
+    private static String readProcessLogcat() {
+        final int maxCharacters = 1024 * 1024;
+        StringBuilder output = new StringBuilder(256 * 1024);
+        java.lang.Process process = null;
+        try {
+            process = new ProcessBuilder("logcat", "-d",
+                    "--pid=" + android.os.Process.myPid(), "-v", "threadtime", "-t", "3000")
+                    .redirectErrorStream(true).start();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    process.getInputStream(), StandardCharsets.UTF_8));
+            String line;
+            boolean truncated = false;
+            while ((line = reader.readLine()) != null) {
+                if (output.length() + line.length() + 1 <= maxCharacters) {
+                    output.append(line).append('\n');
+                } else {
+                    truncated = true;
+                }
+            }
+            reader.close();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroy();
+                output.append("[logcat timed out]\n");
+            } else if (process.exitValue() != 0) {
+                output.append("[logcat exit code ").append(process.exitValue()).append("]\n");
+            }
+            if (truncated) output.append("[logcat truncated at 1 MiB]\n");
+        } catch (Throwable error) {
+            output.append("Logcat unavailable: ").append(error).append('\n');
+        } finally {
+            if (process != null) process.destroy();
+        }
+        return output.toString();
+    }
+
+    private String writeDiagnosticReport(String report) throws Exception {
+        String fileName = "MoodTools-diagnostics-" +
+                new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()) + ".txt";
+        byte[] bytes = report.getBytes(StandardCharsets.UTF_8);
+        Context context = getContext.getApplicationContext();
+        String hostPackage = blackBoxHostPackage();
+        if (hostPackage != null) {
+            Uri uri = new Uri.Builder().scheme("content")
+                    .authority(hostPackage + ".diagnostics")
+                    .appendPath("export").appendPath(fileName).build();
+            try (OutputStream stream = context.getContentResolver().openOutputStream(uri, "w")) {
+                if (stream == null) throw new IllegalStateException("Launcher could not open the diagnostic file");
+                stream.write(bytes);
+            }
+            return "Downloads/MoodTools/" + fileName;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS + "/MoodTools");
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            ContentResolver resolver = context.getContentResolver();
+            Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IllegalStateException("Downloads rejected the file");
+            try {
+                OutputStream stream = resolver.openOutputStream(uri, "w");
+                if (stream == null) throw new IllegalStateException("Downloads could not open the file");
+                stream.write(bytes);
+                stream.close();
+                values.clear();
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                resolver.update(uri, values, null, null);
+            } catch (Exception error) {
+                resolver.delete(uri, null, null);
+                throw error;
+            }
+            return "Downloads/MoodTools/" + fileName;
+        }
+
+        File directory = new File(Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS), "MoodTools");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IllegalStateException("Downloads/MoodTools is unavailable");
+        }
+        File output = new File(directory, fileName);
+        FileOutputStream stream = new FileOutputStream(output);
+        stream.write(bytes);
+        stream.close();
+        return output.getAbsolutePath();
+    }
+
+    private static String blackBoxHostPackage() {
+        try {
+            Object value = Class.forName("top.niunaijun.blackbox.BlackBoxCore")
+                    .getMethod("getHostPkg").invoke(null);
+            return value instanceof String && ((String) value).length() > 0 ? (String) value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
 
     //Here we write the code for our Menu
     // Reference: https://www.androidhive.info/2016/11/android-floating-widget-like-facebook-chat-head/
@@ -1722,7 +1934,7 @@ public class Menu {
 
     private void showToggleToast(CharSequence label, boolean enabled) {
         if (label == null) return;
-        showOneShotToast(label.toString() + ": " + (enabled ? "ON" : "OFF"));
+        showOneShotToast(label.toString() + ": " + OfflineTranslator.tr(enabled ? "Enabled" : "Disabled"));
     }
 
     private void Switch(LinearLayout linLayout, final int featNum, final String featName, boolean swiOn) {
@@ -1845,6 +2057,9 @@ public class Menu {
                         showMenuContent(mods);
                         settingsOpen = false;
                         break;
+                    case -703:
+                        dumpDiagnostics();
+                        return;
                     case -100:
                         stopChecking = true;
                         break;
@@ -1883,11 +2098,11 @@ public class Menu {
         final String finalfeatName = featName.replace("OnOff_", "");
         boolean isOn = Preferences.loadPrefBool(featName, featNum, switchedOn);
         if (isOn) {
-            button.setText(Html.fromHtml(finalfeatName + ": ON"));
+            button.setText(Html.fromHtml(finalfeatName + ": " + OfflineTranslator.tr("ON")));
             button.setBackground(roundedBackground(BtnON, 6, PANEL_BORDER_COLOR, 1));
             isOn = false;
         } else {
-            button.setText(Html.fromHtml(finalfeatName + ": OFF"));
+            button.setText(Html.fromHtml(finalfeatName + ": " + OfflineTranslator.tr("OFF")));
             button.setBackground(roundedBackground(BtnOFF, 6, PANEL_BORDER_COLOR, 1));
             isOn = true;
         }
@@ -1900,11 +2115,11 @@ public class Menu {
                 Preferences.changeFeatureBool(finalfeatName, featNum, isOn);
                 //Log.d(TAG, finalfeatName + " " + featNum + " " + isActive2);
                 if (isOn) {
-                    button.setText(Html.fromHtml(finalfeatName + ": ON"));
+                    button.setText(Html.fromHtml(finalfeatName + ": " + OfflineTranslator.tr("ON")));
                     button.setBackground(roundedBackground(BtnON, 6, PANEL_BORDER_COLOR, 1));
                     isOn = false;
                 } else {
-                    button.setText(Html.fromHtml(finalfeatName + ": OFF"));
+                    button.setText(Html.fromHtml(finalfeatName + ": " + OfflineTranslator.tr("OFF")));
                     button.setBackground(roundedBackground(BtnOFF, 6, PANEL_BORDER_COLOR, 1));
                     isOn = true;
                 }

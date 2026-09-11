@@ -236,7 +236,7 @@ internal fun FirstRunLanguageScreen(
                                 contentColor = GateInk
                             )
                         ) {
-                            RawText(translated("Continue") + "  \u2192", fontWeight = FontWeight.Bold)
+                            RawText(translated("Continue"), fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.height(10.dp))
                         RawText(

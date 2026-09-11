@@ -842,7 +842,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
                 Object hostResult = invokeHostPackageManager(who, method, args);
                 if (hostResult instanceof ProviderInfo) {
                     ProviderInfo hostProvider = (ProviderInfo) hostResult;
-                    if (AppSystemEnv.isOpenPackage(hostProvider.packageName)) {
+                    if (AppSystemEnv.isOpenPackage(hostProvider.packageName)
+                            || ((BlackBoxCore.getHostPkg() + ".diagnostics").equals(authority)
+                            && BlackBoxCore.getHostPkg().equals(hostProvider.packageName))) {
                         return hostProvider;
                     }
                 }

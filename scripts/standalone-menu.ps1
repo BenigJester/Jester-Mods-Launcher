@@ -298,7 +298,7 @@ function Invoke-EmbeddedPrivateLauncherBuild {
 
 function Invoke-EmbeddedLocalTestLauncherBuild {
     Write-Header 'Build launcher with embedded local TEST module'
-    Write-Host 'This creates a Debug launcher APK containing one local module for tester sharing.' -ForegroundColor Gray
+    Write-Host 'This creates a launcher APK containing one local module for tester sharing.' -ForegroundColor Gray
     Write-Host 'The module is verified and installed into launcher-private storage on first startup.' -ForegroundColor DarkGray
     Write-Host ''
 
@@ -317,9 +317,20 @@ function Invoke-EmbeddedLocalTestLauncherBuild {
         default { 'both' }
     }
 
-    if (-not (Read-YesNo "Build the $flavor Debug APK with this local TEST module embedded?")) { return }
-    Invoke-Checked "Build embedded local TEST launcher ($flavor Debug)" {
-        & (Join-Path $PSScriptRoot 'build-embedded-local-test.ps1') -ModuleBundle $bundle -Flavor $flavor
+    Write-Host ''
+    Write-Host '  1. Debug'
+    Write-Host '  2. Production release'
+    Write-Host '  B. Back'
+    $buildChoice = Read-Choice 'Build type' @('1','2','b')
+    if ($buildChoice -eq 'b') { return }
+    $buildType = if ($buildChoice -eq '1') { 'debug' } else { 'release' }
+    $versionName = if ($buildType -eq 'release') { Read-Required 'Version name' (Get-ProjectLauncherVersion) } else { '' }
+    if ($versionName) { [void](Convert-VersionToBuild $versionName) }
+
+    if (-not (Read-YesNo "Build the $flavor $buildType APK with this local TEST module embedded?")) { return }
+    Invoke-Checked "Build embedded local TEST launcher ($flavor $buildType)" {
+        & (Join-Path $PSScriptRoot 'build-embedded-local-test.ps1') `
+            -ModuleBundle $bundle -Flavor $flavor -BuildType $buildType -VersionName $versionName
     }
 }
 
@@ -334,7 +345,7 @@ function Show-LauncherMenu {
         Write-Host '  6. Production release - Non-root'
         Write-Host '  7. Production release - Both'
         Write-Host '  8. Allowlisted embedded private module build'
-        Write-Host '  9. Debug launcher with embedded local TEST module'
+        Write-Host '  9. Debug/Release launcher with embedded local TEST module'
         Write-Host '  B. Back'
         $selection = Read-Choice 'Select an action' @('1','2','3','4','5','6','7','8','9','b')
         switch ($selection) {

@@ -656,6 +656,37 @@ std::string CompatibilityFeatureDescriptor() {
     return descriptor;
 }
 
+jstring GetNativeDiagnostics(JNIEnv *env, jobject context) {
+    (void) context;
+    char diagnostics[768];
+    std::snprintf(
+            diagnostics,
+            sizeof(diagnostics),
+            "compatibility=%s\n"
+            "failure=%s\n"
+            "runtimeMethod=%d\n"
+            "nativeInstallStarted=%d\n"
+            "nativeExamplesConfigured=%d\n"
+            "hookExampleAvailable=%d\n"
+            "directCallExampleAvailable=%d\n"
+            "installWatchdogRecovered=%d\n"
+            "executeOnlyReadSuccessCount=%d\n"
+            "executeOnlyReadDeniedCount=%d\n"
+            "dobbyHookFailureCount=%d\n",
+            CompatibilityStateName(gCompatibilityState.load(std::memory_order_acquire)),
+            CompatibilityFailureName(gCompatibilityFailure.load(std::memory_order_acquire)),
+            gRuntimeMethod.load(std::memory_order_acquire),
+            gNativeInstallStarted.load(std::memory_order_acquire) ? 1 : 0,
+            kNativeExamplesConfigured ? 1 : 0,
+            gHookExampleAvailable.load(std::memory_order_acquire) ? 1 : 0,
+            gDirectCallExampleAvailable.load(std::memory_order_acquire) ? 1 : 0,
+            gInstallWatchdogRecovered.load(std::memory_order_acquire) ? 1 : 0,
+            gExecuteOnlyReadSuccessCount.load(std::memory_order_acquire),
+            gExecuteOnlyReadDeniedCount.load(std::memory_order_acquire),
+            gDobbyHookFailureCount.load(std::memory_order_acquire));
+    return env->NewStringUTF(diagnostics);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Complete feature-descriptor catalog
 // ---------------------------------------------------------------------------------------------

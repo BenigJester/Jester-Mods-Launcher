@@ -19,6 +19,9 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.Lifecycle
@@ -257,6 +260,18 @@ class LauncherActivity : ComponentActivity() {
             }
             val startup by viewModel.startupState.collectAsStateWithLifecycle()
             val entered by viewModel.launcherEntered.collectAsStateWithLifecycle()
+            val activeLanguage = if (languageConfirmed) {
+                LauncherLocalization.language
+            } else {
+                LauncherLanguage.fromPreference(selectedLanguageOrdinal)
+            }
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (activeLanguage == LauncherLanguage.Arabic) {
+                    LayoutDirection.Rtl
+                } else {
+                    LayoutDirection.Ltr
+                }
+            ) {
             if (!languageConfirmed) {
                 val selectedLanguage = LauncherLanguage.fromPreference(selectedLanguageOrdinal)
                 FirstRunLanguageScreen(
@@ -345,6 +360,7 @@ class LauncherActivity : ComponentActivity() {
                     onCopySupportCode = ::copySupportCode,
                     onExit = { finishAffinity() }
                 )
+            }
             }
         }
         lifecycleScope.launch {

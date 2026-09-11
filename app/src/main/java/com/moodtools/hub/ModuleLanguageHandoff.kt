@@ -11,7 +11,7 @@ internal fun selectedMenuLanguage(context: Context): Int =
             .getInt("menu_language", 0)
     )
 
-internal fun normalizeModuleLanguage(value: Int): Int = value.takeIf { it in 0..8 } ?: 0
+internal fun normalizeModuleLanguage(value: Int): Int = value.takeIf { it in 0..9 } ?: 0
 
 internal fun Intent.withSelectedMenuLanguage(context: Context): Intent =
     putExtra(MODULE_LANGUAGE_EXTRA, selectedMenuLanguage(context))

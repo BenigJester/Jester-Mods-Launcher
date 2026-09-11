@@ -104,6 +104,35 @@ public final class OfflineTranslator {
                 "O salvamento de preferências foi ativado. Aguardando o carregamento da biblioteca do jogo...\n\nO carregamento forçado pode não aplicar os mods imediatamente. Você precisará reativá-los.",
                 "Falha ao iniciar o menu mod"
         });
+        add("ar", new String[]{
+                "الإعدادات",
+                "فتح إعدادات القائمة",
+                "التفضيلات",
+                "الملاحة",
+                "اللغة",
+                "الإنجليزية",
+                "فلبينية",
+                "الكورية",
+                "اليابانية",
+                "الصينية (المبسطة)",
+                "الاسبانية",
+                "الفيتنامية",
+                "الاندونيسية",
+                "العودة إلى الميزات",
+                "حفظ تفضيلات الميزة",
+                "ارتفاع اللوحة الموسعة",
+                "الرسوم المتحركة القائمة",
+                "الرسوم المتحركة الملونة",
+                "للاختبار",
+                "إخفاء |  عقد للتوقف",
+                "تصغير",
+                "أيقونة مخفية. تذكر موضع الأيقونة المخفية",
+                "قتل القائمة",
+                "قائمة تحميل القوة",
+                "تم تمكين حفظ التفضيلات. في انتظار تحميل اللعبة lib...\n\nقد لا تطبق قائمة التحميل القسري التعديلات على الفور. سوف تحتاج إلى إعادة تنشيطها مرة أخرى",
+                "فشل في تشغيل قائمة التعديل"
+        });
+
         // BEGIN GENERATED COMPLETE MODULE TRANSLATIONS
         addComplete("<font color='#E8B86A'>Return to features</font>",
                 "<font color='#E8B86A'>Bumalik sa mga tampok</font>", "<font color='#E8B86A'>기능으로 돌아가기</font>", "<font color='#E8B86A'>機能へ戻る</font>", "<font color='#E8B86A'>返回功能</font>",
@@ -420,6 +449,89 @@ public final class OfflineTranslator {
                 "Nivel m\u00E1ximo de guardaespaldas activado. Abre o actualiza una vez la p\u00E1gina de guardaespaldas.",
                 "\u0110\u00E3 b\u1EADt c\u1EA5p t\u1ED1i \u0111a cho v\u1EC7 s\u0129. H\u00E3y m\u1EDF ho\u1EB7c l\u00E0m m\u1EDBi trang V\u1EC7 s\u0129 m\u1ED9t l\u1EA7n.",
                 "Level maksimum pengawal diaktifkan. Buka atau segarkan halaman Pengawal sekali.");
+        addArabic("<font color='#E8B86A'>Return to features</font>", "<font color='#E8B86A'>الرجوع إلى الميزات</font>");
+        addArabic("All Options", "جميع الخيارات");
+        addArabic("Alpha", "ألفا");
+        addArabic("Apply Grouped Values", "تطبيق القيم المجمعة");
+        addArabic("Arabic", "العربية");
+        addArabic("Attack Speed Multiplier (1x-10x)", "مضاعفة سرعة الهجوم (1x-10x)");
+        addArabic("Automatic ID Example", "مثال على المعرف التلقائي");
+        addArabic("Back In Parent Collapse", "العودة إلى انهيار الوالدين");
+        addArabic("Basic Toggle", "تبديل أساسي");
+        addArabic("Beta", "بيتا");
+        addArabic("Bodyguard max-level enabled. Open or refresh the Bodyguard page once.", "تم تمكين المستوى الأقصى للحارس الشخصي. افتح أو قم بتحديث صفحة Bodyguard مرة واحدة.");
+        addArabic("Checked automatically when the game library is available.", "يتم التحقق تلقائيًا عندما تكون مكتبة الألعاب متاحة.");
+        addArabic("Checking game compatibility...\n\nIf the game library loads late, the menu will continue automatically.", "جارٍ التحقق من توافق اللعبة...\n\nإذا تم تحميل مكتبة الألعاب في وقت متأخر، فستستمر القائمة تلقائيًا.");
+        addArabic("Checking game library", "التحقق من مكتبة الألعاب");
+        addArabic("Collapse Child Toggle", "طي تبديل الطفل");
+        addArabic("Connected group action pressed.", "تم الضغط على إجراء المجموعة المتصلة.");
+        addArabic("CRASH! check:", "تحطم! تحقق:");
+        addArabic("CRASH! Could not save log.", "تحطم! لا يمكن حفظ السجل.");
+        addArabic("Default On Child", "الافتراضي على الطفل");
+        addArabic("Default On Testing Child", "الافتراضي عند اختبار الطفل");
+        addArabic("Default On Testing Toggle", "الافتراضي عند تبديل الاختبار");
+        addArabic("Default On Toggle", "الافتراضي عند التبديل");
+        addArabic("Default Open Collapse", "الافتراضي فتح الانهيار");
+        addArabic("Delta", "دلتا");
+        addArabic("Direct function example is disabled until its RVA is configured.", "تم تعطيل مثال الوظيفة المباشرة حتى يتم تكوين RVA الخاص به.");
+        addArabic("Disable", "تعطيل");
+        addArabic("Disabled", "معطّل");
+        addArabic("Display Only Types", "عرض الأنواع فقط");
+        addArabic("Enable", "تفعيل");
+        addArabic("Enabled", "مفعّل");
+        addArabic("Epsilon", "إبسيلون");
+        addArabic("Example Multi Select", "مثال متعدد التحديد");
+        addArabic("Example Searchable Select", "مثال قابل للبحث اختر");
+        addArabic("Example Seek Bar", "مثال شريط البحث");
+        addArabic("Example Spinner", "مثال سبينر");
+        addArabic("Explicit Positive ID", "معرف إيجابي صريح");
+        addArabic("Float Input With Maximum", "تعويم المدخلات مع الحد الأقصى");
+        addArabic("Float Input Without Maximum", "تعويم المدخلات دون الحد الأقصى");
+        addArabic("Free Everything", "كل شيء مجاني");
+        addArabic("Gamma", "جاما");
+        addArabic("Grouped Amount", "المبلغ المجمع");
+        addArabic("Grouped Mode", "الوضع المجمع");
+        addArabic("Guest", "ضيف");
+        addArabic("Hide", "إخفاء");
+        addArabic("Hook example is unavailable for this binary.", "مثال الخطاف غير متوفر لهذا الثنائي.");
+        addArabic("Input Types", "أنواع المدخلات");
+        addArabic("In-run Coins & Mode Currency Multiplier (0-1 = normal)", "العملات المعدنية قيد التشغيل ومضاعف عملات الوضع (0-1 = عادي)");
+        addArabic("Integer Input With Maximum", "إدخال عدد صحيح مع الحد الأقصى");
+        addArabic("Integer Input Without Maximum", "إدخال عدد صحيح بدون الحد الأقصى");
+        addArabic("Item Receive Multipliers", "البند تلقي المضاعفات");
+        addArabic("Long Input With Maximum", "إدخال طويل مع الحد الأقصى");
+        addArabic("Long Input Without Maximum", "إدخال طويل بدون الحد الأقصى");
+        addArabic("Materials & Event Items Multiplier (0-1 = normal)", "مضاعف المواد وعناصر الحدث (0-1 = عادي)");
+        addArabic("Max Level All Bodyguards", "الحد الأقصى لجميع الحراس الشخصيين");
+        addArabic("Menu by Jester", "القائمة من قبل المهرج");
+        addArabic("Native Implementation Examples", "أمثلة التنفيذ الأصلي");
+        addArabic("Nested Child Button", "زر الطفل المتداخل");
+        addArabic("Nested child button pressed.", "تم الضغط على زر الطفل المتداخل.");
+        addArabic("No ARM32 patch example is configured.", "لم يتم تكوين أي مثال لتصحيح ARM32.");
+        addArabic("OFF", "إيقاف");
+        addArabic("ON", "تشغيل");
+        addArabic("One", "واحد");
+        addArabic("Ordinary Button", "زر عادي");
+        addArabic("Ordinary Button pressed.", "تم الضغط على الزر العادي.");
+        addArabic("Overlay permission is required in order to show mod menu.", "مطلوب إذن التراكب لإظهار قائمة التعديل.");
+        addArabic("Parent collapse button pressed.", "تم الضغط على زر طي الوالدين.");
+        addArabic("Patch Example", "مثال التصحيح");
+        addArabic("Prefix and State Examples", "البادئة وأمثلة الدولة");
+        addArabic("Primary Action Button", "زر الإجراء الأساسي");
+        addArabic("Primary Action Button pressed.", "تم الضغط على زر الإجراء الأساسي.");
+        addArabic("Seeds Multiplier (0-1 = normal)", "مضاعف البذور (0-1 = عادي)");
+        addArabic("Signed Negative ID", "الهوية السلبية الموقعة");
+        addArabic("Special Event Tickets Multiplier (0-1 = normal)", "مضاعف تذاكر الأحداث الخاصة (0-1 = عادي)");
+        addArabic("Standalone Callback Controls", "ضوابط رد الاتصال المستقلة");
+        addArabic("SYSTEM STATUS", "حالة النظام");
+        addArabic("Template patch is disabled. Replace the placeholder RVA first.", "تم تعطيل تصحيح القالب. استبدل العنصر النائب RVA أولاً.");
+        addArabic("Testing Toggle", "تبديل الاختبار");
+        addArabic("Text Input Without Default", "إدخال النص بدون افتراضي");
+        addArabic("Three", "ثلاثة");
+        addArabic("Token Tickets Multiplier (0-1 = normal)", "مضاعف التذاكر الرمزية (0-1 = عادي)");
+        addArabic("Two", "اثنان");
+        addArabic("Weapon Projectile & Effect Size Multiplier (1x-10x)", "مقذوف السلاح ومضاعف حجم التأثير (1x-10x)");
+
     }
 
     private OfflineTranslator() {
@@ -573,8 +685,12 @@ public final class OfflineTranslator {
         TRANSLATIONS.get("id").put(english, indonesian);
     }
 
+    private static void addArabic(String english, String arabic) {
+        TRANSLATIONS.get("ar").put(english, arabic);
+    }
+
     private static int clampLanguage(int language) {
-        return Math.max(ENGLISH, Math.min(8, language));
+        return language >= ENGLISH && language <= 9 ? language : ENGLISH;
     }
 
     private static String languageCode() {
@@ -587,6 +703,7 @@ public final class OfflineTranslator {
             case 6: return "vi";
             case 7: return "id";
             case 8: return "pt";
+            case 9: return "ar";
             default: return "en";
         }
     }

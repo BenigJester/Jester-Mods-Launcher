@@ -4,19 +4,19 @@ internal object LauncherTranslationChunk12 {
     val entries = mapOf(
         "Installed build {0}" to arrayOf(
             "Na-install na build {0}", "\uC124\uCE58\uB41C \uBE4C\uB4DC {0}", "\u30A4\u30F3\u30B9\u30C8\u30FC\u30EB\u6E08\u307F\u30D3\u30EB\u30C9 {0}", "\u5DF2\u5B89\u88C5\u6784\u5EFA {0}",
-            "Versi\u00F3n instalada {0}", "\u0110\u00E3 c\u00E0i \u0111\u1EB7t b\u1EA3n d\u1EF1ng {0}", "Build terpasang {0}", "Build instalado {0}"
+            "Versi\u00F3n instalada {0}", "\u0110\u00E3 c\u00E0i \u0111\u1EB7t b\u1EA3n d\u1EF1ng {0}", "Build terpasang {0}", "Build instalado {0}", "الإصدار المثبت {0}"
         ),
         "{0} of {1}" to arrayOf(
             "{0} ng {1}", "{1} \uC911 {0}", "{1} \u4E2D\u306E {0}", "{1} \u4E2D\u7684 {0}",
-            "{0} de {1}", "{0} c\u1EE7a {1}", "{0} dari {1}", "{0} de {1}"
+            "{0} de {1}", "{0} c\u1EE7a {1}", "{0} dari {1}", "{0} de {1}", "{0} من {1}"
         ),
         "{0} menu feature" to arrayOf(
             "{0} tampok sa menu", "{0} \uBA54\uB274 \uAE30\uB2A5", "{0} \u30E1\u30CB\u30E5\u30FC\u30D5\u30A3\u30FC\u30C1\u30E3\u30FC", "{0} \u83DC\u5355\u529F\u80FD",
-            "funci\u00F3n de men\u00FA {0}", "t\u00EDnh n\u0103ng menu {0}", "Fitur menu {0}", "recurso de menu {0}"
+            "funci\u00F3n de men\u00FA {0}", "t\u00EDnh n\u0103ng menu {0}", "Fitur menu {0}", "recurso de menu {0}", "ميزة قائمة {0}"
         ),
         "{0} menu features" to arrayOf(
             "{0} mga tampok sa menu", "{0} \uBA54\uB274 \uAE30\uB2A5\uB4E4", "{0} \u30E1\u30CB\u30E5\u30FC\u30D5\u30A3\u30FC\u30C1\u30E3\u30FC", "{0} \u83DC\u5355\u529F\u80FD",
-            "funciones de men\u00FA {0}", "c\u00E1c t\u00EDnh n\u0103ng menu {0}", "Fitur menu {0}", "recursos de menu {0}"
+            "funciones de men\u00FA {0}", "c\u00E1c t\u00EDnh n\u0103ng menu {0}", "Fitur menu {0}", "recursos de menu {0}", "ميزات قائمة {0}"
         ),
         "The installed {0} is locked in for safety. Restore the original game before choosing another route." to arrayOf(
             "Ang naka-install na {0} ay naka-lock para sa kaligtasan. Ibalik ang orihinal na laro bago pumili ng ibang ruta.",
@@ -26,7 +26,8 @@ internal object LauncherTranslationChunk12 {
             "El {0} instalado est\u00E1 bloqueado por seguridad. Restaura el juego original antes de elegir otra ruta.",
             "{0} \u0111\u00E3 c\u00E0i \u0111\u1EB7t \u0111\u01B0\u1EE3c kh\u00F3a \u0111\u1EC3 \u0111\u1EA3m b\u1EA3o an to\u00E0n. Kh\u00F4i ph\u1EE5c tr\u00F2 ch\u01A1i g\u1ED1c tr\u01B0\u1EDBc khi ch\u1ECDn tuy\u1EBFn \u0111\u01B0\u1EDDng kh\u00E1c.",
             "{0} yang terpasang terkunci untuk keamanan. Pulihkan game asli sebelum memilih jalur lain.",
-            "O {0} instalado est\u00E1 bloqueado por seguran\u00E7a. Restaure o jogo original antes de escolher outra rota."
+            "O {0} instalado est\u00E1 bloqueado por seguran\u00E7a. Restaure o jogo original antes de escolher outra rota.",
+            "تم تثبيت {0} وتأمينه حفاظًا على السلامة. استعد اللعبة الأصلية قبل اختيار مسار آخر."
         ),
         "This add-on requires {0}, but this Android system cannot run it." to arrayOf(
             "Ang add-on na ito ay nangangailangan ng {0}, ngunit hindi ito maipatupad ng Android system na ito.",
@@ -36,15 +37,16 @@ internal object LauncherTranslationChunk12 {
             "Este complemento requiere {0}, pero este sistema Android no puede ejecutarlo.",
             "Ph\u1EA7n b\u1ED5 sung n\u00E0y y\u00EAu c\u1EA7u {0}, nh\u01B0ng h\u1EC7 th\u1ED1ng Android n\u00E0y kh\u00F4ng th\u1EC3 ch\u1EA1y n\u00F3.",
             "Add-on ini memerlukan {0}, tetapi sistem Android ini tidak bisa menjalankannya.",
-            "Este complemento requer {0}, mas este sistema Android n\u00E3o pode execut\u00E1-lo."
+            "Este complemento requer {0}, mas este sistema Android n\u00E3o pode execut\u00E1-lo.",
+            "تتطلب هذه الإضافة {0}، لكن نظام Android هذا لا يستطيع تشغيلها."
         ),
         "ADD-ON RELEASE" to arrayOf(
             "RELEASE NG ADD-ON", "\uC560\uB4DC\uC628 \uB9B4\uB9AC\uC2A4", "\u30A2\u30C9\u30AA\u30F3\u30EA\u30EA\u30FC\u30B9", "\u9644\u52A0\u7EC4\u4EF6\u7248\u672C",
-            "VERSI\u00D3N DEL COMPLEMENTO", "B\u1EA2N PH\u00C1T H\u00C0NH TI\u1EC6N \u00CDCH", "RILIS ADD-ON", "VERS\u00C3O DO COMPLEMENTO"
+            "VERSI\u00D3N DEL COMPLEMENTO", "B\u1EA2N PH\u00C1T H\u00C0NH TI\u1EC6N \u00CDCH", "RILIS ADD-ON", "VERS\u00C3O DO COMPLEMENTO", "إصدار الإضافة"
         ),
         "GAME RELEASE" to arrayOf(
             "RELEASE NG LARO", "\uAC8C\uC784 \uB9B4\uB9AC\uC2A4", "\u30B2\u30FC\u30E0\u30EA\u30EA\u30FC\u30B9", "\u6E38\u620F\u7248\u672C",
-            "VERSI\u00D3N DEL JUEGO", "B\u1EA2N PH\u00C1T H\u00C0NH TR\u00D2 CH\u01A0I", "RILIS GAME", "VERS\u00C3O DO JOGO"
+            "VERSI\u00D3N DEL JUEGO", "B\u1EA2N PH\u00C1T H\u00C0NH TR\u00D2 CH\u01A0I", "RILIS GAME", "VERS\u00C3O DO JOGO", "إصدار اللعبة"
         ),
         "Requirements are satisfied. The in-game menu will show a compact runtime status only." to arrayOf(
             "Natutugunan ang mga kinakailangan. Maikling katayuan ng runtime lamang ang ipapakita ng menu sa laro.",
@@ -54,7 +56,8 @@ internal object LauncherTranslationChunk12 {
             "Se cumplen los requisitos. El men\u00FA del juego solo mostrar\u00E1 un estado de ejecuci\u00F3n compacto.",
             "C\u00E1c y\u00EAu c\u1EA7u \u0111\u00E3 \u0111\u01B0\u1EE3c \u0111\u00E1p \u1EE9ng. Menu trong tr\u00F2 ch\u01A1i ch\u1EC9 hi\u1EC3n th\u1ECB tr\u1EA1ng th\u00E1i ch\u1EA1y thu g\u1ECDn.",
             "Persyaratan terpenuhi. Menu dalam game hanya akan menampilkan status runtime yang ringkas.",
-            "Os requisitos foram atendidos. O menu no jogo mostrar\u00E1 apenas um status de execu\u00E7\u00E3o compacto."
+            "Os requisitos foram atendidos. O menu no jogo mostrar\u00E1 apenas um status de execu\u00E7\u00E3o compacto.",
+            "تم استيفاء المتطلبات. ستعرض القائمة داخل اللعبة حالة تشغيل مختصرة فقط."
         ),
         "Jester Mods starts the installed game and injects the verified add-on through the root runtime. The original game package and signing certificate stay unchanged." to arrayOf(
             "Sinisimulan ng Jester Mods ang naka-install na laro at ini-inject ang na-verify na add-on gamit ang root runtime. Hindi binabago ang orihinal na package at signing certificate ng laro.",
@@ -64,9 +67,10 @@ internal object LauncherTranslationChunk12 {
             "Jester Mods inicia el juego instalado e inyecta el complemento verificado mediante el entorno root. El paquete original y el certificado de firma del juego permanecen sin cambios.",
             "Jester Mods kh\u1EDFi ch\u1EA1y tr\u00F2 ch\u01A1i \u0111\u00E3 c\u00E0i v\u00E0 ch\u00E8n ti\u1EC7n \u00EDch \u0111\u00E3 x\u00E1c minh qua m\u00F4i tr\u01B0\u1EDDng root. G\u00F3i tr\u00F2 ch\u01A1i g\u1ED1c v\u00E0 ch\u1EE9ng ch\u1EC9 k\u00FD kh\u00F4ng thay \u0111\u1ED5i.",
             "Jester Mods menjalankan game yang terpasang dan menyuntikkan add-on terverifikasi melalui runtime root. Paket game asli dan sertifikat penandatanganan tetap tidak berubah.",
-            "O Jester Mods inicia o jogo instalado e injeta o complemento verificado pelo runtime root. O pacote original e o certificado de assinatura do jogo permanecem inalterados."
+            "O Jester Mods inicia o jogo instalado e injeta o complemento verificado pelo runtime root. O pacote original e o certificado de assinatura do jogo permanecem inalterados.",
+            "يشغّل Jester Mods اللعبة المثبتة ويحقن الإضافة الموثّقة عبر بيئة root. تظل حزمة اللعبة الأصلية وشهادة توقيعها دون تغيير."
         ),
-        "Show" to arrayOf("Ipakita", "\uD45C\uC2DC", "\u8868\u793A", "\u663E\u793A", "Mostrar", "Hi\u1EC3n th\u1ECB", "Tampilkan", "Mostrar"),
-        "Hide" to arrayOf("Itago", "\uC228\uAE30\uAE30", "\u975E\u8868\u793A", "\u9690\u85CF", "Ocultar", "\u1EA8n", "Sembunyikan", "Ocultar")
+        "Show" to arrayOf("Ipakita", "\uD45C\uC2DC", "\u8868\u793A", "\u663E\u793A", "Mostrar", "Hi\u1EC3n th\u1ECB", "Tampilkan", "Mostrar", "عرض"),
+        "Hide" to arrayOf("Itago", "\uC228\uAE30\uAE30", "\u975E\u8868\u793A", "\u9690\u85CF", "Ocultar", "\u1EA8n", "Sembunyikan", "Ocultar", "إخفاء")
     )
 }

@@ -482,7 +482,8 @@ internal enum class LauncherLanguage(
     Spanish("Español", "Hola"),
     Vietnamese("Tiếng Việt", "Xin chào"),
     Indonesian("Bahasa Indonesia", "Halo"),
-    Portuguese("Português", "Olá");
+    Portuguese("Português", "Olá"),
+    Arabic("العربية", "مرحبًا");
 
     val displayName: String
         get() = when (this) {

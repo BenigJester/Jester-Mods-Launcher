@@ -19,6 +19,7 @@ class LauncherLanguageTest {
         assertEquals(LauncherLanguage.Vietnamese, LauncherLanguage.fromPreference(6))
         assertEquals(LauncherLanguage.Indonesian, LauncherLanguage.fromPreference(7))
         assertEquals(LauncherLanguage.Portuguese, LauncherLanguage.fromPreference(8))
+        assertEquals(LauncherLanguage.Arabic, LauncherLanguage.fromPreference(9))
         assertEquals(LauncherLanguage.English, LauncherLanguage.fromPreference(99))
     }
 

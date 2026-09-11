@@ -283,7 +283,9 @@ jobjectArray SettingsList(JNIEnv *env, jobject activityObject) {
             OBFUSCATE("-1_Toggle_Save feature preferences"), //-1 is checked on Preferences.java
             OBFUSCATE("-700_Toggle_Menu animations"),
             OBFUSCATE("-701_Toggle_Color animations"),
-            OBFUSCATE("-702_Spinner_Language_English,Filipino,Korean,Japanese,Chinese (Simplified),Spanish,Vietnamese,Indonesian,Portuguese"),
+            OBFUSCATE("-702_Spinner_Language_English,Filipino,Korean,Japanese,Chinese (Simplified),Spanish,Vietnamese,Indonesian,Portuguese,Arabic"),
+            OBFUSCATE("Category_Diagnostics"),
+            OBFUSCATE("-703_ActionButton_Dump diagnostics"),
             OBFUSCATE("Category_Navigation"),
             OBFUSCATE("-6_Button_<font color='#E8B86A'>Return to features</font>"),
     };

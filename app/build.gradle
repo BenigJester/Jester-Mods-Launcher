@@ -174,9 +174,9 @@ gradle.taskGraph.whenReady { graph ->
         task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*Release.*')
     }
     if (localTestModuleBundle != null && graph.allTasks.any { task ->
-        task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*(Release|HardenedTest).*')
+        task.project == project(':app') && task.name.matches('(?i).*(assemble|bundle|package|install).*HardenedTest.*')
     }) {
-        throw new GradleException('An embedded local test module is allowed only in a debug launcher build.')
+        throw new GradleException('An embedded local test module is not allowed in a hardened-test launcher build.')
     }
     if (productionPackageRequested &&
             (!releaseSigningReady || !trustedReleaseSignerSha256.matches('[0-9A-Fa-f]{64}'))) {

@@ -189,9 +189,13 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 ProviderInfo openHostProviderInfo = BlackBoxCore.getPackageManager()
                         .resolveContentProvider((String) auth, GET_META_DATA);
                 boolean hostDocumentsProvider = isDocumentsProvider(openHostProviderInfo);
+                boolean ownDiagnosticProvider = openHostProviderInfo != null
+                        && (BlackBoxCore.getHostPkg() + ".diagnostics").equals(auth)
+                        && BlackBoxCore.getHostPkg().equals(openHostProviderInfo.packageName);
                 if (openHostProviderInfo != null
                         && (AppSystemEnv.isOpenPackage(openHostProviderInfo.packageName)
-                        || hostDocumentsProvider)) {
+                        || hostDocumentsProvider
+                        || ownDiagnosticProvider)) {
                     // Default Samsung Health behavior should not use the phone's Samsung Account
                     // app/provider. Allow it only when the per-app fallback toggle is enabled.
                     try {
@@ -209,7 +213,7 @@ public class IActivityManagerProxy extends ClassInvocationStub {
 
                     content = method.invoke(who, args);
                     if (content != null) {
-                        if (hostDocumentsProvider) {
+                        if (hostDocumentsProvider || ownDiagnosticProvider) {
                             ContentProviderDelegate.updateHost(content, (String) auth);
                         } else {
                             ContentProviderDelegate.update(content, (String) auth);
