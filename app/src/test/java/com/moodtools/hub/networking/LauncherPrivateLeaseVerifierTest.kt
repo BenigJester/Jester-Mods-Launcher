@@ -50,6 +50,25 @@ class LauncherPrivateLeaseVerifierTest {
     }
 
     @Test
+    fun acceptsPermanentGrantWithABoundedOfflineLease() {
+        val fixture = privateLeaseFixture(grantExpiresAt = 253_402_300_799L)
+
+        val lease = LauncherPrivateLeaseVerifier.verify(
+            envelope = fixture.envelope,
+            expectedScope = fixture.scope,
+            expectedDeviceId = fixture.deviceId,
+            expectedRecoveryId = fixture.recoveryId,
+            expectedFlavor = "nonroot",
+            expectedProofKeyId = fixture.proofKeyId,
+            now = 11_000L,
+            publicKeyDerBase64 = fixture.publicKey
+        )
+
+        assertEquals(20_000L, lease.expiresAt)
+        assertEquals(253_402_300_799L, lease.grantExpiresAt)
+    }
+
+    @Test
     fun rejectsAnotherScopeDeviceOrRecoveryIdentity() {
         val fixture = privateLeaseFixture()
 
@@ -91,7 +110,10 @@ class LauncherPrivateLeaseVerifierTest {
         }.isFailure)
     }
 
-    private fun privateLeaseFixture(includeGrantExpiry: Boolean = true): PrivateLeaseFixture {
+    private fun privateLeaseFixture(
+        includeGrantExpiry: Boolean = true,
+        grantExpiresAt: Long = 200_000L
+    ): PrivateLeaseFixture {
         val scope = "friends-zombie"
         val deviceId = "d".repeat(43)
         val recoveryId = "r".repeat(43)
@@ -111,7 +133,7 @@ class LauncherPrivateLeaseVerifierTest {
             .put("proofKeyId", proofKeyId)
             .put("issuedAt", 10_000L)
             .put("expiresAt", 20_000L)
-        if (includeGrantExpiry) payload.put("grantExpiresAt", 200_000L)
+        if (includeGrantExpiry) payload.put("grantExpiresAt", grantExpiresAt)
         val payloadBytes = payload
             .toString()
             .toByteArray()

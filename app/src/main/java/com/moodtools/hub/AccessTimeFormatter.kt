@@ -1,5 +1,7 @@
 package com.moodtools.hub
 
+internal const val PERMANENT_ACCESS_EXPIRY_SECONDS = 253_402_300_799L
+
 internal fun formatRemainingAccessPrimary(milliseconds: Long): String {
     if (milliseconds <= 0L) return "Expired"
     var minutes = (milliseconds + 59_999L) / 60_000L

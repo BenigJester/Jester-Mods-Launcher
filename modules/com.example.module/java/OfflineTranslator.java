@@ -453,7 +453,6 @@ public final class OfflineTranslator {
         addArabic("All Options", "جميع الخيارات");
         addArabic("Alpha", "ألفا");
         addArabic("Apply Grouped Values", "تطبيق القيم المجمعة");
-        addArabic("Arabic", "العربية");
         addArabic("Attack Speed Multiplier (1x-10x)", "مضاعفة سرعة الهجوم (1x-10x)");
         addArabic("Automatic ID Example", "مثال على المعرف التلقائي");
         addArabic("Back In Parent Collapse", "العودة إلى انهيار الوالدين");

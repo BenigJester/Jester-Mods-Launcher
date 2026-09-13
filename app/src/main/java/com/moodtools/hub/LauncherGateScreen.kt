@@ -386,11 +386,14 @@ fun LauncherGateScreen(
                         when (targetPresentation) {
                             LauncherGatePresentation.Booting -> BootGateContent()
                             is LauncherGatePresentation.Ready -> {
+                                val permanent = targetPresentation.expiresAt ==
+                                    PERMANENT_ACCESS_EXPIRY_SECONDS
                                 val expiresAtMillis = targetPresentation.expiresAt
-                                    .takeIf { it != Long.MAX_VALUE }
+                                    .takeUnless { permanent }
                                     ?.let { seconds -> seconds * 1_000L }
                                 ReadyAccessContent(
                                     expiresAtMillis = expiresAtMillis,
+                                    permanent = permanent,
                                     onEnter = onEnter
                                 )
                             }
@@ -453,6 +456,7 @@ private fun BootGateContent() {
 @Composable
 private fun ReadyAccessContent(
     expiresAtMillis: Long?,
+    permanent: Boolean,
     onEnter: () -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -536,7 +540,8 @@ private fun ReadyAccessContent(
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    remainingMillis?.let(::formatRemainingAccessPrimary) ?: "Active",
+                    if (permanent) "Permanent"
+                    else remainingMillis?.let(::formatRemainingAccessPrimary) ?: "Active",
                     color = Color.White,
                     fontSize = 42.sp,
                     lineHeight = 48.sp,
@@ -549,12 +554,12 @@ private fun ReadyAccessContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Available until",
+                        if (permanent) "ACCESS" else "Available until",
                         color = GateMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        expiryText ?: "This test launch",
+                        if (permanent) "Permanent" else expiryText ?: "This test launch",
                         color = Color.White.copy(alpha = 0.88f),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold

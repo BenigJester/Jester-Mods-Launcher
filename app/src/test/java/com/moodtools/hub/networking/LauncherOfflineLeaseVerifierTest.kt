@@ -31,6 +31,7 @@ class LauncherOfflineLeaseVerifierTest {
             ))
             .put("issuedAt", 10_000L)
             .put("expiresAt", 10_000L + 30L * 24L * 60L * 60L)
+            .put("grantExpiresAt", 253_402_300_799L)
             .toString()
             .toByteArray()
         val signature = Signature.getInstance("SHA256withRSA").run {
@@ -55,6 +56,7 @@ class LauncherOfflineLeaseVerifierTest {
         )
         assertEquals(10_000L, claims.issuedAt)
         assertEquals(10_000L + 30L * 24L * 60L * 60L, claims.expiresAt)
+        assertEquals(253_402_300_799L, claims.grantExpiresAt)
         assertTrue(runCatching {
             LauncherOfflineLeaseVerifier.verify(
                 envelope = envelope,

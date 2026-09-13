@@ -110,6 +110,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.moodtools.hub.BuildConfig
 import com.moodtools.hub.LauncherLocalization
+import com.moodtools.hub.PERMANENT_ACCESS_EXPIRY_SECONDS
 import com.moodtools.hub.PackageReplacementKind
 import com.moodtools.hub.R
 import com.moodtools.hub.formatRemainingAccessPrimary
@@ -483,7 +484,7 @@ internal enum class LauncherLanguage(
     Vietnamese("Tiếng Việt", "Xin chào"),
     Indonesian("Bahasa Indonesia", "Halo"),
     Portuguese("Português", "Olá"),
-    Arabic("العربية", "مرحبًا");
+    Arabic("Arabic", "مرحبًا");
 
     val displayName: String
         get() = when (this) {
@@ -6769,7 +6770,10 @@ private fun PrivateModuleAccessTimer(
     expiresAtEpochSeconds: Long?,
     compact: Boolean = false
 ) {
-    val expiresAtMillis = remember(expiresAtEpochSeconds) { expiresAtEpochSeconds?.times(1_000L) }
+    val permanent = expiresAtEpochSeconds == PERMANENT_ACCESS_EXPIRY_SECONDS
+    val expiresAtMillis = remember(expiresAtEpochSeconds, permanent) {
+        expiresAtEpochSeconds?.takeUnless { permanent }?.times(1_000L)
+    }
     val now by produceState(initialValue = System.currentTimeMillis(), expiresAtMillis) {
         val expiry = expiresAtMillis ?: return@produceState
         while (true) {
@@ -6778,10 +6782,13 @@ private fun PrivateModuleAccessTimer(
             delay(minOf(1_000L, maxOf(250L, expiry - value)))
         }
     }
-    val remainingText = expiresAtMillis?.let { formatRemainingAccessPrimary(it - now) }
-        ?: "Private add-on"
-    val expiryText = remember(expiresAtMillis, compact) {
-        expiresAtMillis?.let { expiry ->
+    val remainingText = when {
+        permanent -> "Permanent"
+        expiresAtMillis != null -> formatRemainingAccessPrimary(expiresAtMillis - now)
+        else -> "Private add-on"
+    }
+    val expiryText = remember(expiresAtMillis, compact, permanent) {
+        if (permanent) "Permanent" else expiresAtMillis?.let { expiry ->
             if (compact) {
                 SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(expiry))
             } else {
@@ -6862,7 +6869,7 @@ private fun PrivateModuleAccessTimer(
         }
         if (compact) {
             Text(
-                if (expiryText != null) "GRANTED UNTIL" else "ACCESS",
+                if (permanent) "ACCESS" else if (expiryText != null) "GRANTED UNTIL" else "ACCESS",
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall
             )
@@ -6880,7 +6887,7 @@ private fun PrivateModuleAccessTimer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    if (expiryText != null) "AVAILABLE UNTIL" else "ACCESS",
+                    if (permanent) "ACCESS" else if (expiryText != null) "AVAILABLE UNTIL" else "ACCESS",
                     color = Muted,
                     style = MaterialTheme.typography.labelSmall
                 )

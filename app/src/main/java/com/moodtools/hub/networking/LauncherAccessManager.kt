@@ -18,7 +18,11 @@ internal class LauncherServiceException(
     message: String
 ) : IllegalStateException(message)
 
-data class LauncherLease(val issuedAt: Long, val expiresAt: Long)
+data class LauncherLease(
+    val issuedAt: Long,
+    val expiresAt: Long,
+    val grantExpiresAt: Long = expiresAt
+)
 data class LauncherAccountIdentity(
     val grantPassIdentity: String,
     val deviceId: String,
@@ -296,7 +300,7 @@ class LauncherAccessManager(context: Context) {
                             error
                         )
                         rememberLeaseClock(now)
-                        LauncherLease(issuedAt, expiresAt)
+                        LauncherLease(issuedAt, expiresAt, claims.grantExpiresAt)
                     }
                 }
                 LauncherLeaseClockStatus.EXPIRED -> {
@@ -352,6 +356,7 @@ class LauncherAccessManager(context: Context) {
         require(validManagedAccessWindow(issuedAt, expiresAt)) {
             "The recovered digital key is invalid"
         }
+        var grantExpiresAt = expiresAt
         val offlineLease = if (accessVersion == ACCESS_VERSION) {
             response.getJSONObject("offlineLease").also {
                 val claims = LauncherOfflineLeaseVerifier.verify(
@@ -362,6 +367,7 @@ class LauncherAccessManager(context: Context) {
                     expectedProofKeyId = proofIdentity.keyId
                 )
                 require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
+                grantExpiresAt = claims.grantExpiresAt
             }.toString()
         } else null
         if (accessVersion == ACCESS_VERSION) {
@@ -371,7 +377,7 @@ class LauncherAccessManager(context: Context) {
             preferences.edit().putString(RECOVERY_BOUND_KEY, proofIdentity.keyId).apply()
         }
         saveLease(digitalKey, issuedAt, expiresAt, accessVersion, offlineLease)
-        return LauncherLease(issuedAt, expiresAt)
+        return LauncherLease(issuedAt, expiresAt, grantExpiresAt)
     }
 
     private fun acceptProtocol4Lease(
@@ -396,6 +402,7 @@ class LauncherAccessManager(context: Context) {
         require(digitalKey.length in 80..4096 && validManagedAccessWindow(issuedAt, expiresAt)) {
             "The refreshed digital key is invalid"
         }
+        var grantExpiresAt = expiresAt
         val offlineLease = response.getJSONObject("offlineLease").also {
             val claims = LauncherOfflineLeaseVerifier.verify(
                 envelope = it,
@@ -405,10 +412,11 @@ class LauncherAccessManager(context: Context) {
                 expectedProofKeyId = proofIdentity.keyId
             )
             require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
+            grantExpiresAt = claims.grantExpiresAt
         }.toString()
         saveLease(digitalKey, issuedAt, expiresAt, ACCESS_VERSION, offlineLease)
         preferences.edit().putString(RECOVERY_BOUND_KEY, proofIdentity.keyId).apply()
-        return LauncherLease(issuedAt, expiresAt)
+        return LauncherLease(issuedAt, expiresAt, grantExpiresAt)
     }
 
     private fun validManagedAccessWindow(issuedAt: Long, expiresAt: Long): Boolean =
@@ -841,6 +849,7 @@ class LauncherAccessManager(context: Context) {
         val issuedAt = response.getLong("issuedAt")
         val expiresAt = response.getLong("expiresAt")
         require(digitalKey.length in 80..4096 && validManagedAccessWindow(issuedAt, expiresAt))
+        var grantExpiresAt = expiresAt
         val offlineLease = response.getJSONObject("offlineLease").also {
             val claims = LauncherOfflineLeaseVerifier.verify(
                 envelope = it,
@@ -850,6 +859,7 @@ class LauncherAccessManager(context: Context) {
                 expectedProofKeyId = proofIdentity.keyId
             )
             require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
+            grantExpiresAt = claims.grantExpiresAt
         }.toString()
         saveLease(digitalKey, issuedAt, expiresAt, ACCESS_VERSION, offlineLease)
         check(preferences.edit()
@@ -857,7 +867,7 @@ class LauncherAccessManager(context: Context) {
             .remove(PENDING_CHALLENGE)
             .remove(PENDING_EXPIRES)
             .commit()) { "The launcher access state could not be saved" }
-        return LauncherLease(issuedAt, expiresAt)
+        return LauncherLease(issuedAt, expiresAt, grantExpiresAt)
     }
 
     private fun saveLease(

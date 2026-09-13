@@ -1,6 +1,7 @@
 package com.moodtools.hub.networking
 
 import com.moodtools.hub.BuildConfig
+import com.moodtools.hub.PERMANENT_ACCESS_EXPIRY_SECONDS
 import org.json.JSONObject
 import java.security.KeyFactory
 import java.security.MessageDigest
@@ -10,7 +11,8 @@ import java.util.Base64
 
 internal data class LauncherOfflineLeaseClaims(
     val issuedAt: Long,
-    val expiresAt: Long
+    val expiresAt: Long,
+    val grantExpiresAt: Long
 )
 
 internal enum class LauncherLeaseClockStatus {
@@ -47,6 +49,7 @@ internal object LauncherOfflineLeaseVerifier {
         val payload = JSONObject(String(payloadBytes, Charsets.UTF_8))
         val issuedAt = payload.getLong("issuedAt")
         val expiresAt = payload.getLong("expiresAt")
+        val grantExpiresAt = payload.optLong("grantExpiresAt", expiresAt)
         require(payload.optInt("schema") == 1 && payload.optString("audience") == AUDIENCE)
         require(payload.optInt("leaseVersion") == LEASE_VERSION)
         require(payload.optInt("accessVersion") == ACCESS_VERSION)
@@ -58,7 +61,10 @@ internal object LauncherOfflineLeaseVerifier {
         require(payload.optString("digitalKeySha256") == sha256(digitalKey))
         require(issuedAt > 0L && expiresAt > issuedAt &&
             expiresAt - issuedAt <= MAX_MANAGED_ACCESS_TTL_SECONDS)
-        return LauncherOfflineLeaseClaims(issuedAt, expiresAt)
+        require(grantExpiresAt >= expiresAt &&
+            (grantExpiresAt == PERMANENT_ACCESS_EXPIRY_SECONDS ||
+                grantExpiresAt - issuedAt <= MAX_MANAGED_ACCESS_TTL_SECONDS))
+        return LauncherOfflineLeaseClaims(issuedAt, expiresAt, grantExpiresAt)
     }
 
     fun clockStatus(

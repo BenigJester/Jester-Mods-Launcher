@@ -1,6 +1,7 @@
 package com.moodtools.hub.networking
 
 import com.moodtools.hub.BuildConfig
+import com.moodtools.hub.PERMANENT_ACCESS_EXPIRY_SECONDS
 import org.json.JSONObject
 
 internal data class LauncherPrivateLease(
@@ -50,7 +51,8 @@ internal object LauncherPrivateLeaseVerifier {
         require(issuedAt > 0L && expiresAt > issuedAt)
         require(expiresAt - issuedAt <= MAX_OFFLINE_TTL_SECONDS)
         require(grantExpiresAt >= expiresAt)
-        require(grantExpiresAt - issuedAt <= MAX_MANAGED_ACCESS_TTL_SECONDS)
+        require(grantExpiresAt == PERMANENT_ACCESS_EXPIRY_SECONDS ||
+            grantExpiresAt - issuedAt <= MAX_MANAGED_ACCESS_TTL_SECONDS)
         require(now + CLOCK_SKEW_SECONDS >= issuedAt && now < expiresAt)
         return LauncherPrivateLease(expectedScope, issuedAt, expiresAt, grantExpiresAt)
     }

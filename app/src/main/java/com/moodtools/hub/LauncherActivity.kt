@@ -1459,7 +1459,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     // The server was reached and confirmed there is no recoverable access.
                     _startupState.value = LauncherStartupState.Locked()
                 } else {
-                    completeAuthorizedStartup(lease.expiresAt, initialLink)
+                    completeAuthorizedStartup(lease.grantExpiresAt, initialLink)
                 }
             }
             .onFailure { error ->
@@ -5328,7 +5328,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         awaitMinimumInternetTransition(transitionStartedAt)
         result
             .onSuccess { lease ->
-                completeAuthorizedStartup(lease.expiresAt)
+                completeAuthorizedStartup(lease.grantExpiresAt)
             }
             .onFailure { error ->
                 android.util.Log.e("JesterMoodsAccess", "Digital key redemption failed", error)
