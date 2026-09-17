@@ -56,6 +56,15 @@ internal fun isIdentityShellReady(
     protocolVersion >= IdentityShellManager.CURRENT_SHELL_VERSION &&
     payloadAuthority == expectedPayloadAuthority
 
+internal fun isNativeLibraryForAbi(name: String, abi: String): Boolean {
+    val prefix = "lib/$abi/"
+    val leaf = name.removePrefix(prefix)
+    return name.startsWith(prefix) && leaf.isNotEmpty() && '/' !in leaf && leaf.endsWith(".so")
+}
+
+internal fun shouldCopyNativeLibrary(name: String, abi: String, templateEntries: Set<String>): Boolean =
+    isNativeLibraryForAbi(name, abi) && name !in templateEntries
+
 /** Builds a branded exact-package shell with an original-game payload retained only until import. */
 internal class IdentityShellManager(
     private val context: Context,
@@ -138,7 +147,10 @@ internal class IdentityShellManager(
         context.assets.open(TEMPLATE_ASSET).use { input ->
             val template = File(root, "shell-template.apk")
             FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
-            rewriteTemplate(template, unsigned, label, branding, game.versionName, game.versionCode)
+            rewriteTemplate(
+                template, unsigned, label, branding, game.versionName, game.versionCode,
+                sources, game.abi
+            )
             check(template.delete()) { "Could not clear the temporary shell template" }
         }
         val material = signingMaterial()
@@ -182,7 +194,10 @@ internal class IdentityShellManager(
         context.assets.open(TEMPLATE_ASSET).use { input ->
             val template = File(root, "shell-repair-template.apk")
             FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
-            rewriteTemplate(template, unsigned, label, branding, game.versionName, game.versionCode)
+            rewriteTemplate(
+                template, unsigned, label, branding, game.versionName, game.versionCode,
+                installedSources(installed), game.abi
+            )
             check(template.delete()) { "Could not clear the temporary repair template" }
         }
         val material = signingMaterial()
@@ -296,15 +311,19 @@ internal class IdentityShellManager(
         label: String,
         branding: Branding,
         versionName: String,
-        versionCode: Long
+        versionCode: Long,
+        nativeSources: List<SourceApk>,
+        abi: String
     ) {
         val brandingEntries = resolveBrandingEntries(template)
         ZipFile(template).use { source ->
             val counting = CountingOutputStream(FileOutputStream(output))
             ZipOutputStream(counting).use { destination ->
                 destination.setLevel(6)
+                val templateEntries = linkedSetOf<String>()
                 source.entries().asSequence().forEach { entry ->
                     if (entry.isDirectory || isJarSignature(entry.name)) return@forEach
+                    templateEntries.add(entry.name)
                     val replacement = when {
                         entry.name == MANIFEST_ENTRY -> {
                             val manifest = source.getInputStream(entry).use { it.readBytes() }
@@ -341,6 +360,25 @@ internal class IdentityShellManager(
                     } else {
                         putCopiedEntry(source, entry, destination, counting)
                     }
+                }
+                val copiedLibraries = linkedSetOf<String>()
+                nativeSources.forEach { apk ->
+                    ZipFile(apk.file).use { archive ->
+                        archive.entries().asSequence()
+                            .filter {
+                                !it.isDirectory &&
+                                    shouldCopyNativeLibrary(it.name, abi, templateEntries)
+                            }
+                            .forEach { entry ->
+                                require(copiedLibraries.add(entry.name)) {
+                                    "Duplicate native library in identity-shell sources: ${entry.name}"
+                                }
+                                putNativeLibrary(archive, entry, destination, counting)
+                            }
+                    }
+                }
+                require(copiedLibraries.isNotEmpty()) {
+                    "Installed game has no native libraries for $abi"
                 }
             }
         }
@@ -594,6 +632,25 @@ internal class IdentityShellManager(
         destination.closeEntry()
     }
 
+    private fun putNativeLibrary(
+        source: ZipFile,
+        entry: ZipEntry,
+        destination: ZipOutputStream,
+        counting: CountingOutputStream
+    ) {
+        val copy = ZipEntry(entry.name).apply {
+            time = entry.time
+            method = ZipEntry.STORED
+            size = entry.size
+            compressedSize = entry.size
+            crc = entry.crc
+            extra = alignmentExtra(counting.count, entry.name, alignmentFor(entry.name))
+        }
+        destination.putNextEntry(copy)
+        source.getInputStream(entry).use { it.copyTo(destination, COPY_BUFFER_SIZE) }
+        destination.closeEntry()
+    }
+
     private fun alignmentFor(name: String): Int =
         if (name.endsWith(".so", ignoreCase = true)) 16 * 1024 else 4
 
@@ -658,7 +715,7 @@ internal class IdentityShellManager(
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
         const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
         const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
-        const val CURRENT_SHELL_VERSION = 3
+        const val CURRENT_SHELL_VERSION = 15
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"

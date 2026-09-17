@@ -1312,6 +1312,10 @@ public class BlackBoxCore extends ClientConfiguration {
         return mProcessType == ProcessType.BAppClient;
     }
 
+    private boolean isNativeFreeExactPackageClient() {
+        return mProcessType == ProcessType.BAppClient && isHostPackageVirtualizationEnabled();
+    }
+
     public boolean isMainProcess() {
         return mProcessType == ProcessType.Main;
     }
@@ -1334,7 +1338,19 @@ public class BlackBoxCore extends ClientConfiguration {
 
     @Override
     public String getHostPackageName() {
-        return mClientConfiguration.getHostPackageName();
+        if (mClientConfiguration != null) {
+            return mClientConfiguration.getHostPackageName();
+        }
+        if (sContext != null) {
+            return sContext.getPackageName();
+        }
+        String processName = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? Application.getProcessName() : mProcessName;
+        if (processName != null && !processName.isEmpty()) {
+            int separator = processName.indexOf(':');
+            return separator < 0 ? processName : processName.substring(0, separator);
+        }
+        throw new IllegalStateException("BlackBox host package is unavailable before attach");
     }
 
     @Override
@@ -1661,11 +1677,15 @@ public class BlackBoxCore extends ClientConfiguration {
 
         // Avoid loading the native "blackbox" library in the host main/UI process.
         // On some devices this can destabilize rendering (Surface/GraphicBuffer/EGL).
-        if (isHostMainProcess) {
+        final boolean nativeFreeExactPackageClient = isNativeFreeExactPackageClient();
+        if (isHostMainProcess || nativeFreeExactPackageClient) {
             try {
                 HiddenApiBypass.addHiddenApiExemptions("L");
             } catch (Throwable t) {
                 Slog.w(TAG, "Reflection.unseal failed: " + t.getMessage());
+            }
+            if (nativeFreeExactPackageClient) {
+                Slog.i(TAG, "protocol-9 native-free guest: skipped native compatibility hooks");
             }
         } else {
             if (!NativeCore.disableHiddenApi()) {
@@ -1774,11 +1794,15 @@ public class BlackBoxCore extends ClientConfiguration {
             Slog.d(TAG, "Ensuring proper initialization order...");
             
             
-            try {
-                NativeCore.init(android.os.Build.VERSION.SDK_INT);
-                Slog.d(TAG, "NativeCore initialized successfully");
-            } catch (Exception e) {
-                Slog.w(TAG, "NativeCore initialization failed: " + e.getMessage());
+            if (BlackBoxCore.get().isNativeFreeExactPackageClient()) {
+                Slog.i(TAG, "protocol-9 native-free guest: skipped NativeCore initialization");
+            } else {
+                try {
+                    NativeCore.init(android.os.Build.VERSION.SDK_INT);
+                    Slog.d(TAG, "NativeCore initialized successfully");
+                } catch (Exception e) {
+                    Slog.w(TAG, "NativeCore initialization failed: " + e.getMessage());
+                }
             }
             
             

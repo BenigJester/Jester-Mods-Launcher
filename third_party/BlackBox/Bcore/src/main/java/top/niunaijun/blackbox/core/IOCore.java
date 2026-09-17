@@ -154,7 +154,8 @@ public class IOCore {
         for (String s : blackRule) {
             get().addBlackRedirect(s);
         }
-        NativeCore.enableIO();
+        boolean exactPackageGuest = packageName.equals(BlackBoxCore.getHostPkg());
+        NativeCore.enableIO(!exactPackageGuest);
     }
 
     private void hideRoot(Map<String, String> rule) {

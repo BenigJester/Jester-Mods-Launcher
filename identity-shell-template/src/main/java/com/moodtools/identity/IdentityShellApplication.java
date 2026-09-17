@@ -25,7 +25,6 @@ import top.niunaijun.blackbox.core.env.BEnvironment;
 public final class IdentityShellApplication extends Application {
     private static final String TAG = "IdentityShell";
     private static final long ATTACH_DELAY_MS = 450L;
-
     private final Map<String, ClassLoader> moduleLoaders = new HashMap<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 

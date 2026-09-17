@@ -28,7 +28,7 @@ public class NativeCore {
 
     public static native void init(int apiLevel);
 
-    public static native void enableIO();
+    public static native void enableIO(boolean enableLibcFileHooks);
 
     public static native void addIORule(String targetPath, String relocatePath);
 

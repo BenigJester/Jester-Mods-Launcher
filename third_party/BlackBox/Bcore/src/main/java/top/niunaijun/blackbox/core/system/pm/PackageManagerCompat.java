@@ -319,8 +319,16 @@ public class PackageManagerCompat {
         if ((flags & PackageManager.GET_META_DATA) != 0) {
             ai.metaData = p.mAppMetaData;
         }
-        ai.dataDir = BEnvironment.getDataDir(ai.packageName, userId).getAbsolutePath();
-        if (!p.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
+        final boolean exactPackageGuest = ai.packageName.equals(BlackBoxCore.getHostPkg())
+                && BlackBoxCore.get().isHostPackageVirtualizationEnabled();
+        ai.dataDir = exactPackageGuest
+                ? baseApplication.dataDir
+                : BEnvironment.getDataDir(ai.packageName, userId).getAbsolutePath();
+        if (exactPackageGuest) {
+            // Exact-package guests must expose the physical package paths just like the
+            // original install. Module payloads remain isolated under BEnvironment.
+            ai.nativeLibraryDir = baseApplication.nativeLibraryDir;
+        } else if (!p.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
             ai.nativeLibraryDir = BEnvironment.getAppLibDir(ai.packageName).getAbsolutePath();
         }
         ai.processName = BPackageManagerService.fixProcessName(p.packageName, ai.packageName);
@@ -336,7 +344,9 @@ public class PackageManagerCompat {
             BRApplicationInfoL.get(ai)._set_scanSourceDir(BRApplicationInfoL.get(baseApplication).scanSourceDir());
         }
         if (BuildCompat.isN()) {
-            ai.deviceProtectedDataDir = BEnvironment.getDeDataDir(p.packageName, userId).getAbsolutePath();
+            ai.deviceProtectedDataDir = exactPackageGuest
+                    ? baseApplication.deviceProtectedDataDir
+                    : BEnvironment.getDeDataDir(p.packageName, userId).getAbsolutePath();
 
             if (BRApplicationInfoN.get(ai)._check_deviceEncryptedDataDir() != null) {
                 BRApplicationInfoN.get(ai)._set_deviceEncryptedDataDir(ai.deviceProtectedDataDir);

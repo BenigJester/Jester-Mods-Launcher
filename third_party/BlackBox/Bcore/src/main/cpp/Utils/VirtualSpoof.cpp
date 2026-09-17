@@ -14,6 +14,7 @@
 
 static int (*orig_system_property_get)(const char *name, char *value) = nullptr;
 static std::mutex g_spoof_mutex;
+static std::once_flag g_hook_once;
 static std::string g_manufacturer = "Google";
 static std::string g_brand = "google";
 static std::string g_model = "Pixel 6";
@@ -21,6 +22,8 @@ static std::string g_device = "oriole";
 static std::string g_product = "oriole";
 static std::string g_fingerprint = "google/oriole/oriole:12/SP1A.210812.015/7679548:user/release-keys";
 static std::string g_serial = "1A2B3C4D5E6F";
+
+void install_property_get_hook();
 
 static int copy_spoofed_value(const std::string &source, char *value) {
     strcpy(value, source.c_str());
@@ -35,6 +38,7 @@ void setDeviceSpoofValues(
         const char *product,
         const char *fingerprint,
         const char *serial) {
+    std::call_once(g_hook_once, install_property_get_hook);
     std::lock_guard<std::mutex> lock(g_spoof_mutex);
     if (manufacturer != nullptr) g_manufacturer = manufacturer;
     if (brand != nullptr) g_brand = brand;
@@ -91,11 +95,4 @@ void install_property_get_hook() {
         xdl_close(handle);
     }
 
-}
-
-
-__attribute__((constructor)) void init_virtual_spoof()
-{
-    install_property_get_hook();
-    LOGD("VirtualSpoof: __system_property_get hook loaded");
 }

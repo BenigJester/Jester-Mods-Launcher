@@ -10,6 +10,28 @@ import org.junit.Test
 
 class IdentityShellTemplateTest {
     @Test
+    fun `native library selection is limited to the requested abi`() {
+        assertTrue(isNativeLibraryForAbi("lib/arm64-v8a/libgame.so", "arm64-v8a"))
+        assertFalse(isNativeLibraryForAbi("lib/armeabi-v7a/libgame.so", "arm64-v8a"))
+        assertFalse(isNativeLibraryForAbi("lib/arm64-v8a/nested/libgame.so", "arm64-v8a"))
+        assertFalse(isNativeLibraryForAbi("assets/libgame.so", "arm64-v8a"))
+        assertFalse(
+            shouldCopyNativeLibrary(
+                "lib/arm64-v8a/libblackbox.so",
+                "arm64-v8a",
+                setOf("lib/arm64-v8a/libblackbox.so")
+            )
+        )
+        assertTrue(
+            shouldCopyNativeLibrary(
+                "lib/arm64-v8a/libgame.so",
+                "arm64-v8a",
+                setOf("lib/arm64-v8a/libblackbox.so")
+            )
+        )
+    }
+
+    @Test
     fun `template contains replaceable identity and branding resources`() {
         val template = File(
             "build/generated/identityShellTemplateAssets/nonroot/identity-shell/template.apk"
@@ -75,6 +97,10 @@ class IdentityShellTemplateTest {
             assertTrue(
                 "Identity-shell compatibility-only entry was stripped",
                 dex.contains("loadNativeForIdentityShellCompatibility")
+            )
+            assertTrue(
+                "Exact-package native-free compatibility marker was stripped",
+                dex.contains("protocol-15 native-free guest")
             )
             assertFalse(
                 "Identity shell must not start an automatic public logcat capture",

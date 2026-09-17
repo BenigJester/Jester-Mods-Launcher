@@ -55,6 +55,7 @@ import black.android.app.BRService;
 import black.android.app.LoadedApk;
 import black.android.content.BRBroadcastReceiver;
 import black.android.content.BRContentProviderClient;
+import black.android.content.res.BRCompatibilityInfo;
 import black.android.graphics.BRCompatibility;
 import black.android.security.net.config.BRNetworkSecurityConfigProvider;
 import black.com.android.internal.content.BRReferrerIntent;
@@ -400,8 +401,11 @@ public class BActivityThread extends IBActivityThread.Stub {
 
         Object boundApplication = BRActivityThread.get(BlackBoxCore.mainThread()).mBoundApplication();
 
-        boolean samePackageGuest = BlackBoxCore.get().isHostPackageVirtualizationEnabled()
-                && packageName.equals(BlackBoxCore.getHostPkg());
+        // In an identity shell the host and virtual guest deliberately share the exact package
+        // name.  The per-process ClientConfiguration can be unavailable while an early service is
+        // binding, so package identity is the reliable signal here.  Treating that process as a
+        // regular guest makes createPackageContext() return null and crashes IOCore on boot.
+        boolean samePackageGuest = packageName.equals(BlackBoxCore.getHostPkg());
         String identityShellApk = null;
         if (samePackageGuest) {
             try {
@@ -478,9 +482,13 @@ public class BActivityThread extends IBActivityThread.Stub {
             BRCompatibility.get().setTargetSdkVersion(applicationInfo.targetSdkVersion);
         }
 
-        NativeCore.init(Build.VERSION.SDK_INT);
-        assert packageContext != null;
-        IOCore.get().enableRedirect(packageContext);
+        if (samePackageGuest) {
+            Slog.i(TAG, "protocol-15 native-free guest: skipped NativeCore and native IO setup");
+        } else {
+            NativeCore.init(Build.VERSION.SDK_INT);
+            assert packageContext != null;
+            IOCore.get().enableRedirect(packageContext);
+        }
 
         AppBindData bindData = new AppBindData();
         bindData.appInfo = applicationInfo;
@@ -530,7 +538,7 @@ public class BActivityThread extends IBActivityThread.Stub {
                     Slog.w(TAG, "Creating minimal application context as fallback");
                     try {
                         
-                        application = (Application) packageContext;
+                        application = createMinimalApplication(packageContext, packageName);
                         if (application == null) {
                             Slog.e(TAG, "Even package context is null, this is critical");
                             throw new RuntimeException("Unable to create application context");
@@ -640,6 +648,51 @@ public class BActivityThread extends IBActivityThread.Stub {
         if (activityThread == null || packageName == null) return;
         evictLoadedApkMap(activityThread, "mPackages", packageName);
         evictLoadedApkMap(activityThread, "mResourcePackages", packageName);
+        evictHostApplication(activityThread, packageName);
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void evictHostApplication(Object activityThread, String packageName) {
+        Application hostApplication = null;
+        try {
+            Reflector initialApplication = Reflector.with(activityThread)
+                    .field("mInitialApplication");
+            hostApplication = initialApplication.get();
+            if (hostApplication != null && packageName.equals(hostApplication.getPackageName())) {
+                initialApplication.set(null);
+            } else {
+                hostApplication = null;
+            }
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not clear identity-shell mInitialApplication: "
+                    + error.getMessage());
+        }
+
+        try {
+            Object value = Reflector.on("android.app.LoadedApk")
+                    .field("sApplications").get();
+            if (value instanceof Map) {
+                synchronized (value) {
+                    ((Map) value).remove(packageName);
+                }
+                Slog.i(TAG, "Evicted outer identity-shell Application cache");
+            }
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not evict identity-shell Application cache: "
+                    + error.getMessage());
+        }
+
+        if (hostApplication == null) return;
+        try {
+            Object value = Reflector.with(activityThread).field("mAllApplications").get();
+            if (value instanceof List) {
+                ((List) value).remove(hostApplication);
+                Slog.i(TAG, "Removed outer identity-shell Application from ActivityThread");
+            }
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not remove identity-shell Application from ActivityThread: "
+                    + error.getMessage());
+        }
     }
 
     @SuppressWarnings("rawtypes")
@@ -1160,7 +1213,22 @@ public class BActivityThread extends IBActivityThread.Stub {
             return BlackBoxCore.getContext().createPackageContext(info.packageName,
                     Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
         } catch (Exception e) {
-            e.printStackTrace();
+            Slog.w(TAG, "Framework package context failed for " + info.packageName + ": " + e);
+        }
+        try {
+            Object activityThread = BlackBoxCore.mainThread();
+            Object loadedApk = BRActivityThread.get(activityThread).getPackageInfo(
+                    info,
+                    BRCompatibilityInfo.get().DEFAULT_COMPATIBILITY_INFO(),
+                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+            Context context = (Context) BRContextImpl.get().createAppContext(activityThread, loadedApk);
+            if (context != null) {
+                Slog.i(TAG, "Created guest context directly from virtual ApplicationInfo for "
+                        + info.packageName);
+                return context;
+            }
+        } catch (Throwable error) {
+            Slog.e(TAG, "Direct guest context creation failed for " + info.packageName, error);
         }
         return null;
     }
@@ -1591,40 +1659,8 @@ public class BActivityThread extends IBActivityThread.Stub {
     private Application createMinimalApplication(Context packageContext, String packageName) {
         try {
             Slog.d(TAG, "Creating minimal application for " + packageName);
-            
-            
-            Application app = new Application() {
-                @Override
-                public void onCreate() {
-                    super.onCreate();
-                    Slog.d(TAG, "Minimal application onCreate called for " + packageName);
-                }
-                
-                @Override
-                public String getPackageName() {
-                    return packageName;
-                }
-                
-                @Override
-                public Context getApplicationContext() {
-                    return this;
-                }
-            };
-            
-            
-            if (packageContext != null) {
-                try {
-                    Method attachBaseContext = Application.class.getDeclaredMethod("attachBaseContext", Context.class);
-                    attachBaseContext.setAccessible(true);
-                    attachBaseContext.invoke(app, packageContext);
-                    Slog.d(TAG, "Successfully attached base context to minimal application for " + packageName);
-                } catch (Exception e) {
-                    Slog.w(TAG, "Could not attach base context to minimal application: " + e.getMessage());
-                }
-            } else {
-                Slog.w(TAG, "Package context is null, cannot attach base context to minimal application");
-            }
-            
+            if (packageContext == null) return null;
+            Application app = Instrumentation.newApplication(Application.class, packageContext);
             Slog.d(TAG, "Minimal application created successfully for " + packageName);
             return app;
         } catch (Exception e) {

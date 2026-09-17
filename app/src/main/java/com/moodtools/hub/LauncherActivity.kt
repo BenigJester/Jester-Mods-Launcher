@@ -334,7 +334,6 @@ class LauncherActivity : ComponentActivity() {
                     onDismissModuleTransfer = viewModel::dismissModuleTransfer,
                     onDismissInstalledModuleUpdates = viewModel::dismissInstalledModuleUpdates,
                     onCancelInstalledModuleUpdates = viewModel::cancelInstalledModuleUpdates,
-                    onReviewInstalledModuleUpdate = viewModel::reviewInstalledModuleUpdate,
                     onUpdateInstalledModule = viewModel::updateInstalledModuleFromPrompt,
                     onUpdateAllInstalledModules = viewModel::updateAllInstalledModules,
                     onOpenChangelog = viewModel::openChangelog,
@@ -1779,14 +1778,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         acknowledgedInstalledModuleUpdates = acknowledgedInstalledModuleUpdates + visibleUpdates
         _installedModuleUpdatesState.value = InstalledModuleUpdatesUiState()
-    }
-
-    fun reviewInstalledModuleUpdate(game: LibraryGame) {
-        if (_installedModuleUpdatesState.value.inProgress) return
-        dismissInstalledModuleUpdates()
-        val current = _libraryGames.value.firstOrNull { it.packageName == game.packageName } ?: return
-        openLibraryGame(current)
-        updateLibraryGame(current)
     }
 
     fun updateInstalledModuleFromPrompt(game: LibraryGame) {

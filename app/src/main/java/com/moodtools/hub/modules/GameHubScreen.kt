@@ -670,7 +670,6 @@ fun GameHubScreen(
     onDismissModuleTransfer: () -> Unit,
     onDismissInstalledModuleUpdates: () -> Unit,
     onCancelInstalledModuleUpdates: () -> Unit,
-    onReviewInstalledModuleUpdate: (LibraryGame) -> Unit,
     onUpdateInstalledModule: (LibraryGame) -> Unit,
     onUpdateAllInstalledModules: () -> Unit,
     onOpenChangelog: () -> Unit,
@@ -1056,7 +1055,6 @@ fun GameHubScreen(
                 state = installedModuleUpdatePrompt,
                 onDismiss = onDismissInstalledModuleUpdates,
                 onCancel = onCancelInstalledModuleUpdates,
-                onReview = onReviewInstalledModuleUpdate,
                 onUpdate = onUpdateInstalledModule,
                 onUpdateAll = onUpdateAllInstalledModules
             )
@@ -4871,7 +4869,6 @@ private fun InstalledModuleUpdatesDialog(
     state: InstalledModuleUpdatesUiState,
     onDismiss: () -> Unit,
     onCancel: () -> Unit,
-    onReview: (LibraryGame) -> Unit,
     onUpdate: (LibraryGame) -> Unit,
     onUpdateAll: () -> Unit
 ) {
@@ -5099,7 +5096,6 @@ private fun InstalledModuleUpdatesDialog(
                         itemState = state.itemStates[game.packageName]
                             ?: InstalledModuleUpdateItemUiState(),
                         anotherUpdateInProgress = state.inProgress,
-                        onReview = { onReview(game) },
                         onUpdate = { onUpdate(game) }
                     )
                 }
@@ -5157,17 +5153,18 @@ private fun InstalledModuleUpdateCard(
     game: LibraryGame,
     itemState: InstalledModuleUpdateItemUiState,
     anotherUpdateInProgress: Boolean,
-    onReview: () -> Unit,
     onUpdate: () -> Unit
 ) {
     val listing = game.listing ?: return
     val bitmap = rememberLibraryBitmap(screenCache, game, 112)
+    var detailsExpanded by rememberSaveable(game.packageName) { mutableStateOf(false) }
     val downloadSize = listing.game?.abi?.let(listing.catalog.downloadSizeByAbi::get)
         ?: listing.catalog.downloadSizeByAbi.values.distinct().singleOrNull()
         ?: 0L
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .animateContentSize()
             .clip(RoundedCornerShape(22.dp))
             .background(Color.White.copy(alpha = 0.045f))
             .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
@@ -5277,14 +5274,57 @@ private fun InstalledModuleUpdateCard(
                 )
             }
             OutlinedButton(
-                onClick = onReview,
-                enabled = !anotherUpdateInProgress,
+                onClick = { detailsExpanded = !detailsExpanded },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(16.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
-                border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.42f))
+                border = BorderStroke(
+                    1.dp,
+                    AccentBlue.copy(alpha = if (detailsExpanded) 0.72f else 0.42f)
+                ),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (detailsExpanded) AccentBlue.copy(alpha = 0.09f) else Color.Transparent,
+                    contentColor = AccentBlue
+                )
             ) {
-                Text("Details", color = if (anotherUpdateInProgress) Muted else AccentBlue, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (detailsExpanded) "Hide details  \u2212" else "Details  +",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+        if (detailsExpanded) {
+            Spacer(Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AccentBlue.copy(alpha = 0.07f))
+                    .border(1.dp, AccentBlue.copy(alpha = 0.16f), RoundedCornerShape(18.dp))
+                    .padding(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "WHAT'S NEW",
+                        color = AccentBlue,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "v${listing.catalog.version}  \u00b7  Build ${listing.catalog.build}",
+                        color = Muted,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Spacer(Modifier.height(9.dp))
+                ChangelogRundown(
+                    listing.catalog.notes.orEmpty(),
+                    fallback = "Add-on maintenance and compatibility improvements."
+                )
             }
         }
     }
@@ -8219,43 +8259,16 @@ private fun ModuleScreen(
                     color = Muted,
                     style = MaterialTheme.typography.bodyMedium
                 )
-                if (update.headline != null || update.inProgress) {
-                    Spacer(Modifier.height(18.dp))
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
-                    Spacer(Modifier.height(16.dp))
-                    if (update.inProgress) {
-                        DownloadProgressBar(
-                            downloadedBytes = update.downloadedBytes,
-                            totalBytes = update.totalBytes,
-                            waiting = true,
-                            color = Accent
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    }
-                    Column(modifier = Modifier.fillMaxWidth().animateContentSize()) {
-                            update.headline?.let {
-                                Text(
-                                    it,
-                                    color = if (update.failed) Danger else Color.White,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            update.detail?.let {
-                                Spacer(Modifier.height(3.dp))
-                                Text(it, color = Muted, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-                if (update.totalBytes > 0L) {
-                    Spacer(Modifier.height(12.dp))
-                    DownloadInfoRow("Download size", formatDownloadSize(update.totalBytes))
-                }
-                if (update.changelog.isNotEmpty()) {
-                    Spacer(Modifier.height(16.dp))
-                    ModuleUpdateChangelog(update.changelog)
-                }
                 Spacer(Modifier.height(18.dp))
                 update.verificationUrl?.let { verificationUrl ->
+                    update.headline?.let {
+                        Text(it, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        update.detail?.let { detail ->
+                            Spacer(Modifier.height(3.dp))
+                            Text(detail, color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                    }
                     Button(
                         onClick = {
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)

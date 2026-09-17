@@ -71,10 +71,14 @@ JavaVM *BoxCore::getJavaVM() {
     return VMEnv.vm;
 }
 
-void nativeHook(JNIEnv *env) {
+void nativeHook(JNIEnv *env, bool enableLibcFileHooks) {
     BaseHook::init(env);
     UnixFileSystemHook::init(env);
-    FileSystemHook::init();
+    if (enableLibcFileHooks) {
+        FileSystemHook::init();
+    } else {
+        ALOGD("FileSystemHook: Skipped for exact-package compatibility");
+    }
     VMClassLoaderHook::init(env);
 
     BinderHook::init(env);
@@ -111,10 +115,10 @@ void addIORule(JNIEnv *env, jclass clazz, jstring target_path,
     env->ReleaseStringUTFChars(relocate_path, relocatePath);
 }
 
-void enableIO(JNIEnv *env, jclass clazz) {
+void enableIO(JNIEnv *env, jclass clazz, jboolean enableLibcFileHooks) {
     ALOGD("set enableIO");
     IO::init(env);
-    nativeHook(env);
+    nativeHook(env, enableLibcFileHooks == JNI_TRUE);
 }
 
 bool disableHiddenApi(JNIEnv *env, jclass clazz) {
@@ -167,7 +171,7 @@ static JNINativeMethod gMethods[] = {
         {"disableResourceLoading", "()Z",                         (void *) disableResourceLoading},
         {"hideXposed", "()V",                                     (void *) hideXposed},
         {"addIORule",  "(Ljava/lang/String;Ljava/lang/String;)V", (void *) addIORule},
-        {"enableIO",   "()V",                                     (void *) enableIO},
+        {"enableIO",   "(Z)V",                                    (void *) enableIO},
         {"init",       "(I)V",                                    (void *) init},
         {"setDeviceSpoof", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", (void *) setDeviceSpoof},
 };
