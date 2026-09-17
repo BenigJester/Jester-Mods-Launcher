@@ -5288,7 +5288,11 @@ private fun InstalledModuleUpdateCard(
                 )
             ) {
                 Text(
-                    if (detailsExpanded) "Hide details  \u2212" else "Details  +",
+                    if (detailsExpanded) {
+                        "${LauncherLocalization.translate("Hide details")}  \u2212"
+                    } else {
+                        "${LauncherLocalization.translate("Details")}  +"
+                    },
                     fontWeight = FontWeight.SemiBold
                 )
             }

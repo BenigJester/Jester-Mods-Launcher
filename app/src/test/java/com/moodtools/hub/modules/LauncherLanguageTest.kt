@@ -306,6 +306,7 @@ class LauncherLanguageTest {
             "Some updates need attention", "Updating your library", "Updating all add-ons",
             "Installing add-on update", "All updates installed", "Update needs attention",
             "Updates available", "Another update is in progress", "Queued", "Updating", "Retry",
+            "Details", "Hide details", "Add-on maintenance and compatibility improvements.",
             "Preparing download…", "Opening from Browse add-ons", "Opening from Library",
             "Opening from Settings", "Jester Mods add-on transfer diagnostics",
             "Payload hashes and signed identity verified", "Activating the verified add-on atomically"

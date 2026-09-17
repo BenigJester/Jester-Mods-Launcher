@@ -140,6 +140,8 @@ internal object LauncherLocalization {
         "Launcher" to "Inicializador", "Back" to "Voltar", "Try again" to "Tentar novamente",
         "Continue" to "Continuar", "Exit" to "Sair", "Cancel" to "Cancelar", "Close" to "Fechar",
         "Permanent" to "Permanente",
+        "Hide details" to "Ocultar detalhes",
+        "Add-on maintenance and compatibility improvements." to "Melhorias de manutenção e compatibilidade do complemento.",
         "Done" to "Concluído", "Later" to "Mais tarde", "Not now" to "Agora não",
         "Details" to "Detalhes", "Diagnostics" to "Diagnóstico", "Copy" to "Copiar",
         "Clear" to "Limpar", "Clear data" to "Limpar dados", "Remove" to "Remover",
@@ -190,6 +192,8 @@ internal object LauncherLocalization {
     // Filipino, Korean, Japanese, Simplified Chinese, Spanish, Vietnamese, Indonesian, Arabic.
     private fun row(vararg values: String) = values.toList()
     private val TRANSLATIONS = mapOf(
+        "Hide details" to row("Itago ang mga detalye", "세부 정보 숨기기", "詳細を隠す", "隐藏详细信息", "Ocultar detalles", "Ẩn chi tiết", "Sembunyikan detail", "", "إخفاء التفاصيل"),
+        "Add-on maintenance and compatibility improvements." to row("Mga pagpapahusay sa pagpapanatili at pagiging tugma ng add-on.", "애드온 유지 관리 및 호환성 개선.", "アドオンのメンテナンスと互換性を改善しました。", "附加组件维护和兼容性改进。", "Mejoras de mantenimiento y compatibilidad del complemento.", "Cải thiện khả năng bảo trì và tương thích của tiện ích bổ sung.", "Peningkatan pemeliharaan dan kompatibilitas add-on.", "", "تحسينات على صيانة الإضافة وتوافقها."),
         "Settings" to row("Mga Setting", "설정", "設定", "设置", "Ajustes", "Cài đặt", "Pengaturan", "", "الإعدادات"),
         "Language" to row("Wika", "언어", "言語", "语言", "Idioma", "Ngôn ngữ", "Bahasa", "", "اللغة"),
         "Theme" to row("Tema", "테마", "テーマ", "主题", "Tema", "Chủ đề", "Tema", "", "الموضوع"),
