@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
-class PlayStoreVersionClientTest {
+class APKPureVersionClientTest {
     @Test
     fun parsesListingRevisionWhenGoogleDoesNotPublishVersion() {
         val body = JSONObject()
@@ -18,7 +18,7 @@ class PlayStoreVersionClientTest {
             .put("checkedAt", 1_787_824_800L)
             .put("stale", false)
 
-        val result = parsePlayStoreVersionResult("com.os.airforce", body)
+        val result = parseAPKPureVersionResult("com.os.airforce", body)
 
         assertNull(result?.version)
         assertEquals(1_787_824_746L, result?.listingUpdatedAtEpochSeconds)
@@ -34,12 +34,12 @@ class PlayStoreVersionClientTest {
             .put("listingUpdatedAt", JSONObject.NULL)
             .put("checkedAt", 1_787_824_800L)
 
-        assertNull(parsePlayStoreVersionResult("com.os.airforce", body))
+        assertNull(parseAPKPureVersionResult("com.os.airforce", body))
     }
 
     @Test
     fun parsesRequestedBatchAndIgnoresNoPackagesSilently() {
-        val result = parsePlayStoreVersionResults(
+        val result = parseAPKPureVersionResults(
             setOf("com.os.airforce", "com.playrix.township"),
             JSONObject()
                 .put("ok", true)
@@ -63,7 +63,7 @@ class PlayStoreVersionClientTest {
     }
 
     @Test
-    fun rejectsInvalidPlayStoreBuildNumber() {
+    fun rejectsInvalidAPKPureBuildNumber() {
         val body = JSONObject()
             .put("ok", true)
             .put("packageName", "com.os.airforce")
@@ -71,7 +71,7 @@ class PlayStoreVersionClientTest {
             .put("versionCode", 0)
             .put("checkedAt", 1_787_824_800L)
 
-        assertNull(parsePlayStoreVersionResult("com.os.airforce", body))
+        assertNull(parseAPKPureVersionResult("com.os.airforce", body))
     }
 
     @Test
@@ -88,7 +88,7 @@ class PlayStoreVersionClientTest {
             ))
 
         assertThrows(IllegalArgumentException::class.java) {
-            parsePlayStoreVersionResults(setOf("com.os.airforce"), body)
+            parseAPKPureVersionResults(setOf("com.os.airforce"), body)
         }
     }
 }

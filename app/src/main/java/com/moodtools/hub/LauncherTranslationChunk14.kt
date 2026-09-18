@@ -7,27 +7,27 @@ internal object LauncherTranslationChunk14 {
         "Non-root method: Injection" to arrayOf("Non-root na paraan: Injection", "Non-root 방식: 인젝션", "Non-root 方式：インジェクション", "非 Root 方式：注入", "Método non-root: Inyección", "Phương thức non-root: Tiêm", "Metode non-root: Injeksi", "Método non-root: Injeção", "طريقة غير الجذر: الحقن"),
         "Non-root method: Exact-package shell" to arrayOf("Non-root na paraan: Exact-package shell", "Non-root 방식: 정확한 패키지 셸", "Non-root 方式：完全パッケージシェル", "非 Root 方式：精确包名壳", "Método non-root: Shell de paquete exacto", "Phương thức non-root: Shell đúng tên gói", "Metode non-root: Shell paket persis", "Método non-root: Shell de pacote exato", "الطريقة غير الجذرية: غلاف الحزمة بالضبط"),
         "Non-root method: Patch" to arrayOf("Non-root na paraan: Patch", "Non-root 방식: 패치", "Non-root 方式：パッチ", "非 Root 方式：修补", "Método non-root: Parche", "Phương thức non-root: Bản vá", "Metode non-root: Patch", "Método non-root: Patch", "طريقة غير الجذر: التصحيح"),
-        "Google Play has a newer game release. This add-on is marked as being updated for it." to arrayOf(
-            "May mas bagong release ng laro sa Google Play. Minarkahan ang add-on na ina-update para rito.",
-            "Google Play에 더 최신 게임 릴리스가 있습니다. 이 애드온은 해당 버전에 맞게 업데이트 중으로 표시됩니다.",
-            "Google Play に新しいゲームリリースがあります。このアドオンは対応更新中です。",
-            "Google Play 上有较新的游戏版本。此附加组件已标记为正在适配更新。",
-            "Google Play tiene una versión más reciente del juego. Este complemento figura como en actualización para ella.",
-            "Google Play có bản phát hành trò chơi mới hơn. Tiện ích này được đánh dấu là đang cập nhật để tương thích.",
-            "Google Play memiliki rilis game yang lebih baru. Add-on ini ditandai sedang diperbarui untuk rilis tersebut.",
-            "O Google Play tem uma versão mais recente do jogo. Este complemento está marcado como em atualização para ela.",
-            "لدى Google Play إصدار أحدث للعبة. تم وضع علامة على هذه الوظيفة الإضافية على أنها محدثة لها."
+        "APKPure has a newer game release. This add-on is marked as being updated for it." to arrayOf(
+            "May mas bagong release ng laro sa APKPure. Minarkahan ang add-on na ina-update para rito.",
+            "APKPure에 더 최신 게임 릴리스가 있습니다. 이 애드온은 해당 버전에 맞게 업데이트 중으로 표시됩니다.",
+            "APKPure に新しいゲームリリースがあります。このアドオンは対応更新中です。",
+            "APKPure 上有较新的游戏版本。此附加组件已标记为正在适配更新。",
+            "APKPure tiene una versión más reciente del juego. Este complemento figura como en actualización para ella.",
+            "APKPure có bản phát hành trò chơi mới hơn. Tiện ích này được đánh dấu là đang cập nhật để tương thích.",
+            "APKPure memiliki rilis game yang lebih baru. Add-on ini ditandai sedang diperbarui untuk rilis tersebut.",
+            "O APKPure tem uma versão mais recente do jogo. Este complemento está marcado como em atualização para ela.",
+            "لدى APKPure إصدار أحدث للعبة. تم وضع علامة على هذه الوظيفة الإضافية على أنها محدثة لها."
         ),
-        "Google Play has a newer release. This add-on is marked as being updated for it." to arrayOf(
-            "May mas bagong release sa Google Play. Minarkahan ang add-on na ina-update para rito.",
-            "Google Play에 더 최신 릴리스가 있습니다. 이 애드온은 해당 버전에 맞게 업데이트 중으로 표시됩니다.",
-            "Google Play に新しいリリースがあります。このアドオンは対応更新中です。",
-            "Google Play 上有较新的版本。此附加组件已标记为正在适配更新。",
-            "Google Play tiene una versión más reciente. Este complemento figura como en actualización para ella.",
-            "Google Play có bản phát hành mới hơn. Tiện ích này được đánh dấu là đang cập nhật để tương thích.",
-            "Google Play memiliki rilis yang lebih baru. Add-on ini ditandai sedang diperbarui untuk rilis tersebut.",
-            "O Google Play tem uma versão mais recente. Este complemento está marcado como em atualização para ela.",
-            "لدى Google Play إصدار أحدث. تم وضع علامة على هذه الوظيفة الإضافية على أنها محدثة لها."
+        "APKPure has a newer release. This add-on is marked as being updated for it." to arrayOf(
+            "May mas bagong release sa APKPure. Minarkahan ang add-on na ina-update para rito.",
+            "APKPure에 더 최신 릴리스가 있습니다. 이 애드온은 해당 버전에 맞게 업데이트 중으로 표시됩니다.",
+            "APKPure に新しいリリースがあります。このアドオンは対応更新中です。",
+            "APKPure 上有较新的版本。此附加组件已标记为正在适配更新。",
+            "APKPure tiene una versión más reciente. Este complemento figura como en actualización para ella.",
+            "APKPure có bản phát hành mới hơn. Tiện ích này được đánh dấu là đang cập nhật để tương thích.",
+            "APKPure memiliki rilis yang lebih baru. Add-on ini ditandai sedang diperbarui untuk rilis tersebut.",
+            "O APKPure tem uma versão mais recente. Este complemento está marcado como em atualização para ela.",
+            "لدى APKPure إصدار أحدث. تم وضع علامة على هذه الوظيفة الإضافية على أنها محدثة لها."
         ),
         "The add-on update window has priority. Companion progress will return when that update finishes." to arrayOf(
             "May priyoridad ang window ng update ng add-on. Babalik ang progreso ng companion kapag natapos ang update.",
@@ -51,16 +51,16 @@ internal object LauncherTranslationChunk14 {
             "Progresso, cancelamento, recuperação e diagnóstico estão disponíveis na janela do assistente.",
             "يتوفر التقدم والإلغاء والاسترداد والتشخيص في نافذة المثبت المصاحب."
         ),
-        "The launcher couldn't confirm this package on Google Play, so the store action is hidden." to arrayOf(
-            "Hindi makumpirma ng launcher ang package na ito sa Google Play, kaya nakatago ang store action.",
-            "런처가 Google Play에서 이 패키지를 확인하지 못해 스토어 작업을 숨겼습니다.",
-            "Google Play でこのパッケージを確認できなかったため、ストア操作は非表示です。",
-            "启动器无法在 Google Play 上确认此软件包，因此商店操作已隐藏。",
-            "El lanzador no pudo confirmar este paquete en Google Play, por lo que la acción de la tienda está oculta.",
-            "Trình khởi chạy không thể xác nhận gói này trên Google Play nên thao tác cửa hàng bị ẩn.",
-            "Peluncur tidak dapat memastikan paket ini di Google Play, sehingga tindakan toko disembunyikan.",
-            "O inicializador não conseguiu confirmar este pacote no Google Play, então a ação da loja está oculta.",
-            "لم يتمكن المشغل من تأكيد هذه الحزمة على Google Play، لذا فإن إجراء المتجر مخفي."
+        "The launcher couldn't confirm this package on APKPure, so the store action is hidden." to arrayOf(
+            "Hindi makumpirma ng launcher ang package na ito sa APKPure, kaya nakatago ang store action.",
+            "런처가 APKPure에서 이 패키지를 확인하지 못해 스토어 작업을 숨겼습니다.",
+            "APKPure でこのパッケージを確認できなかったため、ストア操作は非表示です。",
+            "启动器无法在 APKPure 上确认此软件包，因此商店操作已隐藏。",
+            "El lanzador no pudo confirmar este paquete en APKPure, por lo que la acción de la tienda está oculta.",
+            "Trình khởi chạy không thể xác nhận gói này trên APKPure nên thao tác cửa hàng bị ẩn.",
+            "Peluncur tidak dapat memastikan paket ini di APKPure, sehingga tindakan toko disembunyikan.",
+            "O inicializador não conseguiu confirmar este pacote no APKPure, então a ação da loja está oculta.",
+            "لم يتمكن المشغل من تأكيد هذه الحزمة على APKPure، لذا فإن إجراء المتجر مخفي."
         ),
         "Google Play handles the original game installation and updates." to arrayOf(
             "Google Play ang nangangasiwa sa pag-install at mga update ng orihinal na laro.",
@@ -110,7 +110,7 @@ internal object LauncherTranslationChunk14 {
         "The add-on is downloaded. Build and install the patched game before the Play button becomes available." to arrayOf("Na-download na ang add-on. Buuin at i-install ang patched na laro bago maging available ang Play button.", "애드온이 다운로드되었습니다. 플레이 버튼을 사용하려면 패치된 게임을 빌드하고 설치하세요.", "アドオンをダウンロードしました。プレイボタンを使う前にパッチ済みゲームをビルドしてインストールしてください。", "附加组件已下载。请先构建并安装修补版游戏，之后才可使用“开始游戏”按钮。", "El complemento está descargado. Compila e instala el juego parcheado antes de que el botón Jugar esté disponible.", "Tiện ích đã được tải. Hãy tạo và cài trò chơi đã vá trước khi nút Chơi khả dụng.", "Add-on telah diunduh. Build dan instal game yang dipatch sebelum tombol Main tersedia.", "O complemento foi baixado. Compile e instale o jogo corrigido antes de o botão Jogar ficar disponível.", "يتم تنزيل الوظيفة الإضافية. قم ببناء اللعبة المصححة وتثبيتها قبل أن يصبح زر التشغيل متاحًا."),
         "Install the refreshed patch in place so the game contains this add-on version." to arrayOf("I-install ang bagong patch sa kasalukuyang laro para maisama ang bersyon ng add-on na ito.", "게임에 이 애드온 버전이 포함되도록 새 패치를 기존 설치본에 적용하세요.", "このアドオンバージョンを含めるため、更新されたパッチを現在のゲームに適用してください。", "请就地安装更新后的补丁，使游戏包含此附加组件版本。", "Instala el parche actualizado sobre el juego para que incluya esta versión del complemento.", "Cài bản vá mới tại chỗ để trò chơi chứa phiên bản tiện ích này.", "Instal patch terbaru di tempat agar game memuat versi add-on ini.", "Instale a correção atualizada no jogo para incluir esta versão do complemento.", "قم بتثبيت التصحيح المحدث في مكانه بحيث تحتوي اللعبة على هذا الإصدار الإضافي."),
         "Jester Mods will preserve the untouched game package and create a shell with its exact name and icon." to arrayOf("Pananatilihin ng Jester Mods ang hindi binagong game package at gagawa ng shell na may eksaktong pangalan at icon nito.", "Jester Mods는 변경되지 않은 게임 패키지를 보존하고 동일한 이름과 아이콘의 셸을 만듭니다.", "Jester Mods は未変更のゲームパッケージを保持し、同じ名前とアイコンのシェルを作成します。", "Jester Mods 将保留未修改的游戏包，并创建名称和图标完全相同的壳。", "Jester Mods conservará el paquete del juego sin modificar y creará un shell con su nombre e icono exactos.", "Jester Mods sẽ giữ nguyên gói trò chơi và tạo shell có đúng tên cùng biểu tượng.", "Jester Mods akan mempertahankan paket game tanpa perubahan dan membuat shell dengan nama serta ikon yang sama persis.", "O Jester Mods preservará o pacote do jogo inalterado e criará um shell com o mesmo nome e ícone.", "ستحتفظ Jester Mods بحزمة اللعبة التي لم تمسها وتنشئ غلافًا باسمها وأيقونتها بالضبط."),
-        "The maintainer is updating this add-on for the newer game release shown by Google Play." to arrayOf("Ina-update ng maintainer ang add-on para sa mas bagong release ng laro na ipinapakita ng Google Play.", "관리자가 Google Play에 표시된 최신 게임 릴리스에 맞게 이 애드온을 업데이트하고 있습니다.", "管理者が Google Play に表示された新しいゲームリリース向けにこのアドオンを更新しています。", "维护者正在为 Google Play 显示的较新游戏版本更新此附加组件。", "El responsable está actualizando este complemento para la versión más reciente del juego que muestra Google Play.", "Người duy trì đang cập nhật tiện ích này cho bản phát hành trò chơi mới hơn trên Google Play.", "Pengelola sedang memperbarui add-on ini untuk rilis game lebih baru yang ditampilkan Google Play.", "O responsável está atualizando este complemento para a versão mais recente do jogo exibida pelo Google Play.", "يقوم المشرف بتحديث هذه الوظيفة الإضافية لإصدار اللعبة الأحدث الذي يعرضه Google Play."),
+        "The maintainer is updating this add-on for the newer game release shown by APKPure." to arrayOf("Ina-update ng maintainer ang add-on para sa mas bagong release ng laro na ipinapakita ng APKPure.", "관리자가 APKPure에 표시된 최신 게임 릴리스에 맞게 이 애드온을 업데이트하고 있습니다.", "管理者が APKPure に表示された新しいゲームリリース向けにこのアドオンを更新しています。", "维护者正在为 APKPure 显示的较新游戏版本更新此附加组件。", "El responsable está actualizando este complemento para la versión más reciente del juego que muestra APKPure.", "Người duy trì đang cập nhật tiện ích này cho bản phát hành trò chơi mới hơn trên APKPure.", "Pengelola sedang memperbarui add-on ini untuk rilis game lebih baru yang ditampilkan APKPure.", "O responsável está atualizando este complemento para a versão mais recente do jogo exibida pelo APKPure.", "يقوم المشرف بتحديث هذه الوظيفة الإضافية لإصدار اللعبة الأحدث الذي يعرضه APKPure."),
         "The add-on catalog is unavailable. Check your connection and try again." to arrayOf("Hindi available ang catalog ng add-on. Tingnan ang koneksyon at subukan muli.", "애드온 카탈로그를 사용할 수 없습니다. 연결을 확인하고 다시 시도하세요.", "アドオンカタログを利用できません。接続を確認して再試行してください。", "附加组件目录不可用。请检查连接并重试。", "El catálogo de complementos no está disponible. Comprueba tu conexión e inténtalo de nuevo.", "Danh mục tiện ích không khả dụng. Hãy kiểm tra kết nối và thử lại.", "Katalog add-on tidak tersedia. Periksa koneksi dan coba lagi.", "O catálogo de complementos está indisponível. Verifique sua conexão e tente novamente.", "كتالوج الإضافات غير متوفر. تحقق من اتصالك وحاول مرة أخرى."),
         "All available add-ons are already installed. You can find them in your library." to arrayOf("Naka-install na ang lahat ng available na add-on. Makikita ang mga ito sa iyong library.", "사용 가능한 모든 애드온이 이미 설치되어 있습니다. 라이브러리에서 확인할 수 있습니다.", "利用可能なアドオンはすべてインストール済みです。ライブラリで確認できます。", "所有可用附加组件均已安装。可在游戏库中找到。", "Todos los complementos disponibles ya están instalados. Puedes encontrarlos en tu biblioteca.", "Tất cả tiện ích hiện có đã được cài. Bạn có thể tìm thấy trong thư viện.", "Semua add-on yang tersedia sudah terpasang. Anda dapat menemukannya di pustaka.", "Todos os complementos disponíveis já estão instalados. Você pode encontrá-los na biblioteca.", "جميع الوظائف الإضافية المتاحة مثبتة بالفعل. يمكنك العثور عليها في مكتبتك."),
         "No add-ons match these filters" to arrayOf("Walang add-on na tugma sa mga filter", "필터와 일치하는 애드온이 없습니다", "フィルターに一致するアドオンはありません", "没有符合筛选条件的附加组件", "Ningún complemento coincide con estos filtros", "Không có tiện ích phù hợp với bộ lọc", "Tidak ada add-on yang cocok dengan filter", "Nenhum complemento corresponde a estes filtros", "لا توجد إضافات تتطابق مع هذه المرشحات"),

@@ -6238,7 +6238,7 @@ private fun ModuleDownloadScreen(
                     )
                 }
                 DownloadInfoRow(
-                    "Google Play",
+                    "APKPure",
                     playStoreStatus?.let { status ->
                         buildString {
                             append(playStoreReleaseLabel(status, listing.catalog.config))
@@ -6251,9 +6251,9 @@ private fun ModuleDownloadScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         if (playStoreStatus?.latestVersion != null) {
-                            "Google Play has a newer game release. This add-on is marked as being updated for it."
+                            "APKPure has a newer game release. This add-on is marked as being updated for it."
                         } else {
-                            "Google Play has a newer release. This add-on is marked as being updated for it."
+                            "APKPure has a newer release. This add-on is marked as being updated for it."
                         },
                         color = AccentBlue,
                         style = MaterialTheme.typography.bodySmall
@@ -6324,7 +6324,7 @@ private fun ModuleDownloadScreen(
                         is GameInstallSource.PlayStore -> {
                             Text(
                                 when {
-                                    playStoreStatus == null -> "Google Play listing not detected"
+                                    playStoreStatus == null -> "APKPure listing not detected"
                                     game == null -> "Available from Google Play"
                                     else -> "Update from Google Play"
                                 },
@@ -6333,7 +6333,7 @@ private fun ModuleDownloadScreen(
                             )
                             Text(
                                 if (playStoreStatus == null) {
-                                    "The launcher couldn't confirm this package on Google Play, so the store action is hidden."
+                                    "The launcher couldn't confirm this package on APKPure, so the store action is hidden."
                                 } else {
                                     "Google Play handles the original game installation and updates."
                                 },
@@ -7027,8 +7027,8 @@ private fun playStoreReleaseLabel(status: PlayStoreVersionStatus, module: Module
 
 private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
     status?.latestVersion?.let {
-        "Google Play ${gameReleaseLabel(it, status.latestVersionCode)}"
-    } ?: "a new Google Play release"
+        "APKPure ${gameReleaseLabel(it, status.latestVersionCode)}"
+    } ?: "a new APKPure release"
 
 private fun gameReleaseLabel(version: String, versionCode: Long?): String =
     versionCode?.let { "v$version · $it" } ?: "v$version"
@@ -8662,7 +8662,7 @@ private fun ModuleCompatibilityCard(
         game.launchAction == LibraryLaunchAction.SHELL_AND_INSTALL ->
             "Jester Mods will preserve the untouched game package and create a shell with its exact name and icon."
         playStoreUpdateInProgress ->
-            "The maintainer is updating this add-on for the newer game release shown by Google Play."
+            "The maintainer is updating this add-on for the newer game release shown by APKPure."
         else ->
             "Requirements are satisfied. The in-game menu will show a compact runtime status only."
     }
@@ -8719,17 +8719,15 @@ private fun ModuleCompatibilityCard(
             },
             methodPresentation.method.displayName
         )
-        if (game.listing?.catalog?.installSource is GameInstallSource.PlayStore) {
-            DownloadInfoRow(
-                "Google Play",
-                game.playStoreVersionStatus?.let {
-                    buildString {
-                        append(playStoreReleaseLabel(it, game.module))
-                        if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                    }
-                } ?: "Check temporarily unavailable"
-            )
-        }
+        DownloadInfoRow(
+            "APKPure",
+            game.playStoreVersionStatus?.let {
+                buildString {
+                    append(playStoreReleaseLabel(it, game.module))
+                    if (playStoreUpdateInProgress) append(" · add-on update in progress")
+                }
+            } ?: "Check temporarily unavailable"
+        )
         if (game.module.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
             Spacer(Modifier.height(10.dp))
             CompatibilityMethodSelector(

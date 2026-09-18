@@ -74,8 +74,7 @@ import com.moodtools.hub.networking.LauncherUpdateClient
 import com.moodtools.hub.networking.ModuleChangelogClient
 import com.moodtools.hub.networking.ModuleCatalogClient
 import com.moodtools.hub.networking.ModuleDownloadAuthorizationExpired
-import com.moodtools.hub.networking.PlayStoreVersionClient
-import com.moodtools.hub.networking.shouldReportPlayStoreBuild
+import com.moodtools.hub.networking.APKPureVersionClient
 import com.moodtools.hub.networking.ReleaseVerificationRequired
 import com.moodtools.hub.networking.SmartStorageManager
 import com.moodtools.hub.networking.StandaloneUpdateStage
@@ -1303,7 +1302,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val launcherUpdateClient = LauncherUpdateClient(application)
     private val moduleChangelogClient = ModuleChangelogClient(application)
     private val gameInstallClient = GameInstallClient(application)
-    private val playStoreVersionClient = PlayStoreVersionClient(application)
+    private val apkPureVersionClient = APKPureVersionClient()
     private val storageManager = SmartStorageManager(application.filesDir, application.cacheDir)
     private val embeddedPrivateModuleInstaller = EmbeddedPrivateModuleInstaller(application)
     private val embeddedLocalTestModuleInstaller = EmbeddedLocalTestModuleInstaller(application)
@@ -4674,11 +4673,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val freshByPackage = if (packagesToRefresh.isEmpty()) {
             emptyMap()
         } else {
-            runCatching { playStoreVersionClient.load(packagesToRefresh) }
+            runCatching { apkPureVersionClient.load(packagesToRefresh) }
                 .onFailure {
                     android.util.Log.w(
-                        "JesterMoodsPlayStore",
-                        "Could not refresh Play Store versions",
+                        "JesterMoodsApkPure",
+                        "Could not refresh APKPure versions",
                         it
                     )
                 }
@@ -4699,36 +4698,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     stale = fresh.stale
                 )
             }
-            var status = received?.let { newestPlayStoreStatus(cached, it) } ?: cached
-            val observation = status?.let { playStoreVersionClient.installedObservation(module) }
-            val observationResponse = if (observation != null && shouldReportPlayStoreBuild(
-                    observation,
-                    status?.latestVersion,
-                    status?.latestVersionCode,
-                    status?.updateAvailable,
-                    playStorePreferences.getString(playStoreObservationKey(packageName), null)
-                )) {
-                runCatching { playStoreVersionClient.report(observation) }
-                    .onFailure { android.util.Log.w("JesterMoodsPlayStore", "Could not report Play Store build", it) }
-                    .getOrNull()
-            } else null
-            if (observation != null && observationResponse?.acknowledged == true) {
-                editor.putString(playStoreObservationKey(packageName), observation.key)
-                changed = true
-                val reported = observationResponse.status
-                status = newestPlayStoreStatus(status, PlayStoreVersionStatus(
-                    latestVersion = reported.version,
-                    latestVersionCode = reported.versionCode,
-                    listingUpdatedAtEpochSeconds = reported.listingUpdatedAtEpochSeconds,
-                    updateAvailable = reported.updateAvailable,
-                    checkedAtEpochSeconds = reported.checkedAtEpochSeconds,
-                    checkedDay = today,
-                    stale = reported.stale
-                ))
-            }
+            val status = received?.let { newestPlayStoreStatus(cached, it) } ?: cached
             if (status != null) {
                 statuses[packageName] = status
-                if (fresh != null || observationResponse != null) {
+                if (fresh != null) {
                     if (status.latestVersion != null) editor.putString(playStoreVersionKey(packageName), status.latestVersion)
                     else editor.remove(playStoreVersionKey(packageName))
                     if (status.latestVersionCode != null) {
@@ -4822,7 +4795,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         PLAY_STORE_UPDATE_AVAILABLE_PREFIX + packageName
     private fun playStoreStaleKey(packageName: String): String = PLAY_STORE_STALE_PREFIX + packageName
     private fun playStoreSchemaKey(packageName: String): String = PLAY_STORE_SCHEMA_PREFIX + packageName
-    private fun playStoreObservationKey(packageName: String): String = PLAY_STORE_OBSERVATION_PREFIX + packageName
 
     private fun resolvePrivateAccessExpiries(
         catalog: List<com.moodtools.hub.modules.CatalogModule>
@@ -5345,7 +5317,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_UPDATE_AVAILABLE_PREFIX = "update_available_"
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
         private const val PLAY_STORE_SCHEMA_PREFIX = "schema_"
-        private const val PLAY_STORE_OBSERVATION_PREFIX = "observed_"
         private const val PLAY_STORE_CACHE_SCHEMA = 1
         private const val NON_ROOT_METHOD_CHOICE_PREFIX = "non_root_method_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
