@@ -1,5 +1,6 @@
 package com.moodtools.hub
 
+import com.moodtools.hub.networking.GameInstallCompatibilityException
 import com.moodtools.hub.networking.LauncherServiceException
 
 internal data class TransferFailurePresentation(
@@ -35,6 +36,13 @@ internal object TransferFailurePolicy {
         val serviceError = causes.filterIsInstance<LauncherServiceException>().firstOrNull()
 
         serviceErrorPresentation(serviceError, operation)?.let { return it }
+
+        causes.filterIsInstance<GameInstallCompatibilityException>().firstOrNull()?.let { compatibility ->
+            return TransferFailurePresentation(
+                headline = "This game build doesn't support your device",
+                detail = compatibility.message.orEmpty()
+            )
+        }
 
         if (operation == TransferFailureOperation.LAUNCHER_UPDATE && (
                 evidence.contains("not signed by this launcher") ||

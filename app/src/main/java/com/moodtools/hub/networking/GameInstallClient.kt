@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.content.FileProvider
@@ -26,18 +27,21 @@ class GameInstallClient(private val context: Context) {
 
     fun isDownloaded(
         game: CatalogModule,
+        apkPureDownload: APKPureDownload? = null,
         onVerificationProgress: (Float) -> Unit = {},
         isCancelled: () -> Boolean = { false }
     ): Boolean {
-        val source = game.installSource as? GameInstallSource.DirectDownload ?: return false
+        val source = downloadSource(game, apkPureDownload) ?: return false
         storage.onGameReleaseDetected(game.config.packageName, source.versionCode)
-        val packageFile = downloadedFile(game)
+        val packageFile = downloadedFile(game, source)
         if (!packageFile.isFile || packageFile.length() != source.size) return false
         onVerificationProgress(0.04f)
-        if (sha256(packageFile, isCancelled) { completed, total ->
-                onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
-            } != source.sha256
-        ) return false
+        source.sha256?.let { expected ->
+            if (sha256(packageFile, isCancelled) { completed, total ->
+                    onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
+                } != expected
+            ) return false
+        }
         onVerificationProgress(0.82f)
         val valid = runCatching { validatePackage(packageFile, game, source, isCancelled) }.isSuccess
         if (valid) onVerificationProgress(1f)
@@ -46,32 +50,31 @@ class GameInstallClient(private val context: Context) {
 
     fun download(
         game: CatalogModule,
+        apkPureDownload: APKPureDownload? = null,
         onProgress: (Long, Long) -> Unit,
         onVerificationProgress: (Float) -> Unit = {},
         onDiagnostic: (String) -> Unit = {},
         isCancelled: () -> Boolean = { false }
     ): File {
-        val source = game.installSource as? GameInstallSource.DirectDownload
-            ?: error("This game is installed through the Play Store")
-        if (isDownloaded(game, isCancelled = isCancelled)) {
+        val source = downloadSource(game, apkPureDownload)
+            ?: error("This game does not have a direct download")
+        if (isDownloaded(game, apkPureDownload, isCancelled = isCancelled)) {
             onProgress(source.size, source.size)
-            return downloadedFile(game)
+            return downloadedFile(game, source)
         }
 
         downloadDirectory.mkdirs()
-        val target = downloadedFile(game)
+        val target = downloadedFile(game, source)
         val temporary = File(
             downloadDirectory,
-            "${game.config.packageName}-${game.slug}-${source.versionCode}.${source.format.extension}.part"
+            "${game.config.packageName}-${source.cacheKey}-${source.versionCode}.${source.format.extension}.part"
         )
         try {
             FastFileDownloader.download(
                 destination = temporary,
                 expectedBytes = source.size,
                 openConnection = { range ->
-                    open(ModuleCatalogClient.BASE_URL + source.path, game.privateCatalogCapability).apply {
-                        range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
-                    }
+                    openDownload(source, game.privateCatalogCapability, range)
                 },
                 onProgress = onProgress,
                 onDiagnostic = { message ->
@@ -81,11 +84,13 @@ class GameInstallClient(private val context: Context) {
                 isCancelled = isCancelled
             )
             ensureNotCancelled(isCancelled)
-            onDiagnostic("Verifying the signed SHA-256 digest")
-            onVerificationProgress(0.04f)
-            require(sha256(temporary, isCancelled) { completed, total ->
-                onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
-            } == source.sha256) { "Game download verification failed" }
+            source.sha256?.let { expected ->
+                onDiagnostic("Verifying the signed SHA-256 digest")
+                onVerificationProgress(0.04f)
+                require(sha256(temporary, isCancelled) { completed, total ->
+                    onVerificationProgress(progressBetween(0.04f, 0.78f, completed, total))
+                } == expected) { "Game download verification failed" }
+            }
             ensureNotCancelled(isCancelled)
             onDiagnostic("Checking package identity, version, and signing certificate")
             onVerificationProgress(0.82f)
@@ -104,20 +109,31 @@ class GameInstallClient(private val context: Context) {
 
     fun install(
         game: CatalogModule,
+        apkPureDownload: APKPureDownload? = null,
         onPreparationProgress: (Float) -> Unit = {},
         isCancelled: () -> Boolean = { false }
     ): Int? {
-        val source = game.installSource as? GameInstallSource.DirectDownload
-            ?: error("This game is installed through the Play Store")
-        val packageFile = downloadedFile(game)
+        val source = downloadSource(game, apkPureDownload)
+            ?: error("This game does not have a direct download")
+        val packageFile = downloadedFile(game, source)
         onPreparationProgress(0.04f)
-        require(packageFile.isFile && packageFile.length() == source.size &&
-            sha256(packageFile, isCancelled) { completed, total ->
-                onPreparationProgress(progressBetween(0.04f, 0.48f, completed, total))
-            } == source.sha256) { "Download the verified game first" }
+        require(packageFile.isFile && packageFile.length() == source.size) {
+            "Download the verified game first"
+        }
+        source.sha256?.let { expected ->
+            require(sha256(packageFile, isCancelled) { completed, total ->
+                    onPreparationProgress(progressBetween(0.04f, 0.48f, completed, total))
+                } == expected) { "Download the verified game first" }
+        }
         ensureNotCancelled(isCancelled)
         onPreparationProgress(0.52f)
         val installApks = validatePackage(packageFile, game, source, isCancelled)
+        if (source.format == GamePackageFormat.APKS) {
+            requireCompatibleApkSet(
+                installApks.mapNotNull(InstallApk::archiveEntry),
+                Build.SUPPORTED_ABIS.toSet()
+            )
+        }
         ensureNotCancelled(isCancelled)
         onPreparationProgress(0.68f)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -239,18 +255,17 @@ class GameInstallClient(private val context: Context) {
             }
     }
 
-    private fun downloadedFile(game: CatalogModule): File {
-        val source = game.installSource as GameInstallSource.DirectDownload
+    private fun downloadedFile(game: CatalogModule, source: GameDownloadSource): File {
         return File(
             downloadDirectory,
-            "${game.config.packageName}-${game.slug}-${source.versionCode}.${source.format.extension}"
+            "${game.config.packageName}-${source.cacheKey}-${source.versionCode}.${source.format.extension}"
         )
     }
 
     private fun validatePackage(
         packageFile: File,
         game: CatalogModule,
-        source: GameInstallSource.DirectDownload,
+        source: GameDownloadSource,
         isCancelled: () -> Boolean = { false }
     ): List<InstallApk> = when (source.format) {
         GamePackageFormat.APK -> {
@@ -264,22 +279,23 @@ class GameInstallClient(private val context: Context) {
     private fun validateApkSet(
         packageFile: File,
         game: CatalogModule,
-        source: GameInstallSource.DirectDownload,
+        source: GameDownloadSource,
         isCancelled: () -> Boolean
     ): List<InstallApk> {
         val validationDirectory = File(context.cacheDir, "game-apk-validation").apply { mkdirs() }
         return try {
             ZipFile(packageFile).use { archive ->
                 ensureNotCancelled(isCancelled)
+                require(archive.entries().asSequence().none {
+                    !it.isDirectory && it.name.endsWith(".obb", ignoreCase = true)
+                }) { "APKPure packages containing OBB files are not supported yet" }
                 val entries = archive.entries().asSequence()
                     .filter { !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true) }
                     .toList()
                 require(entries.isNotEmpty()) { "The APK set does not contain any Android packages" }
                 require(entries.size <= MAX_APKS_ENTRIES) { "The APK set contains too many package splits" }
                 val baseEntries = entries.filter { entry ->
-                    val name = entry.name.substringAfterLast('/')
-                    name.equals("base.apk", ignoreCase = true) ||
-                        name.equals("base-master.apk", ignoreCase = true)
+                    isBaseApkEntry(entry.name, game.config.packageName)
                 }
                 require(baseEntries.size == 1) { "The APK set must contain exactly one base APK" }
                 val totalSize = entries.fold(0L) { total, entry ->
@@ -334,7 +350,7 @@ class GameInstallClient(private val context: Context) {
     private fun validateApk(
         apk: File,
         game: CatalogModule,
-        source: GameInstallSource.DirectDownload
+        source: GameDownloadSource
     ) {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             PackageManager.GET_SIGNING_CERTIFICATES
@@ -354,8 +370,11 @@ class GameInstallClient(private val context: Context) {
         require(archiveVersion == source.versionCode) {
             "The downloaded game version does not match its signed catalog entry"
         }
-        require(source.signingCertificateSha256 in verifiedSigningDigests(apk)) {
-            "The downloaded game has an unexpected signing certificate"
+        val signingDigests = verifiedSigningDigests(apk)
+        source.signingCertificateSha256?.let { expected ->
+            require(expected in signingDigests) {
+                "The downloaded game has an unexpected signing certificate"
+            }
         }
     }
 
@@ -458,8 +477,82 @@ class GameInstallClient(private val context: Context) {
         }
     }
 
+    private fun downloadSource(
+        game: CatalogModule,
+        apkPureDownload: APKPureDownload?
+    ): GameDownloadSource? {
+        if (apkPureDownload != null) return GameDownloadSource(
+            remoteUrl = apkPureDownload.url,
+            cacheKey = "apkpure",
+            versionCode = apkPureDownload.versionCode,
+            version = apkPureDownload.version,
+            size = apkPureDownload.size,
+            format = apkPureDownload.format,
+            sha256 = null,
+            signingCertificateSha256 = null,
+            apkPurePackageName = game.config.packageName
+        )
+        val direct = game.installSource as? GameInstallSource.DirectDownload ?: return null
+        return GameDownloadSource(
+            remoteUrl = ModuleCatalogClient.BASE_URL + direct.path,
+            cacheKey = game.slug,
+            versionCode = direct.versionCode,
+            version = direct.version,
+            size = direct.size,
+            format = direct.format,
+            sha256 = direct.sha256,
+            signingCertificateSha256 = direct.signingCertificateSha256,
+            apkPurePackageName = null
+        )
+    }
+
+    private fun openDownload(
+        source: GameDownloadSource,
+        capability: String?,
+        range: LongRange?
+    ): HttpURLConnection {
+        if (source.apkPurePackageName == null) return open(source.remoteUrl, capability).apply {
+            range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
+        }
+        val redirect = URL(source.remoteUrl)
+        require(redirect.protocol == "https" && redirect.host == APKPURE_DOWNLOAD_HOST)
+        val gateway = (redirect.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            useCaches = false
+            instanceFollowRedirects = false
+            setRequestProperty("Accept-Encoding", "identity")
+            range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
+        }
+        val location = try {
+            require(gateway.responseCode in 300..399) { "APKPure download is unavailable" }
+            gateway.getHeaderField("Location") ?: error("APKPure did not provide a download")
+        } finally {
+            gateway.disconnect()
+        }
+        val target = URL(location)
+        val targetUri = Uri.parse(location)
+        require(target.protocol == "https" && target.host == APKPURE_FILE_HOST &&
+            targetUri.getQueryParameter("package_name") == source.apkPurePackageName &&
+            targetUri.getQueryParameter("full_size")?.toLongOrNull() == source.size) {
+            "APKPure returned an unexpected download"
+        }
+        return (target.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            useCaches = false
+            instanceFollowRedirects = false
+            setRequestProperty("Accept-Encoding", "identity")
+            range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
+        }
+    }
+
     companion object {
         private const val HOST = "jester.moodtools.workers.dev"
+        private const val APKPURE_DOWNLOAD_HOST = "d.apkpure.net"
+        private const val APKPURE_FILE_HOST = "data.winudf.com"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val MAX_APKS_ENTRIES = 256
         private const val MAX_EXTRACTED_APKS_BYTES = 4L * 1024L * 1024L * 1024L
@@ -471,6 +564,54 @@ class GameInstallClient(private val context: Context) {
         val sessionName: String,
         val size: Long
     )
+
+    private data class GameDownloadSource(
+        val remoteUrl: String,
+        val cacheKey: String,
+        val versionCode: Long,
+        val version: String,
+        val size: Long,
+        val format: GamePackageFormat,
+        val sha256: String?,
+        val signingCertificateSha256: String?,
+        val apkPurePackageName: String?
+    )
 }
 
 internal class GameInstallCancelledException : java.io.IOException("Game installation cancelled")
+
+internal class GameInstallCompatibilityException(message: String) : IllegalArgumentException(message)
+
+internal fun requireCompatibleApkSet(entryNames: List<String>, deviceAbis: Set<String>) {
+    val packageAbis = entryNames.mapNotNull(::apkSplitAbi).toSet()
+    if (packageAbis.isEmpty() || packageAbis.any(deviceAbis::contains)) return
+    throw GameInstallCompatibilityException(
+        "This game build is ${packageAbis.joinToString(transform = ::architectureName)}, " +
+            "but this device supports ${deviceAbis.joinToString(transform = ::architectureName)}. " +
+            "APKPure does not provide a compatible package for this version."
+    )
+}
+
+private fun apkSplitAbi(entryName: String): String? {
+    val name = entryName.substringAfterLast('/').lowercase().replace('-', '_')
+    return APK_ABIS.firstOrNull { abi ->
+        Regex("(^|[._])${Regex.escape(abi.replace('-', '_'))}([._]|$)").containsMatchIn(name)
+    }
+}
+
+private fun architectureName(abi: String): String = when (abi) {
+    "arm64-v8a" -> "64-bit ARM"
+    "armeabi-v7a" -> "32-bit ARM"
+    "x86_64" -> "64-bit x86"
+    "x86" -> "32-bit x86"
+    else -> abi
+}
+
+private val APK_ABIS = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+
+internal fun isBaseApkEntry(entryName: String, packageName: String): Boolean {
+    val name = entryName.substringAfterLast('/')
+    return name.equals("base.apk", ignoreCase = true) ||
+        name.equals("base-master.apk", ignoreCase = true) ||
+        name.equals("$packageName.apk", ignoreCase = true)
+}

@@ -274,7 +274,8 @@ data class PlayStoreVersionStatus(
     val updateAvailable: Boolean?,
     val checkedAtEpochSeconds: Long,
     val checkedDay: Long,
-    val stale: Boolean = false
+    val stale: Boolean = false,
+    val apkPureDownload: com.moodtools.hub.networking.APKPureDownload? = null
 ) {
     fun versionCodeFor(module: ModuleConfig): Long? = latestVersionCode
         ?: module.supportedVersionCodes.singleOrNull()?.takeIf {
@@ -342,6 +343,7 @@ data class ModuleListing(
     val installedBuild: Long,
     val installedComplete: Boolean,
     val deviceArchitectureSupported: Boolean = true,
+    val deviceAbis: Set<String> = catalog.config.supportedAbis,
     val playStoreVersionStatus: PlayStoreVersionStatus? = null,
     val privateAccessExpiresAtEpochSeconds: Long? = null
 ) {
@@ -356,6 +358,18 @@ data class ModuleListing(
 
     val playStoreListingDetected: Boolean
         get() = playStoreVersionStatus != null
+
+    val apkPureDownload: com.moodtools.hub.networking.APKPureDownload?
+        get() {
+            val versions = catalog.config.supportedVersions.toList()
+            val versionCodes = catalog.config.supportedVersionCodes.toList()
+            return playStoreVersionStatus?.apkPureDownload?.takeIf { download ->
+                download.supportedAbis.any { it in catalog.config.supportedAbis && it in deviceAbis } &&
+                    versions.indices.any { index ->
+                        versions[index] == download.version && versionCodes.getOrNull(index) == download.versionCode
+                    }
+            }
+        }
 
     val configuredGameSourceAvailable: Boolean
         get() = when (catalog.installSource) {

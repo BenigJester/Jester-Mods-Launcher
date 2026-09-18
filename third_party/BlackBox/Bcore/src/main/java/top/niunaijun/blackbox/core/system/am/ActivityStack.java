@@ -40,7 +40,6 @@ import top.niunaijun.blackbox.proxy.ProxyActivity;
 import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.proxy.record.ProxyActivityRecord;
 import top.niunaijun.blackbox.utils.ComponentUtils;
-import top.niunaijun.blackbox.utils.IntentSanitizer;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
 
@@ -439,7 +438,10 @@ public class ActivityStack {
                 typedArray.recycle();
             }
         }
-        IntentSanitizer.sanitizeClassExtrasForIpc(intent);
+        // Keep the guest target Intent opaque in the BlackBox server process. Its extras were
+        // prepared before the guest-to-server Binder call, and opening them here would use the
+        // host class loader. App-defined Serializable values (for example PairIP's ActivityType)
+        // cannot be resolved by that loader and would abort the virtual activity launch.
         ProxyActivityRecord.saveStub(shadow, intent, target.mActivityInfo, target.mActivityRecord, target.mUserId);
         return shadow;
     }

@@ -1,5 +1,6 @@
 package com.moodtools.hub.modules
 
+import com.moodtools.hub.networking.APKPureDownload
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -77,6 +78,41 @@ class CatalogModulePlayStoreTest {
         )
 
         assertEquals(true, listing.configuredGameSourceAvailable)
+    }
+
+    @Test
+    fun apkPureDownloadMustMatchOneExactSupportedReleasePair() {
+        val base = catalogModule(
+            GameInstallSource.PlayStore("https://play.google.com/store/apps/details?id=com.example.game")
+        )
+        val catalog = base.copy(config = base.config.copy(supportedVersionCodes = setOf(100L)))
+        val download = APKPureDownload(
+            url = "https://d.apkpure.net/b/APK/com.example.game?versionCode=100&nc=arm64-v8a&sv=23",
+            version = "1.0.0",
+            versionCode = 100,
+            size = 1024,
+            format = GamePackageFormat.APK,
+            supportedAbis = setOf("arm64-v8a")
+        )
+        val listing = ModuleListing(catalog, null, 0, false).copy(
+            playStoreVersionStatus = PlayStoreVersionStatus(
+                latestVersion = "1.0.0",
+                latestVersionCode = 100,
+                listingUpdatedAtEpochSeconds = null,
+                updateAvailable = false,
+                checkedAtEpochSeconds = 1,
+                checkedDay = 1,
+                apkPureDownload = download
+            )
+        )
+
+        assertEquals(download, listing.apkPureDownload)
+        assertEquals(null, listing.copy(deviceAbis = setOf("armeabi-v7a")).apkPureDownload)
+        assertEquals(null, listing.copy(
+            playStoreVersionStatus = listing.playStoreVersionStatus?.copy(
+                apkPureDownload = download.copy(versionCode = 101)
+            )
+        ).apkPureDownload)
     }
 
     private fun catalogModule(source: GameInstallSource) = CatalogModule(

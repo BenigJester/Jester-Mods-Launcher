@@ -1,5 +1,6 @@
 package com.moodtools.hub
 
+import com.moodtools.hub.networking.GameInstallCompatibilityException
 import com.moodtools.hub.networking.LauncherServiceException
 import java.io.IOException
 import org.junit.Assert.assertEquals
@@ -49,6 +50,20 @@ class TransferFailurePolicyTest {
         )
 
         assertEquals("Couldn't open the installer", result.headline)
+    }
+
+    @Test
+    fun incompatibleGamePackageDoesNotSuggestInstallerRecovery() {
+        val result = TransferFailurePolicy.present(
+            GameInstallCompatibilityException(
+                "This game build is 32-bit ARM, but this device supports 64-bit ARM."
+            ),
+            TransferFailureOperation.GAME_DOWNLOAD,
+            verifiedPackageAvailable = true
+        )
+
+        assertEquals("This game build doesn't support your device", result.headline)
+        assertEquals(true, result.detail.contains("32-bit ARM"))
     }
 
     @Test

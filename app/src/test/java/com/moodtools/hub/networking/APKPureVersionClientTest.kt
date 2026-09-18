@@ -3,6 +3,7 @@ package com.moodtools.hub.networking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -90,5 +91,43 @@ class APKPureVersionClientTest {
         assertThrows(IllegalArgumentException::class.java) {
             parseAPKPureVersionResults(setOf("com.os.airforce"), body)
         }
+    }
+
+    @Test
+    fun acceptsOnlyExactAPKPureDownloadEndpoints() {
+        val download = JSONObject()
+            .put("url", "https://d.apkpure.net/b/XAPK/com.os.airforce?versionCode=1576&nc=arm64-v8a&sv=24")
+            .put("version", "15.76")
+            .put("versionCode", 1_576L)
+            .put("size", 785_410_663L)
+            .put("format", "xapk")
+            .put("supportedAbis", org.json.JSONArray().put("arm64-v8a"))
+
+        assertNotNull(parseAPKPureDownload("com.os.airforce", download))
+        download.put("url", "https://example.com/b/XAPK/com.os.airforce?versionCode=1576")
+        assertNull(parseAPKPureDownload("com.os.airforce", download))
+    }
+
+    @Test
+    fun recognizesAPKPurePackageNamedBaseApk() {
+        assertEquals(true, isBaseApkEntry("com.ctugames.km2.apk", "com.ctugames.km2"))
+        assertEquals(true, isBaseApkEntry("splits/base-master.apk", "com.ctugames.km2"))
+        assertEquals(false, isBaseApkEntry("config.arm64_v8a.apk", "com.ctugames.km2"))
+    }
+
+    @Test
+    fun rejectsApkSetWhenItsOnlyAbiDoesNotRunOnDevice() {
+        val error = assertThrows(GameInstallCompatibilityException::class.java) {
+            requireCompatibleApkSet(
+                listOf("com.ctugames.km2.apk", "config.armeabi_v7a.apk", "config.en.apk"),
+                setOf("arm64-v8a")
+            )
+        }
+
+        assertEquals(true, error.message!!.contains("32-bit ARM"))
+        requireCompatibleApkSet(
+            listOf("base.apk", "config.arm64_v8a.apk"),
+            setOf("arm64-v8a")
+        )
     }
 }

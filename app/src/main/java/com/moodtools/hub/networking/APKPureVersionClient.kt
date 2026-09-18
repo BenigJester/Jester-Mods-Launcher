@@ -2,8 +2,18 @@ package com.moodtools.hub.networking
 
 import org.json.JSONArray
 import org.json.JSONObject
+import com.moodtools.hub.modules.GamePackageFormat
 import java.net.HttpURLConnection
 import java.net.URL
+
+data class APKPureDownload(
+    val url: String,
+    val version: String,
+    val versionCode: Long,
+    val size: Long,
+    val format: GamePackageFormat,
+    val supportedAbis: Set<String>
+)
 
 data class APKPureVersionResult(
     val packageName: String,
@@ -12,7 +22,8 @@ data class APKPureVersionResult(
     val listingUpdatedAtEpochSeconds: Long?,
     val updateAvailable: Boolean?,
     val checkedAtEpochSeconds: Long,
-    val stale: Boolean
+    val stale: Boolean,
+    val download: APKPureDownload?
 )
 
 class APKPureVersionClient {
@@ -121,8 +132,47 @@ internal fun parseAPKPureVersionResult(
         listingUpdatedAtEpochSeconds = listingUpdatedAt,
         updateAvailable = updateAvailable,
         checkedAtEpochSeconds = checkedAt,
-        stale = body.optBoolean("stale", false)
+        stale = body.optBoolean("stale", false),
+        download = parseAPKPureDownload(expectedPackageName, body.optJSONObject("download"))
     )
 }
 
+internal fun parseAPKPureDownload(
+    expectedPackageName: String,
+    body: JSONObject?
+): APKPureDownload? {
+    if (body == null) return null
+    val version = body.optString("version").trim()
+    val versionCode = body.optLong("versionCode", 0L)
+    val size = body.optLong("size", 0L)
+    val format = when (body.optString("format").lowercase()) {
+        "apk" -> GamePackageFormat.APK
+        "xapk" -> GamePackageFormat.APKS
+        else -> return null
+    }
+    val supportedAbis = body.optJSONArray("supportedAbis")?.let { values ->
+        buildSet {
+            for (index in 0 until values.length()) add(values.optString(index))
+        }.takeIf { it.isNotEmpty() && it.size == values.length() && it.all(SUPPORTED_ABIS::contains) }
+    } ?: return null
+    if (!VERSION_PATTERN.matches(version) || versionCode <= 0L || size !in 1..MAX_GAME_BYTES) return null
+    val url = runCatching { URL(body.getString("url")) }.getOrNull() ?: return null
+    val expectedFormat = if (format == GamePackageFormat.APK) "APK" else "XAPK"
+    val expectedAbi = supportedAbis.singleOrNull() ?: return null
+    val minimumSdk = url.query
+        ?.split('&')
+        ?.singleOrNull { it.startsWith("sv=") }
+        ?.substringAfter('=')
+        ?.toIntOrNull()
+        ?.takeIf { it in 1..100 }
+        ?: return null
+    if (url.protocol != "https" || url.host != APKPURE_DOWNLOAD_HOST ||
+        url.path != "/b/$expectedFormat/$expectedPackageName" ||
+        url.query != "versionCode=$versionCode&nc=$expectedAbi&sv=$minimumSdk") return null
+    return APKPureDownload(url.toString(), version, versionCode, size, format, supportedAbis)
+}
+
 private val VERSION_PATTERN = Regex("^[0-9][0-9A-Za-z._()+ -]{0,63}$")
+private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a")
+private const val APKPURE_DOWNLOAD_HOST = "d.apkpure.net"
+private const val MAX_GAME_BYTES = 2L * 1024L * 1024L * 1024L

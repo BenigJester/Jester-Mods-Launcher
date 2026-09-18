@@ -51,20 +51,24 @@ class SmartStorageManagerTest {
         val downloads = File(files, "game-downloads").apply { mkdirs() }
         val failed = artifact(downloads, "com.example.game-example-game-100.apks")
         val current = artifact(downloads, "com.example.game-example-game-101.apks")
+        val apkPure = artifact(downloads, "com.example.game-apkpure-101.apks")
         val other = artifact(downloads, "com.example.other-other-game-20.apk")
         val storage = SmartStorageManager(files, temporaryFolder.newFolder("cache"))
 
         storage.cleanStartup(installedLauncherBuild = 1L) { null }
         assertTrue(failed.isFile)
         assertTrue(current.isFile)
+        assertTrue(apkPure.isFile)
 
         storage.onGameReleaseDetected("com.example.game", 101L)
         assertFalse(failed.exists())
         assertTrue(current.isFile)
+        assertTrue(apkPure.isFile)
         assertTrue(other.isFile)
 
         storage.onGameInstallSucceeded("com.example.game", 101L)
         assertFalse(current.exists())
+        assertFalse(apkPure.exists())
         assertTrue(other.isFile)
     }
 

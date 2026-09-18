@@ -294,6 +294,8 @@ data class GameInstallUiState(
     val installing: Boolean = false,
     val cancelling: Boolean = false,
     val downloaded: Boolean = false,
+    val useAPKPure: Boolean = false,
+    val retryable: Boolean = true,
     val completed: Boolean = false,
     val failed: Boolean = false,
     val cancelled: Boolean = false,
@@ -659,6 +661,7 @@ fun GameHubScreen(
     onCloseDownload: () -> Unit,
     onInstall: (ModuleListing) -> Unit,
     onAcquireGame: (ModuleListing) -> Unit,
+    onAcquireAPKPureGame: (ModuleListing) -> Unit,
     onCancelGameInstall: () -> Unit,
     onDismissGameInstall: () -> Unit,
     onOpenGameStore: (ModuleListing) -> Unit,
@@ -891,6 +894,7 @@ fun GameHubScreen(
                                     onBack = onCloseDownload,
                                     onInstall = { onInstall(visiblePage.listing) },
                                     onAcquireGame = { onAcquireGame(visiblePage.listing) },
+                                    onAcquireAPKPureGame = { onAcquireAPKPureGame(visiblePage.listing) },
                                     onOpenGameStore = { onOpenGameStore(visiblePage.listing) },
                                     onRefresh = onRefreshCatalog,
                                     onDone = onCloseBrowser
@@ -1073,8 +1077,12 @@ fun GameHubScreen(
             )
             LauncherOverlay.GAME_COMPANION_INSTALL -> GameInstallDialog(
                 state = gameInstall,
-                canRetry = pendingDownload != null,
-                onRetry = { pendingDownload?.let(onAcquireGame) },
+                canRetry = pendingDownload != null && gameInstall.retryable,
+                onRetry = {
+                    pendingDownload?.let {
+                        if (gameInstall.useAPKPure) onAcquireAPKPureGame(it) else onAcquireGame(it)
+                    }
+                },
                 onCancel = onCancelGameInstall,
                 onDismiss = onDismissGameInstall
             )
@@ -4275,6 +4283,14 @@ private fun GameInstallDialog(
                         ) {
                             Text("Done", fontWeight = FontWeight.Bold)
                         }
+                        !canRetry -> OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, Hairline),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Muted)
+                        ) {
+                            Text("Close")
+                        }
                         else -> Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -4293,7 +4309,10 @@ private fun GameInstallDialog(
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
                             ) {
-                                Text("Try again", fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (state.downloaded) "Retry install" else "Try again",
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -6078,6 +6097,7 @@ private fun ModuleDownloadScreen(
     onBack: () -> Unit,
     onInstall: () -> Unit,
     onAcquireGame: () -> Unit,
+    onAcquireAPKPureGame: () -> Unit,
     onOpenGameStore: () -> Unit,
     onRefresh: () -> Unit,
     onDone: () -> Unit
@@ -6238,7 +6258,7 @@ private fun ModuleDownloadScreen(
                     )
                 }
                 DownloadInfoRow(
-                    "APKPure",
+                    "Latest Version",
                     playStoreStatus?.let { status ->
                         buildString {
                             append(playStoreReleaseLabel(status, listing.catalog.config))
@@ -6384,6 +6404,19 @@ private fun ModuleDownloadScreen(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
                     ) {
                         Text("Open Google Play instead", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                listing.apkPureDownload?.let { download ->
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onAcquireAPKPureGame,
+                        enabled = !busy && (game == null || download.versionCode > game.versionCode),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        border = BorderStroke(1.dp, Accent.copy(alpha = 0.55f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                    ) {
+                        Text("Download from APKPure", fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -7027,8 +7060,8 @@ private fun playStoreReleaseLabel(status: PlayStoreVersionStatus, module: Module
 
 private fun playStoreReleaseReference(status: PlayStoreVersionStatus?): String =
     status?.latestVersion?.let {
-        "APKPure ${gameReleaseLabel(it, status.latestVersionCode)}"
-    } ?: "a new APKPure release"
+        "Latest Version ${gameReleaseLabel(it, status.latestVersionCode)}"
+    } ?: "a new game release"
 
 private fun gameReleaseLabel(version: String, versionCode: Long?): String =
     versionCode?.let { "v$version · $it" } ?: "v$version"
@@ -8706,6 +8739,15 @@ private fun ModuleCompatibilityCard(
         DownloadInfoRow("Supported versions", supportedVersions)
         DownloadInfoRow("Supported builds", supportedBuilds)
         DownloadInfoRow("Supported architecture", supportedArchitectures)
+        DownloadInfoRow(
+            "Latest Version",
+            game.playStoreVersionStatus?.let {
+                buildString {
+                    append(playStoreReleaseLabel(it, game.module))
+                    if (playStoreUpdateInProgress) append(" · add-on update in progress")
+                }
+            } ?: "Check temporarily unavailable"
+        )
         Spacer(Modifier.height(8.dp))
         Box(Modifier.fillMaxWidth().height(1.dp).background(Hairline))
         Spacer(Modifier.height(10.dp))
@@ -8718,15 +8760,6 @@ private fun ModuleCompatibilityCard(
                 methodPresentation.fieldLabel
             },
             methodPresentation.method.displayName
-        )
-        DownloadInfoRow(
-            "APKPure",
-            game.playStoreVersionStatus?.let {
-                buildString {
-                    append(playStoreReleaseLabel(it, game.module))
-                    if (playStoreUpdateInProgress) append(" · add-on update in progress")
-                }
-            } ?: "Check temporarily unavailable"
         )
         if (game.module.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
             Spacer(Modifier.height(10.dp))

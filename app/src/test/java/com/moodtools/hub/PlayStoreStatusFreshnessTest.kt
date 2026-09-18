@@ -1,11 +1,30 @@
 package com.moodtools.hub
 
+import com.moodtools.hub.modules.GamePackageFormat
 import com.moodtools.hub.modules.PlayStoreVersionStatus
+import com.moodtools.hub.networking.APKPureDownload
 import com.moodtools.hub.modules.ModuleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class PlayStoreStatusFreshnessTest {
+    @Test
+    fun refreshedDownloadAvailabilityReplacesSameReleaseCache() {
+        val cached = status(version = "1.0.0", checkedAt = 2_000L)
+        val refreshed = cached.copy(
+            apkPureDownload = APKPureDownload(
+                url = "https://d.apkpure.net/b/XAPK/com.example.game?versionCode=100&nc=arm64-v8a&sv=23",
+                version = "1.0.0",
+                versionCode = 100,
+                size = 1_024,
+                format = GamePackageFormat.APKS,
+                supportedAbis = setOf("arm64-v8a")
+            )
+        )
+
+        assertEquals(refreshed, newestPlayStoreStatus(cached, refreshed))
+    }
+
     @Test
     fun playStoreCacheExpiresHourlyInsteadOfAtMidnight() {
         assertEquals(false, isPlayStoreCacheExpired(1_000L, 4_599L))

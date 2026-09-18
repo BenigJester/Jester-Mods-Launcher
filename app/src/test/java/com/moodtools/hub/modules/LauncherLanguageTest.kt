@@ -208,6 +208,8 @@ class LauncherLanguageTest {
             "Supported versions",
             "Supported builds",
             "Supported architecture",
+            "Latest Version",
+            "a new game release",
             "Selected method"
         )
 
@@ -216,6 +218,16 @@ class LauncherLanguageTest {
                 LauncherLocalization.translate(text, language) == text
             }
             assertTrue("Missing $language translations: ${missing.joinToString(" | ")}", missing.isEmpty())
+            val latestVersion = LauncherLocalization.translate("Latest Version v15.76 · 1576", language)
+            assertNotEquals("Latest Version v15.76 · 1576", latestVersion)
+            assertTrue(latestVersion.contains("15.76") && latestVersion.contains("1576"))
+            assertNotEquals(
+                "Add-on update in progress for Latest Version v15.76 · 1576",
+                LauncherLocalization.translate(
+                    "Add-on update in progress for Latest Version v15.76 · 1576",
+                    language
+                )
+            )
         }
     }
 
