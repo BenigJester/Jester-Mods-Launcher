@@ -115,7 +115,9 @@ public final class IdentityShellActivity extends Activity {
 
             updateStatus("Preparing add-on…");
             core.stopPackage(targetPackage, USER_ID);
-            refreshModuleIfAvailable(targetPackage, payloadAuthority);
+            if (fullModuleAuthorized || !IdentityLaunchGuard.isExternalControllerShell(this)) {
+                refreshModuleIfAvailable(targetPackage, payloadAuthority);
+            }
             IdentityLaunchGuard.persistMode(this, fullModuleAuthorized);
             if (!fullModuleAuthorized) {
                 Log.i(TAG, "External launch: identity compatibility only");

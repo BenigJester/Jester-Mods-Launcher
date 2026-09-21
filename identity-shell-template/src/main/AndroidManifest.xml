@@ -25,11 +25,15 @@
 
         <meta-data
             android:name="com.moodtools.identity_shell_version"
-            android:value="35" />
+            android:value="36" />
 
         <meta-data
             android:name="com.moodtools.identity_payload_authority"
             android:value="__IDENTITY_PAYLOAD_AUTHORITY__" />
+
+        <meta-data
+            android:name="com.moodtools.identity_runtime_kind"
+            android:value="__IDENTITY_RUNTIME_KIND__" />
 
         <activity
             android:name=".IdentityShellActivity"

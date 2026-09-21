@@ -12,20 +12,15 @@ import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.LibraryLaunchAction
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.ModuleRepository
-import com.moodtools.hub.modules.PluginLoader
 import com.moodtools.hub.modules.RootMethod
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
-import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-/** Root controller edition: installs a verified game library and launches the game normally. */
+/** Root controller edition: starts the external controller and launches the game normally. */
 object ExecutionModeLaunchBridge {
     private const val SUPPORTED_PACKAGE = "com.dts.freefireth"
-    private const val ORIGINAL_IL2CPP_SHA256 = "bf70daa86a1c0224b6e0191918a7912829615858f31eb2c4fd644d020effbdff"
-    private const val IL2CPP_ROLLBACK = "/data/local/tmp/libil2cpp.before-jester-controller.so"
     private val packagePattern = Regex("^[A-Za-z0-9_.]+$")
 
     fun prepare(context: Context): String? = null
@@ -141,96 +136,12 @@ object ExecutionModeLaunchBridge {
                 "The add-on failed its security check. Repair or update it, then try again.",
                 "Controller verification failed: ${error.message}", onProgress) }
 
-        val loader = PluginLoader(context)
-        val expectedPatchedHash = runCatching { loader.embeddedLibrarySha256(module) }
-            .getOrElse { error -> return fail(context,
-                "The embedded Free Fire patch failed verification.",
-                "Embedded hash declaration failed: ${error.message}", onProgress) }
-
-        onProgress?.invoke("Preparing Free Fire", "Checking the installed game library.")
-        val baseApk = RootShell.run("pm path ${quote(game.packageName)}").takeIf { it.success }
-            ?.output?.lineSequence()?.map(String::trim)
-            ?.firstOrNull { it.startsWith("package:") && it.endsWith("/base.apk") }
-            ?.removePrefix("package:")
-            ?: return fail(context, "Free Fire's installed files could not be resolved.",
-                "Base APK path is unavailable", onProgress)
-        val appDirectory = baseApk.substringBeforeLast('/')
-        val liveLibrary = "$appDirectory/lib/arm64/libil2cpp.so"
-        val liveHash = RootShell.run("sha256sum ${quote(liveLibrary)}").takeIf { it.success }
-            ?.output?.trim()?.substringBefore(' ')?.lowercase()
-            ?: return fail(context, "Free Fire's game library could not be verified.",
-                "Installed libil2cpp hash is unavailable", onProgress)
-
-        if (liveHash != expectedPatchedHash) {
-            if (liveHash != ORIGINAL_IL2CPP_SHA256) {
-                val rollbackHash = RootShell.run("sha256sum ${quote(IL2CPP_ROLLBACK)}")
-                    .takeIf { it.success }?.output?.trim()?.substringBefore(' ')?.lowercase()
-                if (rollbackHash != ORIGINAL_IL2CPP_SHA256) return fail(context,
-                    "Free Fire's game library is an unknown build. Restore or update the game first.",
-                    "Refusing to replace unexpected libil2cpp hash $liveHash", onProgress)
-            }
-            val nativePayload = File(moduleDirectory, module.nativeFile)
-            val staged = File(context.codeCacheDir, "freefire-controller/libil2cpp.so").apply {
-                parentFile?.mkdirs()
-                delete()
-            }
-            val extraction = runCatching {
-                loader.loadNative(module, nativePayload) && loader.extractEmbeddedLibrary(module, staged)
-            }
-            val extractedHash = staged.takeIf(File::isFile)?.let(::sha256)
-            if (extraction.getOrDefault(false) != true || extractedHash != expectedPatchedHash) {
-                staged.delete()
-                return fail(context, "The embedded Free Fire patch failed verification.",
-                    extraction.exceptionOrNull()?.let { "Embedded extraction failed: ${it.message}" }
-                        ?: "Extracted libil2cpp hash mismatch: ${extractedHash ?: "missing"}", onProgress)
-            }
-            onProgress?.invoke("Preparing Free Fire", "Installing the verified game library.")
-            val temporary = "$liveLibrary.jester-next"
-            val installCommands = mutableListOf(
-                "am force-stop ${quote(game.packageName)}",
-            )
-            if (liveHash == ORIGINAL_IL2CPP_SHA256) {
-                installCommands += "cp -p ${quote(liveLibrary)} ${quote(IL2CPP_ROLLBACK)}"
-            }
-            installCommands += listOf(
-                "cp -f ${quote(staged.absolutePath)} ${quote(temporary)}",
-                "chown 1000:1000 ${quote(temporary)}",
-                "chmod 0755 ${quote(temporary)}",
-                "restorecon ${quote(temporary)}",
-                "mv -f ${quote(temporary)} ${quote(liveLibrary)}",
-                "restorecon ${quote(liveLibrary)}"
-            )
-            val installed = RootShell.run(installCommands.joinToString(" && "))
-            staged.delete()
-            if (!installed.success) return fail(context,
-                "The patched game library could not be installed.",
-                "Controller install failed: ${installed.output.takeLast(300)}", onProgress)
-            val installedHash = RootShell.run("sha256sum ${quote(liveLibrary)}")
-                .output.trim().substringBefore(' ').lowercase()
-            if (installedHash != expectedPatchedHash) return fail(context,
-                "The installed game library failed verification.",
-                "Installed libil2cpp hash mismatch: $installedHash", onProgress)
-        }
-
         ExternalControllerService.start(context, game.packageName)
         val launchIntent = context.packageManager.getLaunchIntentForPackage(game.packageName)
             ?: return fail(context, "Free Fire could not be opened.", "Launch intent is missing", onProgress)
         context.startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         onProgress?.invoke("Opening game", "Free Fire is starting normally.")
         return true
-    }
-
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun fail(

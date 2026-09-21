@@ -159,7 +159,14 @@ internal class IdentityShellManager(
         val material = signingMaterial()
         signApk(unsigned, signed, material)
         check(unsigned.delete()) { "Could not clear the unsigned shell" }
-        validateShell(signed, material.certificate, game.versionName, game.versionCode)
+        validateShell(
+            signed, material.certificate, game.versionName, game.versionCode,
+            expectedRuntimeKind = if (embeddedGameLibrary == null) {
+                RUNTIME_KIND_MODULE
+            } else {
+                RUNTIME_KIND_EXTERNAL_CONTROLLER
+            }
+        )
         verifyEmbeddedGameLibrary(signed, game.abi, embeddedGameLibrary)
 
         onProgress?.invoke(
@@ -210,7 +217,14 @@ internal class IdentityShellManager(
         val material = signingMaterial()
         signApk(unsigned, signed, material)
         check(unsigned.delete()) { "Could not clear the unsigned shell repair" }
-        validateShell(signed, material.certificate, game.versionName, game.versionCode)
+        validateShell(
+            signed, material.certificate, game.versionName, game.versionCode,
+            expectedRuntimeKind = if (embeddedGameLibrary == null) {
+                RUNTIME_KIND_MODULE
+            } else {
+                RUNTIME_KIND_EXTERNAL_CONTROLLER
+            }
+        )
         verifyEmbeddedGameLibrary(signed, game.abi, embeddedGameLibrary)
 
         onProgress?.invoke(
@@ -241,7 +255,8 @@ internal class IdentityShellManager(
             request.apks.single(),
             signingMaterial().certificate,
             expectedVersionName = null,
-            expectedVersionCode = request.versionCode
+            expectedVersionCode = request.versionCode,
+            expectedRuntimeKind = null
         )
         val installer = packageManager.packageInstaller
         val apk = request.apks.single()
@@ -347,9 +362,17 @@ internal class IdentityShellManager(
                                     BinaryXmlStringPool.replaceExact(
                                         BinaryXmlStringPool.replaceExact(
                                             BinaryXmlStringPool.replaceExact(
-                                                manifest,
-                                                LABEL_MARKER,
-                                                label
+                                                BinaryXmlStringPool.replaceExact(
+                                                    manifest,
+                                                    LABEL_MARKER,
+                                                    label
+                                                ),
+                                                RUNTIME_KIND_MARKER,
+                                                if (embeddedGameLibrary == null) {
+                                                    RUNTIME_KIND_MODULE
+                                                } else {
+                                                    RUNTIME_KIND_EXTERNAL_CONTROLLER
+                                                }
                                             ),
                                             LAUNCHER_PACKAGE_MARKER,
                                             context.packageName
@@ -499,7 +522,8 @@ internal class IdentityShellManager(
         apk: File,
         certificate: X509Certificate,
         expectedVersionName: String?,
-        expectedVersionCode: Long
+        expectedVersionCode: Long,
+        expectedRuntimeKind: String?
     ) {
         require(apk.canonicalFile.parentFile == root.canonicalFile && apk.isFile && apk.length() > 0L)
         val archiveInfo = requireNotNull(packageManager.getPackageArchiveInfo(
@@ -528,6 +552,17 @@ internal class IdentityShellManager(
         require(archiveInfo.applicationInfo?.metaData?.getString(PAYLOAD_AUTHORITY_METADATA) ==
             payloadAuthority) {
             "Generated shell has the wrong payload provider"
+        }
+        val actualRuntimeKind = archiveInfo.applicationInfo?.metaData
+            ?.getString(RUNTIME_KIND_METADATA)
+        require(actualRuntimeKind == RUNTIME_KIND_MODULE ||
+            actualRuntimeKind == RUNTIME_KIND_EXTERNAL_CONTROLLER) {
+            "Generated shell has the wrong runtime kind"
+        }
+        if (expectedRuntimeKind != null) {
+            require(actualRuntimeKind == expectedRuntimeKind) {
+                "Generated shell does not match the requested runtime kind"
+            }
         }
         val result = ApkVerifier.Builder(apk).setMinCheckedPlatformVersion(26).build().verify()
         require(result.isVerified) { "Generated identity shell signature is invalid" }
@@ -812,7 +847,7 @@ internal class IdentityShellManager(
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
         const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
         const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
-        const val CURRENT_SHELL_VERSION = 35
+        const val CURRENT_SHELL_VERSION = 36
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"
@@ -820,6 +855,10 @@ internal class IdentityShellManager(
         private const val LABEL_MARKER = "__IDENTITY_SHELL_LABEL__"
         private const val LAUNCHER_PACKAGE_MARKER = "__IDENTITY_LAUNCHER_PACKAGE__"
         private const val PAYLOAD_AUTHORITY_MARKER = "__IDENTITY_PAYLOAD_AUTHORITY__"
+        private const val RUNTIME_KIND_MARKER = "__IDENTITY_RUNTIME_KIND__"
+        private const val RUNTIME_KIND_METADATA = "com.moodtools.identity_runtime_kind"
+        private const val RUNTIME_KIND_MODULE = "module"
+        private const val RUNTIME_KIND_EXTERNAL_CONTROLLER = "external_controller"
         private const val GAME_PAYLOAD = "game.apks"
         private const val DEVICE_SPLIT_SET_MARKER = "META-INF/jester-installed-split-set-v1"
         private const val MANIFEST_ENTRY = "AndroidManifest.xml"

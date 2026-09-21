@@ -16,7 +16,6 @@ import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback;
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration;
 import top.niunaijun.blackbox.core.env.BEnvironment;
-import top.niunaijun.blackbox.utils.IntentSanitizer;
 
 /** Initializes BlackBox and module callbacks inside the single non-root launcher package. */
 public final class HubApplication extends Application {
@@ -140,18 +139,6 @@ public final class HubApplication extends Application {
                 }
                 application.registerActivityLifecycleCallbacks(
                         new Application.ActivityLifecycleCallbacks() {
-                            @Override
-                            public void onActivityPreCreated(android.app.Activity activity,
-                                                             android.os.Bundle state) {
-                                // Some protected apps replace ActivityThread.mInstrumentation.
-                                // The Application callback remains framework-owned and runs before
-                                // Activity.onCreate, making it the last reliable place to restore
-                                // app-defined values that were converted for virtual Binder IPC.
-                                IntentSanitizer.restoreSanitizedClassExtras(
-                                        activity.getIntent(), activity.getClassLoader());
-                                logActivityPhase(activity, "direct-pre-created");
-                            }
-
                             @Override
                             public void onActivityCreated(android.app.Activity activity,
                                                           android.os.Bundle state) {

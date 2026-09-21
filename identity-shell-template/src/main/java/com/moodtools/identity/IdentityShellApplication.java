@@ -133,6 +133,8 @@ public final class IdentityShellApplication extends Application {
 
     private synchronized boolean ensureModuleLoaded(String packageName, int userId) {
         if (!isTarget(packageName, userId)) return false;
+        if (IdentityLaunchGuard.isExternalControllerShell(this)
+                && !IdentityLaunchGuard.isFullModuleAuthorized(this)) return false;
         if (moduleLoaders.containsKey(packageName)) return true;
         File directory = BEnvironment.getDataFilesDir(packageName, userId);
         File dex = new File(directory, "classes.dex");

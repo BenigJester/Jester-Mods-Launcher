@@ -91,6 +91,12 @@ class IdentityShellTemplateTest {
             ).readBytes().toString(Charsets.ISO_8859_1)
             assertTrue("Identity-shell launch guard was stripped", dex.contains("IdentityLaunchGuard"))
             assertTrue(
+                "External-controller pristine runtime selector was stripped",
+                dex.contains("com.moodtools.identity_runtime_kind") &&
+                    dex.contains("identity-runtime-kind-v1") &&
+                    dex.contains("identity-launch-mode-v1")
+            )
+            assertTrue(
                 "Authenticated identity-shell clear-data action was stripped",
                 dex.contains("com.moodtools.identity.guard.ACTION") &&
                     dex.contains("clearPackage")

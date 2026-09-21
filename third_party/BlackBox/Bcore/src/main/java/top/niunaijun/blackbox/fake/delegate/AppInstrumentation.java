@@ -34,7 +34,6 @@ import top.niunaijun.blackbox.fake.service.HCallbackProxy;
 import top.niunaijun.blackbox.fake.service.IActivityClientProxy;
 import top.niunaijun.blackbox.fake.view.SafeResources;
 import top.niunaijun.blackbox.utils.HackAppUtils;
-import top.niunaijun.blackbox.utils.IntentSanitizer;
 import top.niunaijun.blackbox.utils.compat.ActivityCompat;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
 import top.niunaijun.blackbox.utils.compat.ContextCompat;
@@ -118,11 +117,6 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
 
     private void checkActivity(Activity activity) {
         Log.d(TAG, "callActivityOnCreate: " + activity.getClass().getName());
-        // HCallback normally restores app-defined activity extras before ActivityThread creates
-        // the target. Some vendor ActivityThread implementations replace or bypass that callback
-        // during startup, so enforce the same restoration at the last safe point before the
-        // guest Activity's onCreate reads its Intent.
-        IntentSanitizer.restoreSanitizedClassExtras(activity.getIntent(), activity.getClassLoader());
         HackAppUtils.enableQQLogOutput(activity.getPackageName(), activity.getClassLoader());
         checkHCallback();
         HookManager.get().checkEnv(IActivityClientProxy.class);

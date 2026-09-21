@@ -34,6 +34,11 @@ final class IdentityLaunchGuard {
     private static final String MESSAGE_PREFIX = "jester-identity-shell-launch-v2";
     private static final String MODE_FILE = "identity-launch-mode-v1";
     private static final String MODE_FULL = "full";
+    private static final String RUNTIME_KIND_FILE = "identity-runtime-kind-v1";
+    private static final String RUNTIME_KIND_METADATA =
+            "com.moodtools.identity_runtime_kind";
+    private static final String RUNTIME_KIND_MODULE = "module";
+    private static final String RUNTIME_KIND_EXTERNAL_CONTROLLER = "external_controller";
     private static final long MAX_TICKET_AGE_MILLIS = 30_000L;
     private static final long MAX_CLOCK_SKEW_MILLIS = 5_000L;
 
@@ -74,22 +79,30 @@ final class IdentityLaunchGuard {
         if (!directory.mkdirs() && !directory.isDirectory()) {
             throw new IllegalStateException("Could not create identity launch-mode directory");
         }
-        File target = new File(directory, MODE_FILE);
-        File incoming = new File(directory, MODE_FILE + ".incoming");
+        writeState(directory, MODE_FILE, fullModule ? MODE_FULL : "compatibility");
+        writeState(
+                directory,
+                RUNTIME_KIND_FILE,
+                isExternalControllerManifest(context)
+                        ? RUNTIME_KIND_EXTERNAL_CONTROLLER : RUNTIME_KIND_MODULE);
+    }
+
+    private static void writeState(File directory, String name, String state) throws Exception {
+        File target = new File(directory, name);
+        File incoming = new File(directory, name + ".incoming");
         if (incoming.exists() && !incoming.delete()) {
-            throw new IllegalStateException("Could not replace identity launch mode");
+            throw new IllegalStateException("Could not replace identity runtime state");
         }
-        byte[] value = (fullModule ? MODE_FULL : "compatibility")
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] value = state.getBytes(StandardCharsets.UTF_8);
         try (FileOutputStream output = new FileOutputStream(incoming)) {
             output.write(value);
             output.getFD().sync();
         }
         if (target.exists() && !target.delete()) {
-            throw new IllegalStateException("Could not replace identity launch mode");
+            throw new IllegalStateException("Could not replace identity runtime state");
         }
         if (!incoming.renameTo(target)) {
-            throw new IllegalStateException("Could not finalize identity launch mode");
+            throw new IllegalStateException("Could not finalize identity runtime state");
         }
     }
 
@@ -99,6 +112,31 @@ final class IdentityLaunchGuard {
             if (!file.isFile() || file.length() > 32L) return false;
             return MODE_FULL.equals(new String(Files.readAllBytes(file.toPath()),
                     StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    static boolean isExternalControllerShell(Context context) {
+        try {
+            File file = new File(modeDirectory(context), RUNTIME_KIND_FILE);
+            if (file.isFile() && file.length() <= 32L) {
+                return RUNTIME_KIND_EXTERNAL_CONTROLLER.equals(new String(
+                        Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+            }
+            return isExternalControllerManifest(context);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isExternalControllerManifest(Context context) {
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(
+                    context.getPackageName(), PackageManager.GET_META_DATA);
+            return info.applicationInfo != null && info.applicationInfo.metaData != null
+                    && RUNTIME_KIND_EXTERNAL_CONTROLLER.equals(
+                    info.applicationInfo.metaData.getString(RUNTIME_KIND_METADATA));
         } catch (Throwable ignored) {
             return false;
         }
