@@ -22,6 +22,7 @@ if (Test-Path -LiteralPath $destinationPath) {
 $excluded = @(
     '.agents/',
     'docs/public/',
+    'modules/',
     'scripts/patch-soul-knight-nonroot.ps1'
 )
 $tracked = & git -C $sourceRoot ls-files
@@ -34,6 +35,14 @@ foreach ($relative in $tracked) {
         $excluded.Where({ $normalized.StartsWith($_) }, 'First').Count -gt 0) {
         continue
     }
+    $source = Join-Path $sourceRoot $relative
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+    $target = Join-Path $destinationPath $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    Copy-Item -LiteralPath $source -Destination $target
+}
+
+foreach ($relative in (& git -C $sourceRoot ls-files 'modules/com.example.module')) {
     $source = Join-Path $sourceRoot $relative
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
     $target = Join-Path $destinationPath $relative

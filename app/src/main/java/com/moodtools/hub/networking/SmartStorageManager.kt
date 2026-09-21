@@ -35,7 +35,7 @@ internal class SmartStorageManager(
         flavor: String
     ): StorageCleanupResult {
         require(build > 0L)
-        require(flavor == "root" || flavor == "nonroot")
+        require(flavor == "root" || flavor == "nonroot" || flavor == "controller")
         val result = MutableCleanupResult()
         cleanLauncherDownloads(result) { artifact ->
             artifact.testChannel == testChannel && artifact.flavor == flavor && artifact.build < build
@@ -307,7 +307,7 @@ internal class SmartStorageManager(
         private const val PART_SUFFIX = ".part"
         private const val NEXT_SUFFIX = ".next"
         private val PACKAGE_NAME = Regex("[A-Za-z0-9_.]{3,200}")
-        private val LAUNCHER_ARTIFACT = Regex("launcher-(test-)?([0-9]+)-(root|nonroot)\\.apk")
+        private val LAUNCHER_ARTIFACT = Regex("launcher-(test-)?([0-9]+)-(root|nonroot|controller)\\.apk")
         private val GAME_ARTIFACT = Regex("([A-Za-z0-9_.]{3,200})-([a-z0-9][a-z0-9-]{0,63})-([0-9]+)\\.(apk|apks)")
         private val TRANSACTION_TARGETS = listOf(
             "libmenu_native.so",

@@ -29,6 +29,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import com.moodtools.hub.discovery.GameScanner
 import com.moodtools.hub.modules.GameHubScreen
+import com.moodtools.hub.modules.AccessKeyUiState
 import com.moodtools.hub.modules.LauncherLanguage
 import com.moodtools.hub.modules.AccountIdentityUiState
 import com.moodtools.hub.modules.ChangelogUiState
@@ -50,6 +51,7 @@ import com.moodtools.hub.modules.InstalledModuleUpdateItemStatus
 import com.moodtools.hub.modules.InstalledModuleUpdateItemUiState
 import com.moodtools.hub.modules.installedModuleConfig
 import com.moodtools.hub.modules.ModuleRepository
+import com.moodtools.hub.modules.expiredPrivateModulePackages
 import com.moodtools.hub.modules.ModuleListing
 import com.moodtools.hub.modules.ModuleUpdateUiState
 import com.moodtools.hub.modules.ModuleTransferIntent
@@ -62,6 +64,7 @@ import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
 import com.moodtools.hub.modules.EmbeddedLocalTestModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
+import com.moodtools.hub.modules.isVisibleInLauncher
 import com.moodtools.hub.modules.sortLibraryGames
 import com.moodtools.hub.networking.LauncherAccessManager
 import com.moodtools.hub.networking.LauncherPrivateAccessResult
@@ -265,6 +268,7 @@ class LauncherActivity : ComponentActivity() {
             }
             val startup by viewModel.startupState.collectAsStateWithLifecycle()
             val entered by viewModel.launcherEntered.collectAsStateWithLifecycle()
+            val accessKey by viewModel.accessKeyState.collectAsStateWithLifecycle()
             val activeLanguage = if (languageConfirmed) {
                 LauncherLocalization.language
             } else {
@@ -306,6 +310,7 @@ class LauncherActivity : ComponentActivity() {
                     launchState = viewModel.launchState,
                     packageSetupState = viewModel.packageSetupState,
                     directPatchPromptState = viewModel.directPatchPromptState,
+                    accessKeyState = viewModel.accessKeyState,
                     onOpenGame = viewModel::openLibraryGame,
                     onBack = viewModel::closeGame,
                     onUpdate = ::updateLibraryGame,
@@ -348,7 +353,9 @@ class LauncherActivity : ComponentActivity() {
                     onCloseAccountIdentity = viewModel::closeAccountIdentity,
                     onRetryChangelog = viewModel::refreshChangelog,
                     onOpenModuleChangelog = viewModel::openModuleChangelog,
-                    onCloseModuleChangelog = viewModel::closeModuleChangelog
+                    onCloseModuleChangelog = viewModel::closeModuleChangelog,
+                    onRedeemAccessKey = viewModel::redeemAccessKey,
+                    onClearAccessKeyResult = viewModel::clearAccessKeyResult
                 )
             } else {
                 if (startup is LauncherStartupState.RootDenied) {
@@ -363,6 +370,9 @@ class LauncherActivity : ComponentActivity() {
                     onRetry = viewModel::retryAccessRecovery,
                     onEnter = viewModel::enterLauncher,
                     onCopySupportCode = ::copySupportCode,
+                    accessKeyState = accessKey,
+                    onRedeemAccessKey = viewModel::redeemAccessKey,
+                    onClearAccessKeyResult = viewModel::clearAccessKeyResult,
                     onExit = { finishAffinity() }
                 )
             }
@@ -1316,6 +1326,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private val _directPatchPromptState = MutableStateFlow(DirectPatchPromptUiState())
     val directPatchPromptState: StateFlow<DirectPatchPromptUiState> = _directPatchPromptState
 
+    private val _accessKeyState = MutableStateFlow(AccessKeyUiState())
+    val accessKeyState: StateFlow<AccessKeyUiState> = _accessKeyState
+
     private val _availableModules = MutableStateFlow<List<ModuleListing>>(emptyList())
     val availableModules: StateFlow<List<ModuleListing>> = _availableModules
 
@@ -1536,6 +1549,47 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun supportCode(): String = accessManager.accountIdentity().grantPassIdentity
 
+    fun redeemAccessKey(key: String) {
+        if (_accessKeyState.value.activating) return
+        _accessKeyState.value = AccessKeyUiState(activating = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { accessManager.redeemStoreKey(key) }
+                .onSuccess { redemption ->
+                    _accessKeyState.value = AccessKeyUiState(
+                        addedDays = redemption.addedDays,
+                        launcherExpiresAt = redemption.lease.grantExpiresAt,
+                        entitlementExpiresAt = redemption.entitlementExpiresAt,
+                        alreadyRedeemed = redemption.alreadyRedeemed
+                    )
+                    if (_launcherEntered.value) {
+                        when (val privateAccess = accessManager.checkPrivateAccess(redemption.scope)) {
+                            is LauncherPrivateAccessResult.Approved -> privateAccessExpiryByScope =
+                                privateAccessExpiryByScope + (redemption.scope to privateAccess.lease.grantExpiresAt)
+                            LauncherPrivateAccessResult.Denied -> privateAccessExpiryByScope =
+                                privateAccessExpiryByScope - redemption.scope
+                            is LauncherPrivateAccessResult.Unavailable -> Unit
+                        }
+                        markLauncherReady(redemption.lease.grantExpiresAt)
+                        refreshGames(refreshCatalog = true, forceGameScan = true)
+                    } else {
+                        completeAuthorizedStartup(redemption.lease.grantExpiresAt)
+                    }
+                }
+                .onFailure { error ->
+                    android.util.Log.e("JesterMoodsStoreKey", "Paid access key activation failed", error)
+                    val feedback = accessKeyErrorFeedback(error)
+                    _accessKeyState.value = AccessKeyUiState(
+                        errorCode = feedback.code,
+                        error = feedback.message
+                    )
+                }
+        }
+    }
+
+    fun clearAccessKeyResult() {
+        if (!_accessKeyState.value.activating) _accessKeyState.value = AccessKeyUiState()
+    }
+
     private suspend fun completeAuthorizedStartup(
         launcherExpiresAt: Long,
         initialLink: Uri? = null,
@@ -1617,6 +1671,21 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             }
         }
         privateAccessExpiryByScope = refreshedExpiries
+        expiredPrivateModulePackages(
+            installedPrivateModules,
+            refreshedApprovalByScope.filterValues { it === LauncherPrivateAccessResult.Denied }.keys
+        ).forEach { packageName ->
+            runCatching {
+                repository.removeFromLibrary(packageName)
+                storageManager.onAddOnRemoved(packageName)
+            }.onFailure { error ->
+                android.util.Log.e(
+                    "JesterMoodsPrivateAccess",
+                    "Could not remove expired private module $packageName",
+                    error
+                )
+            }
+        }
         val configuredApprovedAfterRefresh = configuredScope != null &&
             (bypassPrivateApproval && BuildConfig.DEBUG ||
                 refreshedApprovalByScope[configuredScope] is LauncherPrivateAccessResult.Approved)
@@ -3481,13 +3550,19 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         if (_gameDataResetState.value.inProgress || _launchState.value.inProgress ||
             _updateState.value.inProgress) return
         val rootMode = BuildConfig.IS_ROOT_MODE
+        val identityShell = !rootMode &&
+            entry.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL
         _gameDataResetState.value = GameDataResetUiState(
             inProgress = true,
-            headline = if (rootMode) "Clearing game data" else "Clearing managed game data",
-            detail = if (rootMode) {
-                "Resetting the installed game to a fresh state."
-            } else {
-                "Removing the BlackBox installation and its virtual identity."
+            headline = when {
+                rootMode -> "Clearing game data"
+                identityShell -> "Clearing shell game data"
+                else -> "Clearing managed game data"
+            },
+            detail = when {
+                rootMode -> "Resetting the installed game to a fresh state."
+                identityShell -> "Asking the installed shell to reset its local game state."
+                else -> "Removing the BlackBox installation and its virtual identity."
             }
         )
         viewModelScope.launch(Dispatchers.IO) {
@@ -3499,11 +3574,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 refreshGames(forceGameScan = true)
                 _gameDataResetState.value = GameDataResetUiState(
                     completed = true,
-                    headline = "Game data cleared",
-                    detail = if (rootMode) {
-                        "The next Play starts with fresh game data."
-                    } else {
-                        "The next Play will create a fresh managed installation."
+                    headline = if (identityShell) "Game data reset requested" else "Game data cleared",
+                    detail = when {
+                        rootMode -> "The next Play starts with fresh game data."
+                        identityShell -> "Android is clearing the shell now. The next Play creates a fresh managed installation."
+                        else -> "The next Play will create a fresh managed installation."
                     }
                 )
             }.onFailure { error ->
@@ -4898,10 +4973,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         refreshRemoteMetadata: Boolean = true
     ) {
         val application = getApplication<android.app.Application>()
-        if (refreshRemoteMetadata) resolvePrivateAccessExpiries(catalog)
-        if (catalog.isEmpty()) {
+        val visibleCatalog = catalog.filter { it.config.isVisibleInLauncher(BuildConfig.IS_ROOT_MODE) }
+        if (refreshRemoteMetadata) resolvePrivateAccessExpiries(visibleCatalog)
+        if (visibleCatalog.isEmpty()) {
             val localConfigs = repository.loadModules()
                 .filter { repository.isInLibrary(it.packageName) }
+                .filter { it.isVisibleInLauncher(BuildConfig.IS_ROOT_MODE) }
                 .map(::resolveNonRootMethodChoice)
             val local = scanGames(localConfigs, forceGameScan)
             _games.value = local
@@ -4931,11 +5008,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 )
             })
         } else {
-            val resolvedCatalog = catalog.map { item ->
+            val resolvedCatalog = visibleCatalog.map { item ->
                 item.copy(config = resolveNonRootMethodChoice(item.config))
             }
             val localConfigs = repository.loadModules()
                 .filter { repository.isInLibrary(it.packageName) }
+                .filter { it.isVisibleInLauncher(BuildConfig.IS_ROOT_MODE) }
                 .map(::resolveNonRootMethodChoice)
             val localConfigsByPackage = localConfigs.associateBy { it.packageName }
             val localTestPackages = localConfigs
@@ -5134,6 +5212,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     game.packageName
                 )
                 NonRootMethod.INJECTION -> Unit
+                NonRootMethod.NONE -> Unit
             }
         }
         libraryPreferences.edit()

@@ -91,6 +91,11 @@ class IdentityShellTemplateTest {
             ).readBytes().toString(Charsets.ISO_8859_1)
             assertTrue("Identity-shell launch guard was stripped", dex.contains("IdentityLaunchGuard"))
             assertTrue(
+                "Authenticated identity-shell clear-data action was stripped",
+                dex.contains("com.moodtools.identity.guard.ACTION") &&
+                    dex.contains("clearPackage")
+            )
+            assertTrue(
                 "Identity-shell shared launch-mode directory was stripped",
                 dex.contains("getDataFilesDir")
             )
@@ -100,7 +105,47 @@ class IdentityShellTemplateTest {
             )
             assertTrue(
                 "Exact-package native-free compatibility marker was stripped",
-                dex.contains("protocol-15 native-free guest")
+                dex.contains("protocol-34 native-free guest")
+            )
+            assertTrue(
+                "Guest process-name repair was stripped",
+                dex.contains("Restored missing guest ApplicationInfo.processName")
+            )
+            assertTrue(
+                "Compiled identity shell must restore the fallback guest native library path",
+                dex.contains("Restored fallback guest nativeLibraryDir")
+            )
+            assertTrue(
+                "Compiled identity shell must restore fallback guest split APK paths",
+                dex.contains("Restored fallback guest splitSourceDirs")
+            )
+            assertTrue(
+                "Compiled identity shell must restore the game APK ApplicationInfo",
+                dex.contains("Restored fallback guest archive ApplicationInfo")
+            )
+            assertTrue(
+                "Compiled identity shell must clear stale Unity initialization state",
+                dex.contains("Cleared stale Unity initialization state for protocol 34")
+            )
+            assertTrue(
+                "Exact-package context path was stripped",
+                dex.contains("Creating exact-package guest context from virtual ApplicationInfo")
+            )
+            assertTrue(
+                "Exact-package context must be created by LoadedApk",
+                dex.contains("Created guest Application context through LoadedApk without instrumentation paths")
+            )
+            assertTrue(
+                "BlackReflection was renamed into a guest-collidable package",
+                dex.contains("Ltop/niunaijun/blackreflection/BlackReflection;")
+            )
+            assertTrue(
+                "Minimized shell dependencies were not isolated",
+                dex.contains("Lcom/moodtools/identity/internal/")
+            )
+            assertFalse(
+                "Minimized shell dependency leaked into guest-collidable a.a",
+                dex.contains("La/a;")
             )
             assertFalse(
                 "Identity shell must not start an automatic public logcat capture",

@@ -10,7 +10,8 @@ internal data class DirectPatchRevision(
     val launchGuardSchema: Int,
     val launchGuardPublicKey: String,
     val dexSha256: String,
-    val nativeSha256: String
+    val nativeSha256: String,
+    val gameNativeSha256: String = ""
 )
 
 /** Every embedded input participates, so a catalog rebuild cannot look current by accident. */

@@ -45,11 +45,40 @@ public final class IdentityShellActivity extends Activity {
             updateStatus("Game setup is already running…");
             return;
         }
-        boolean fullModuleAuthorized = IdentityLaunchGuard.authorize(this, getIntent());
+        String authorizedAction = IdentityLaunchGuard.authorize(this, getIntent());
+        if (IdentityLaunchGuard.ACTION_CLEAR_DATA.equals(authorizedAction)) {
+            Thread worker = new Thread(this::clearShellData, "identity-shell-clear-data");
+            worker.setDaemon(true);
+            worker.start();
+            return;
+        }
+        boolean fullModuleAuthorized = IdentityLaunchGuard.ACTION_PLAY.equals(authorizedAction);
         Thread worker = new Thread(
                 () -> prepareAndLaunch(fullModuleAuthorized), "identity-shell-launch");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private void clearShellData() {
+        String targetPackage = getPackageName();
+        try {
+            updateStatus("Clearing game data...");
+            BlackBoxCore core = BlackBoxCore.get();
+            core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
+            core.stopPackage(targetPackage, USER_ID);
+            core.clearPackage(targetPackage, USER_ID);
+            if (!core.isInstalled(targetPackage, USER_ID)) {
+                throw new IllegalStateException("The managed game installation was lost");
+            }
+            Log.i(TAG, "Identity-shell managed game data cleared");
+            updateStatus("Game data cleared");
+            runOnUiThread(this::finish);
+        } catch (Throwable error) {
+            Log.e(TAG, "Identity-shell data reset failed", error);
+            showFailure(error.getMessage());
+        } finally {
+            SETUP_IN_PROGRESS.set(false);
+        }
     }
 
     private void showLoadingView() {

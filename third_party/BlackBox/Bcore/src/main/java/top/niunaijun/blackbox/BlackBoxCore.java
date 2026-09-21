@@ -1205,6 +1205,18 @@ public class BlackBoxCore extends ClientConfiguration {
         }
     }
 
+    public InstallResult installPackageAsUserWithPrivateNativeLibraries(String packageName, int userId) {
+        try {
+            PackageInfo packageInfo = getPackageManager().getPackageInfo(packageName, 0);
+            return getBPackageManager().installPackageAsUser(
+                    packageInfo.applicationInfo.sourceDir,
+                    InstallOption.installBySystem().usePrivateNativeLibraries(),
+                    userId);
+        } catch (PackageManager.NameNotFoundException e) {
+            return new InstallResult().installError(e.getMessage());
+        }
+    }
+
     public InstallResult installPackageAsUser(File apk, int userId) {
         
         try {

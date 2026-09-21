@@ -34,6 +34,7 @@ internal fun isTrustedStableLauncherDownloadPath(path: String, build: Long, flav
     val canonicalFile = when (flavor) {
         "root" -> "Jester-Moods-Root.apk"
         "nonroot" -> "Jester-Moods-NonRoot.apk"
+        "controller" -> "Jester-Moods-Controller.apk"
         else -> return false
     }
     return path == "/download/jester-moods-launcher?file=$canonicalFile" ||
@@ -344,6 +345,7 @@ class LauncherUpdateClient(private val context: Context) {
     private fun flavor(): String = when (com.moodtools.hub.BuildConfig.FLAVOR) {
         "root" -> "root"
         "nonroot" -> "nonroot"
+        "controller" -> "controller"
         else -> error("Unsupported launcher build flavor")
     }
 

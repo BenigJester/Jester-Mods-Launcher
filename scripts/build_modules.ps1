@@ -93,6 +93,14 @@ function Assert-PcEmulatorCompatibility(
     [string] $CppDirectory,
     [string] $NativeMainText
 ) {
+    # External controllers never inspect or modify a guest process, so the ELF scanner contract
+    # is intentionally absent from these host-process-only payloads.
+    if ($NativeMainText -match 'kExternalControllerMethod' -and
+            $NativeMainText -match 'ExtractEmbeddedIl2Cpp' -and
+            $NativeMainText -notmatch 'DobbyHook|MemoryPatch|TryInstallLuaHooks') {
+        return
+    }
+
     # Otherworld Legends is the device-confirmed custom implementation and the
     # source of this contract. Every template-style module must use the same
     # observer, and every RVA helper must resolve through that observer's ELF
@@ -262,8 +270,16 @@ foreach ($moduleDir in $moduleDirectories) {
     } catch {
         throw "Invalid JSON in ${config}: $($_.Exception.Message)"
     }
-    if ($moduleConfig.nonroot_method -notin @('injection', 'direct_patch', 'identity_shell')) {
-        throw "Module ${name} must declare nonroot_method as 'injection', 'direct_patch', or 'identity_shell'."
+    if ($moduleConfig.example_only -eq $true) {
+        Write-Host "Skipping ${name}: example_only reference module"
+        continue
+    }
+    if ($moduleConfig.nonroot_method -notin @('none', 'injection', 'direct_patch', 'identity_shell')) {
+        throw "Module ${name} must declare nonroot_method as 'none', 'injection', 'direct_patch', or 'identity_shell'."
+    }
+    if ($null -ne $moduleConfig.root_method -and
+            $moduleConfig.root_method -notin @('injection', 'external_controller')) {
+        throw "Module ${name} must declare root_method as 'injection' or 'external_controller'."
     }
     [string[]] $nonRootMethods = if ($null -eq $moduleConfig.nonroot_methods) {
         @([string]$moduleConfig.nonroot_method)
@@ -272,14 +288,14 @@ foreach ($moduleDir in $moduleDirectories) {
     }
     if ($nonRootMethods.Count -eq 0 -or $nonRootMethods[0] -cne [string]$moduleConfig.nonroot_method -or
             @($nonRootMethods | Select-Object -Unique).Count -ne $nonRootMethods.Count -or
-            @($nonRootMethods | Where-Object { $_ -notin @('injection', 'direct_patch', 'identity_shell') }).Count -gt 0) {
+            @($nonRootMethods | Where-Object { $_ -notin @('none', 'injection', 'direct_patch', 'identity_shell') }).Count -gt 0) {
         throw "Module ${name} nonroot_methods must be unique, valid, and begin with nonroot_method."
     }
     if ($nonRootMethods.Count -gt 1 -and
             (Compare-Object @('direct_patch', 'identity_shell') @($nonRootMethods | Sort-Object -Unique) -SyncWindow 0).Count -gt 0) {
         throw "Module ${name} may only offer identity_shell and direct_patch together."
     }
-    if ($nonRootMethods -contains 'direct_patch') {
+    if ($nonRootMethods -contains 'direct_patch' -and $moduleConfig.root_method -ne 'external_controller') {
         $launchGuard = Join-Path $java "DirectLaunchGuard.java"
         $componentFactory = Join-Path $java "ModComponentFactory.java"
         if (-not ((Test-Path -LiteralPath $launchGuard -PathType Leaf) -and
@@ -424,6 +440,15 @@ foreach ($moduleDir in $moduleDirectories) {
             $gameLogicSize = (Get-Item -LiteralPath $gameLogicSource).Length
             $cmakeArgs += "-DEMBEDDED_GAMELOGIC_GZIP=$gameLogicGzip"
             $cmakeArgs += "-DEMBEDDED_GAMELOGIC_UNCOMPRESSED_SIZE=$gameLogicSize"
+        }
+        $embeddedIl2CppGzipSource = Join-Path $cpp 'Embedded\libil2cpp.patched.so.gz'
+        $embeddedIl2CppSource = Join-Path $cpp 'Embedded\libil2cpp.patched.so'
+        if (Test-Path -LiteralPath $embeddedIl2CppGzipSource -PathType Leaf) {
+            $cmakeArgs += "-DEMBEDDED_IL2CPP_GZIP=$embeddedIl2CppGzipSource"
+        } elseif (Test-Path -LiteralPath $embeddedIl2CppSource -PathType Leaf) {
+            $embeddedIl2CppGzip = Join-Path $work 'native\libil2cpp.patched.so.gz'
+            Compress-GzipFile $embeddedIl2CppSource $embeddedIl2CppGzip
+            $cmakeArgs += "-DEMBEDDED_IL2CPP_GZIP=$embeddedIl2CppGzip"
         }
         & $cmake @cmakeArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

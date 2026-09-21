@@ -1,11 +1,15 @@
 package com.moodtools.hub
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.LibraryLaunchAction
 import com.moodtools.hub.modules.LibraryGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.NonRootMethod
+import com.moodtools.hub.modules.RootMethod
 import com.moodtools.hub.modules.identityShellLaunchAction
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
@@ -16,6 +20,8 @@ import java.io.File
 
 /** Routes each game through the non-root method declared by its module metadata. */
 object ExecutionModeLaunchBridge {
+    private const val FREE_FIRE_PACKAGE = "com.dts.freefireth"
+
     fun prepare(context: Context): String? {
         LauncherTaskLifecycleService.ensureRunning(context)
         return null
@@ -27,6 +33,7 @@ object ExecutionModeLaunchBridge {
 
     fun removeLibraryGameData(context: Context, game: LibraryGame) {
         when (game.module.effectiveNonRootMethod) {
+            NonRootMethod.NONE -> Unit
             NonRootMethod.INJECTION -> NonRootBlackBoxRuntime.removePackage(context, game.packageName)
             NonRootMethod.IDENTITY_SHELL -> {
                 val manager = identityShellManager(context, game.packageName)
@@ -53,14 +60,28 @@ object ExecutionModeLaunchBridge {
     }
 
     fun clearLibraryGameData(context: Context, game: LibraryGame) {
-        require(game.module.effectiveNonRootMethod == NonRootMethod.INJECTION) {
-            "Only managed BlackBox games have clearable sandbox data"
+        when (game.module.effectiveNonRootMethod) {
+            NonRootMethod.NONE -> error("This add-on is available only in the Root Launcher")
+            NonRootMethod.INJECTION ->
+                NonRootBlackBoxRuntime.removePackage(context, game.packageName)
+            NonRootMethod.IDENTITY_SHELL -> {
+                val manager = identityShellManager(context, game.packageName)
+                check(manager.isInstalledShellReady()) {
+                    "Install the latest exact-package shell before clearing its data"
+                }
+                val intent = context.packageManager.getLaunchIntentForPackage(game.packageName)
+                    ?: error("The installed shell has no launch activity")
+                context.startActivity(
+                    manager.authorizeClearData(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            NonRootMethod.DIRECT_PATCH -> error("Direct-patch game data is managed by Android")
         }
-        NonRootBlackBoxRuntime.removePackage(context, game.packageName)
     }
 
     fun requiresPackageReplacement(context: Context, game: InstalledGame): Boolean {
         return when (game.module.effectiveNonRootMethod) {
+            NonRootMethod.NONE -> false
             NonRootMethod.INJECTION -> false
             NonRootMethod.DIRECT_PATCH -> directPatchManager(context, game.packageName)
                 .requiresReplacement(game)
@@ -71,6 +92,7 @@ object ExecutionModeLaunchBridge {
 
     fun libraryLaunchAction(context: Context, game: InstalledGame): LibraryLaunchAction {
         return when (game.module.effectiveNonRootMethod) {
+            NonRootMethod.NONE -> LibraryLaunchAction.PLAY
             NonRootMethod.INJECTION -> LibraryLaunchAction.PLAY
             NonRootMethod.DIRECT_PATCH -> {
                 val patcher = directPatchManager(context, game.packageName)
@@ -97,6 +119,7 @@ object ExecutionModeLaunchBridge {
             "This add-on does not replace its outer package"
         }
         return when (game.module.effectiveNonRootMethod) {
+            NonRootMethod.NONE -> error("This add-on is available only in the Root Launcher")
             NonRootMethod.DIRECT_PATCH -> directPatchManager(context, game.packageName)
                 .prepare(game, onProgress)
             NonRootMethod.IDENTITY_SHELL -> {
@@ -138,6 +161,9 @@ object ExecutionModeLaunchBridge {
                 PackageReplacementKind.IDENTITY_SHELL ->
                     identityShellManager(context, request.packageName).authorizeLaunch(intent)
             }
+            if (request.packageName == FREE_FIRE_PACKAGE) {
+                ExternalControllerService.startDirectPatch(context, request.packageName)
+            }
             context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
             true
         }.getOrDefault(false)
@@ -151,6 +177,13 @@ object ExecutionModeLaunchBridge {
         game: InstalledGame,
         onProgress: ((headline: String, detail: String) -> Unit)? = null
     ): Boolean {
+        if (game.module.effectiveNonRootMethod == NonRootMethod.NONE) {
+            onProgress?.invoke(
+                "Root Launcher required",
+                "${game.module.title} is not available in the Non-root Launcher."
+            )
+            return false
+        }
         val runtimeSecurity = RuntimeSecurityGuard.inspect(context)
         if (!runtimeSecurity.allowed) {
             android.util.Log.e(
@@ -174,6 +207,28 @@ object ExecutionModeLaunchBridge {
             )
             return false
         }
+        if (game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
+            if (game.module.effectiveNonRootMethod == NonRootMethod.INJECTION &&
+                game.packageName != FREE_FIRE_PACKAGE) {
+                onProgress?.invoke("Launch failed", "This external controller is not supported in BlackBox yet.")
+                return false
+            }
+            if (!Settings.canDrawOverlays(context)) {
+                onProgress?.invoke(
+                    "Overlay permission needed",
+                    "Allow Jester Mods to appear over other apps, then launch the game again."
+                )
+                runCatching {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+                return false
+            }
+        }
         onProgress?.invoke("Verifying add-on", "Checking the signed add-on before launch.")
         runCatching {
             val directory = File(context.filesDir, "menus/${game.packageName}")
@@ -189,6 +244,7 @@ object ExecutionModeLaunchBridge {
         if (game.module.effectiveNonRootMethod != NonRootMethod.INJECTION) {
             val patcher = directPatchManager(context, game.packageName)
             val ready = when (game.module.effectiveNonRootMethod) {
+                NonRootMethod.NONE -> false
                 NonRootMethod.DIRECT_PATCH -> patcher.isPatchedInstallation()
                 NonRootMethod.IDENTITY_SHELL -> identityShellManager(context, game.packageName)
                     .isInstalledShellReady()
@@ -210,10 +266,15 @@ object ExecutionModeLaunchBridge {
             }
             return runCatching {
                 when (game.module.effectiveNonRootMethod) {
+                    NonRootMethod.NONE -> error("This add-on is available only in the Root Launcher")
                     NonRootMethod.DIRECT_PATCH -> patcher.authorizeLaunch(intent)
                     NonRootMethod.IDENTITY_SHELL ->
                         identityShellManager(context, game.packageName).authorizeLaunch(intent)
                     NonRootMethod.INJECTION -> Unit
+                }
+                if (game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER &&
+                    game.module.effectiveNonRootMethod == NonRootMethod.DIRECT_PATCH) {
+                    ExternalControllerService.startDirectPatch(context, game.packageName)
                 }
                 context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                 onProgress?.invoke("Opening game", "${game.module.title} is starting now.")
@@ -225,10 +286,22 @@ object ExecutionModeLaunchBridge {
             }
         }
 
-        onProgress?.invoke("Preparing your game", "Getting Jester Mods ready.")
+        val externalController = game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER
+        onProgress?.invoke(
+            "Preparing your game",
+            if (externalController) "Preparing the verified BlackBox controller."
+            else "Getting Jester Mods ready."
+        )
         onProgress?.invoke("Opening game", "Starting ${game.module.title} now.")
         val launched = NonRootBlackBoxRuntime.launch(context, game)
         if (launched) {
+            if (externalController) {
+                ExternalControllerService.startBlackBox(
+                    context,
+                    game.packageName,
+                    NonRootBlackBoxRuntime.externalControllerFeatureStateFile(game.packageName)
+                )
+            }
             onProgress?.invoke("Opening game", "${game.module.title} is starting now.")
         } else {
             val diagnostic = NonRootBlackBoxRuntime.lastFailureDetail

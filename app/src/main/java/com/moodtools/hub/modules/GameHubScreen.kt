@@ -57,6 +57,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -104,6 +105,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
@@ -113,6 +115,7 @@ import com.moodtools.hub.LauncherLocalization
 import com.moodtools.hub.PERMANENT_ACCESS_EXPIRY_SECONDS
 import com.moodtools.hub.PackageReplacementKind
 import com.moodtools.hub.R
+import com.moodtools.hub.accessKeyErrorTitle
 import com.moodtools.hub.formatRemainingAccessPrimary
 import com.moodtools.hub.networking.CatalogIconClient
 import com.moodtools.hub.networking.LauncherChangelogEntry
@@ -142,6 +145,16 @@ internal data class LauncherPalette(
     val hairline: Color,
     val backdropStart: Color,
     val backdropEnd: Color
+)
+
+data class AccessKeyUiState(
+    val activating: Boolean = false,
+    val addedDays: Int? = null,
+    val launcherExpiresAt: Long? = null,
+    val entitlementExpiresAt: Long? = null,
+    val alreadyRedeemed: Boolean = false,
+    val errorCode: String? = null,
+    val error: String? = null
 )
 
 internal enum class LauncherTheme(
@@ -504,14 +517,15 @@ private sealed class LauncherPage(val key: String, val rank: Int) {
     data class Module(val game: LibraryGame) : LauncherPage("module:${game.moduleIdentity}", 1)
     object Browse : LauncherPage("browse", 2)
     data class Download(val listing: ModuleListing) : LauncherPage("download:${listing.catalog.slug}", 3)
-    object Settings : LauncherPage("settings", 4)
-    object Language : LauncherPage("language", 5)
-    object Theme : LauncherPage("theme", 6)
-    object About : LauncherPage("about", 7)
-    object Help : LauncherPage("help", 8)
-    object LauncherUpdate : LauncherPage("launcher-update", 9)
-    object Changelog : LauncherPage("changelog", 10)
-    object AccountIdentity : LauncherPage("account-identity", 11)
+    object AccessKey : LauncherPage("access-key", 4)
+    object Settings : LauncherPage("settings", 5)
+    object Language : LauncherPage("language", 6)
+    object Theme : LauncherPage("theme", 7)
+    object About : LauncherPage("about", 8)
+    object Help : LauncherPage("help", 9)
+    object LauncherUpdate : LauncherPage("launcher-update", 10)
+    object Changelog : LauncherPage("changelog", 11)
+    object AccountIdentity : LauncherPage("account-identity", 12)
 }
 
 internal enum class LauncherOverlay {
@@ -639,6 +653,7 @@ fun GameHubScreen(
     launchState: StateFlow<LaunchUiState>,
     packageSetupState: StateFlow<PackageSetupUiState>,
     directPatchPromptState: StateFlow<DirectPatchPromptUiState>,
+    accessKeyState: StateFlow<AccessKeyUiState>,
     onOpenGame: (LibraryGame) -> Unit,
     onBack: () -> Unit,
     onUpdate: (LibraryGame) -> Unit,
@@ -681,7 +696,9 @@ fun GameHubScreen(
     onCloseAccountIdentity: () -> Unit,
     onRetryChangelog: () -> Unit,
     onOpenModuleChangelog: (String) -> Unit,
-    onCloseModuleChangelog: () -> Unit
+    onCloseModuleChangelog: () -> Unit,
+    onRedeemAccessKey: (String) -> Unit,
+    onClearAccessKeyResult: () -> Unit
 ) {
     val screenCache = remember { LauncherScreenCache() }
     val games by state.collectAsStateWithLifecycle()
@@ -701,6 +718,7 @@ fun GameHubScreen(
     val launch by launchState.collectAsStateWithLifecycle()
     val packageSetup by packageSetupState.collectAsStateWithLifecycle()
     val directPatchPrompt by directPatchPromptState.collectAsStateWithLifecycle()
+    val accessKeyStatus by accessKeyState.collectAsStateWithLifecycle()
     var browseQuery by rememberSaveable { mutableStateOf("") }
     var browseFilter by rememberSaveable { mutableStateOf(BrowseFilter.ALL.name) }
     var browseCategory by rememberSaveable { mutableStateOf<String?>(null) }
@@ -709,6 +727,7 @@ fun GameHubScreen(
     var libraryQuery by rememberSaveable { mutableStateOf("") }
     var libraryManaging by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var accessKeyOpen by rememberSaveable { mutableStateOf(false) }
     var languageOpen by rememberSaveable { mutableStateOf(false) }
     var themeOpen by rememberSaveable { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
@@ -729,6 +748,7 @@ fun GameHubScreen(
         aboutOpen -> LauncherPage.About
         languageOpen -> LauncherPage.Language
         themeOpen -> LauncherPage.Theme
+        accessKeyOpen -> LauncherPage.AccessKey
         settingsOpen -> LauncherPage.Settings
         pendingDownload != null -> LauncherPage.Download(pendingDownload!!)
         browsing -> LauncherPage.Browse
@@ -737,7 +757,7 @@ fun GameHubScreen(
     }
 
     BackHandler(
-        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || helpOpen || aboutOpen || languageOpen || themeOpen || settingsOpen || selected != null ||
+        enabled = launcherUpdate.screenOpen || changelog.open || accountIdentity.open || helpOpen || aboutOpen || languageOpen || themeOpen || accessKeyOpen || settingsOpen || selected != null ||
             browsing || pendingDownload != null || libraryManaging
     ) {
         when {
@@ -750,6 +770,7 @@ fun GameHubScreen(
             aboutOpen -> aboutOpen = false
             languageOpen -> languageOpen = false
             themeOpen -> themeOpen = false
+            accessKeyOpen -> accessKeyOpen = false
             settingsOpen -> settingsOpen = false
             pendingDownload != null -> onCloseDownload()
             browsing -> onCloseBrowser()
@@ -934,6 +955,14 @@ fun GameHubScreen(
                                 onOpenHelp = { helpOpen = true }
                             )
                         }
+                        LauncherPage.AccessKey -> {
+                            AccessKeyScreen(
+                                state = accessKeyStatus,
+                                onBack = { accessKeyOpen = false },
+                                onRedeem = onRedeemAccessKey,
+                                onClearResult = onClearAccessKeyResult
+                            )
+                        }
                         LauncherPage.Language -> {
                             LanguageScreen(
                                 selectedLanguage = selectedLanguage,
@@ -1016,15 +1045,20 @@ fun GameHubScreen(
                         }
                     }
                 }
-                if (!launcherUpdate.screenOpen && !changelog.open && !accountIdentity.open && !settingsOpen) {
-                    SettingsIconButton(
-                        updateAvailable = launcherUpdate.available,
-                        onClick = { settingsOpen = true },
+                if (!launcherUpdate.screenOpen && !changelog.open && !accountIdentity.open && !settingsOpen && !accessKeyOpen) {
+                    Row(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .windowInsetsPadding(WindowInsets.safeDrawing)
-                            .padding(top = 12.dp, end = 18.dp)
-                    )
+                            .padding(top = 12.dp, end = 18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AccessKeyIconButton(onClick = { accessKeyOpen = true })
+                        SettingsIconButton(
+                            updateAvailable = launcherUpdate.available,
+                            onClick = { settingsOpen = true }
+                        )
+                    }
                 }
             }
         }
@@ -1551,6 +1585,218 @@ private fun AccountIdentityIconButton(
                 radius = size.minDimension * 0.12f,
                 center = androidx.compose.ui.geometry.Offset(size.width * 0.78f, size.height * 0.72f)
             )
+        }
+    }
+}
+
+@Composable
+private fun AccessKeyIconButton(onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .scale(if (pressed) 0.92f else 1f)
+            .clip(CircleShape)
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFFEDC96F).copy(alpha = 0.24f), Color(0xFF8C63E8).copy(alpha = 0.18f))
+                )
+            )
+            .border(1.dp, Color(0xFFEDC96F).copy(alpha = 0.34f), CircleShape)
+            .semantics { contentDescription = LauncherLocalization.translate("Access key") }
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(25.dp)) {
+            val gold = Color(0xFFEDC96F)
+            val stroke = 2.3.dp.toPx()
+            drawCircle(gold, radius = size.minDimension * 0.22f,
+                center = androidx.compose.ui.geometry.Offset(size.width * 0.33f, size.height * 0.43f),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+            drawLine(gold,
+                androidx.compose.ui.geometry.Offset(size.width * 0.50f, size.height * 0.57f),
+                androidx.compose.ui.geometry.Offset(size.width * 0.86f, size.height * 0.84f),
+                strokeWidth = stroke, cap = StrokeCap.Round)
+            drawLine(gold,
+                androidx.compose.ui.geometry.Offset(size.width * 0.70f, size.height * 0.70f),
+                androidx.compose.ui.geometry.Offset(size.width * 0.62f, size.height * 0.82f),
+                strokeWidth = stroke, cap = StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
+private fun AccessKeyScreen(
+    state: AccessKeyUiState,
+    onBack: () -> Unit,
+    onRedeem: (String) -> Unit,
+    onClearResult: () -> Unit
+) {
+    val context = LocalContext.current
+    var key by rememberSaveable { mutableStateOf("") }
+    val gold = Color(0xFFEDC96F)
+    val violet = Color(0xFF9B78F2)
+    val success = state.launcherExpiresAt != null && state.entitlementExpiresAt != null
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                "‹  Back",
+                color = Accent,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onBack)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)
+            )
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(32.dp)).background(
+                    Brush.linearGradient(listOf(gold.copy(alpha = 0.24f), violet.copy(alpha = 0.17f), SurfaceRaised))
+                ).border(1.dp, gold.copy(alpha = 0.24f), RoundedCornerShape(32.dp)).padding(24.dp)
+            ) {
+                Box(Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(gold.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center) {
+                    Text("K", color = gold, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.height(20.dp))
+                Text("Access vault", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Enter the key from your Ko-fi order. Any time you buy is added to the access you already have.",
+                    color = Muted, style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(SurfaceDark)
+                    .border(1.dp, Hairline, RoundedCornerShape(26.dp)).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(13.dp)
+            ) {
+                Text("DIGITAL KEY", color = gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { value ->
+                        key = value.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(42)
+                        onClearResult()
+                    },
+                    enabled = !state.activating,
+                    singleLine = true,
+                    placeholder = { Text("JM-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Accent, unfocusedTextColor = Accent,
+                        disabledTextColor = Accent.copy(alpha = 0.65f),
+                        focusedBorderColor = Accent, focusedLabelColor = Accent, cursorColor = Accent,
+                        unfocusedBorderColor = Hairline,
+                        focusedPlaceholderColor = Muted, unfocusedPlaceholderColor = Muted
+                    )
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.let { value ->
+                                key = value.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(42)
+                            }
+                            onClearResult()
+                        },
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, gold.copy(alpha = 0.4f))
+                    ) { Text("Paste", color = gold) }
+                    OutlinedButton(
+                        onClick = { key = ""; onClearResult() },
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, Hairline)
+                    ) { Text("Clear", color = Muted) }
+                }
+                state.error?.let { error ->
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                            .background(Danger.copy(alpha = 0.10f))
+                            .border(1.dp, Danger.copy(alpha = 0.32f), RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            accessKeyErrorTitle(state.errorCode),
+                            color = Danger,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(error, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Button(
+                    onClick = { onRedeem(key) },
+                    enabled = key.isNotBlank() && !state.activating,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 15.dp),
+                    shape = RoundedCornerShape(17.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = gold, contentColor = Color(0xFF171007))
+                ) {
+                    if (state.activating) CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color(0xFF171007))
+                    else Text("Activate package  →", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        if (success) item {
+            val launcherDate = if (state.launcherExpiresAt == PERMANENT_ACCESS_EXPIRY_SECONDS) {
+                "Permanent"
+            } else {
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                    .format(Date(state.launcherExpiresAt!! * 1_000L))
+            }
+            val moduleDate = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(state.entitlementExpiresAt!! * 1_000L))
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(
+                    Brush.linearGradient(listOf(gold.copy(alpha = 0.18f), violet.copy(alpha = 0.16f), SurfaceDark))
+                ).border(1.dp, gold.copy(alpha = 0.38f), RoundedCornerShape(26.dp)).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape).background(gold),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✓", color = Color(0xFF171007), fontSize = 24.sp, fontWeight = FontWeight.Black)
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            if (state.alreadyRedeemed) "This key is already active" else "Key redeemed successfully",
+                            color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            if (state.alreadyRedeemed) "No time was added again." else "+${state.addedDays} days added",
+                            color = gold, fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Text("INCLUDED IN THIS KEY", color = violet, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Launcher access", color = Muted)
+                    Text("${state.addedDays} days", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Free Fire access", color = Muted)
+                    Text("${state.addedDays} days", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+                Text("YOUR ACCESS NOW", color = violet, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
+                Text("Launcher  ·  $launcherDate", color = Muted)
+                Text("Free Fire  ·  $moduleDate", color = Muted)
+                Text(if (state.alreadyRedeemed) {
+                    "This key was already added, so no extra time was added."
+                } else {
+                    "You're all set. Your Launcher and Free Fire access have been updated."
+                },
+                    color = violet, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -6239,7 +6485,8 @@ private fun ModuleDownloadScreen(
                     } else {
                         listing.catalog.config.effectiveNonRootMethod
                     },
-                    BuildConfig.IS_ROOT_MODE
+                    BuildConfig.IS_ROOT_MODE,
+                    listing.catalog.config.rootMethod
                 )
                 InformationGroupLabel(methodPresentation.setupLabel)
                 Spacer(Modifier.height(8.dp))
@@ -6249,7 +6496,7 @@ private fun ModuleDownloadScreen(
                     } else {
                         methodPresentation.fieldLabel
                     },
-                    methodPresentation.method.displayName
+                    methodPresentation.displayName
                 )
                 if (offersMethodChoice) {
                     DownloadInfoRow(
@@ -7381,6 +7628,7 @@ private fun LauncherMethodBadge(
     modifier: Modifier = Modifier
 ) {
     val color = when (presentation.method) {
+        NonRootMethod.NONE -> Danger
         NonRootMethod.INJECTION -> Accent
         NonRootMethod.IDENTITY_SHELL -> AccentBlue
         NonRootMethod.DIRECT_PATCH -> LimitedAmber
@@ -7517,8 +7765,9 @@ private fun LibraryScreen(
                     game.packageName.lowercase(Locale.US).contains(needle) ||
                     launcherMethodPresentation(
                         game.module.effectiveNonRootMethod,
-                        BuildConfig.IS_ROOT_MODE
-                    ).method.displayName.lowercase(Locale.US).contains(needle) ||
+                        BuildConfig.IS_ROOT_MODE,
+                        game.module.rootMethod
+                    ).displayName.lowercase(Locale.US).contains(needle) ||
                     libraryStatusLabel(game).lowercase(Locale.US).contains(needle)
             }
         }
@@ -8514,7 +8763,8 @@ private fun ModuleScreen(
         val canClearGameData = if (BuildConfig.IS_ROOT_MODE) {
             game.game != null
         } else {
-            game.module.effectiveNonRootMethod == NonRootMethod.INJECTION
+            game.module.effectiveNonRootMethod == NonRootMethod.INJECTION ||
+                game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL
         }
         if (canClearGameData) {
             item {
@@ -8572,7 +8822,8 @@ private fun ModuleScreen(
                 Text(
                     when (launcherMethodPresentation(
                         game.module.effectiveNonRootMethod,
-                        BuildConfig.IS_ROOT_MODE
+                        BuildConfig.IS_ROOT_MODE,
+                        game.module.rootMethod
                     ).method) {
                         NonRootMethod.DIRECT_PATCH ->
                             "This removes the add-on and its retryable patch files from the launcher. The currently installed patched game and its data stay on Android; it is not uninstalled or restored to the Google Play version."
@@ -8583,6 +8834,8 @@ private fun ModuleScreen(
                         } else {
                             "This removes only its add-on from the Library. The original Android game and its data will not be changed."
                         }
+                        NonRootMethod.NONE ->
+                            "This root-only add-on is hidden in the Non-root Launcher. Removing it does not change the installed game."
                     }
                 )
             },
@@ -8617,6 +8870,8 @@ private fun ModuleScreen(
                 Text(
                     if (BuildConfig.IS_ROOT_MODE) {
                         "This permanently clears the installed game's local identity, sign-in state, settings, saves, cache, downloads, and OBB data. The installed game and its add-on stay in your Library. The next Play starts with fresh game data."
+                    } else if (game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL) {
+                        "This asks the installed identity shell to permanently clear its local game identity, sign-in state, settings, saves, cache, downloads, and managed BlackBox data. The shell and add-on stay installed. The next Play creates a fresh managed installation."
                     } else {
                         "This fully removes the managed BlackBox installation, including its virtual identity, sign-in state, settings, saves, cache, downloads, and OBB data. The add-on stays in your Library and the original Android game is untouched. The next Play starts with a fresh managed installation."
                     }
@@ -8651,7 +8906,8 @@ private fun ModuleCompatibilityCard(
     val installedGame = game.game
     val methodPresentation = launcherMethodPresentation(
         game.module.effectiveNonRootMethod,
-        BuildConfig.IS_ROOT_MODE
+        BuildConfig.IS_ROOT_MODE,
+        game.module.rootMethod
     )
     val ready = installedGame?.moduleSupported == true && game.installedComplete &&
         game.launchAction == LibraryLaunchAction.PLAY
@@ -8759,7 +9015,7 @@ private fun ModuleCompatibilityCard(
             } else {
                 methodPresentation.fieldLabel
             },
-            methodPresentation.method.displayName
+            methodPresentation.displayName
         )
         if (game.module.offersNonRootMethodChoice && !BuildConfig.IS_ROOT_MODE) {
             Spacer(Modifier.height(10.dp))
@@ -8848,6 +9104,8 @@ private fun CompatibilityMethodSelector(
                                     "Builds a signed replacement with the add-on embedded for devices that reject the shell route."
                                 NonRootMethod.INJECTION ->
                                     "Runs the original game inside the managed non-root environment."
+                                NonRootMethod.NONE ->
+                                    "Available only in the Root Launcher."
                             },
                             color = Muted,
                             style = MaterialTheme.typography.bodySmall

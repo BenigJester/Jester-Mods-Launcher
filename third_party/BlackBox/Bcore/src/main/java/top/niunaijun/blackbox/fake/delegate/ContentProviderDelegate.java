@@ -1,5 +1,6 @@
 package top.niunaijun.blackbox.fake.delegate;
 
+import android.content.Context;
 import android.net.Uri;
 import android.os.Build;
 import android.os.IInterface;
@@ -98,9 +99,13 @@ public class ContentProviderDelegate {
     }
 
     public static void init() {
+        init(BlackBoxCore.getContext());
+    }
+
+    public static void init(Context context) {
         clearSettingProvider();
 
-        BlackBoxCore.getContext().getContentResolver().call(Uri.parse("content://settings"), "", null, null);
+        context.getContentResolver().call(Uri.parse("content://settings"), "", null, null);
         Object activityThread = BlackBoxCore.mainThread();
         ArrayMap<Object, Object> map = (ArrayMap<Object, Object>) BRActivityThread.get(activityThread).mProviderMap();
 

@@ -19,7 +19,8 @@ public class CopyExecutor implements Executor {
     @Override
     public int exec(BPackageSettings ps, InstallOption option, int userId) {
         try {
-            if (!option.isFlag(InstallOption.FLAG_SYSTEM)) {
+            if (!option.isFlag(InstallOption.FLAG_SYSTEM)
+                    || option.isFlag(InstallOption.FLAG_PRIVATE_NATIVE_LIBRARIES)) {
                 NativeUtils.copyNativeLib(new File(ps.pkg.baseCodePath), BEnvironment.getAppLibDir(ps.pkg.packageName));
                 if (ps.pkg.applicationInfo != null && ps.pkg.applicationInfo.splitSourceDirs != null) {
                     for (String split : ps.pkg.applicationInfo.splitSourceDirs) {

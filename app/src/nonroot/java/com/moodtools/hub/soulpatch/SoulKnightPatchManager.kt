@@ -17,6 +17,8 @@ import com.moodtools.hub.PackageReplacementInstallReceiver
 import com.moodtools.hub.PackageReplacementRequest
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
+import com.moodtools.hub.modules.PluginLoader
+import com.moodtools.hub.modules.RootMethod
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -67,7 +69,8 @@ internal class DirectPackagePatchManager(
                     launchGuardSchema = LAUNCH_GUARD_SCHEMA,
                     launchGuardPublicKey = launchGuardPublicKey(signingMaterial()),
                     dexSha256 = sha256(File(directory, game.module.dexFile)),
-                    nativeSha256 = sha256(File(directory, game.module.nativeFile))
+                    nativeSha256 = sha256(File(directory, game.module.nativeFile)),
+                    gameNativeSha256 = expectedGameNativeSha256(game)
                 )
             )
         }.getOrDefault(true)
@@ -84,8 +87,7 @@ internal class DirectPackagePatchManager(
     fun isRequestInstalled(request: PackageReplacementRequest): Boolean = runCatching {
         if (request.packageName != targetPackage) return@runCatching false
         val installed = installedPackageInfo()
-        if (installed.longVersionCodeCompat() != request.versionCode ||
-            installedFactory() != PATCH_FACTORY) {
+        if (installed.longVersionCodeCompat() != request.versionCode) {
             return@runCatching false
         }
         val expectedBase = request.apks.singleOrNull { it.name == "base.apk" }
@@ -96,6 +98,21 @@ internal class DirectPackagePatchManager(
         } ?: return@runCatching false
         val actualMarker = installedPatchMarker() ?: return@runCatching false
         val expectedRevision = markerRevision(expectedMarker)
+        when (expectedMarker.optString("patchKind")) {
+            EXTERNAL_CONTROLLER_PATCH -> {
+                val expectedGameNative = expectedRevision.gameNativeSha256
+                if (expectedGameNative.isBlank()) return@runCatching false
+                val nativeEntry = gameNativeEntry("arm64-v8a")
+                val installedHashes = installedSources(installed).mapNotNull { source ->
+                    ZipFile(source.file).use { archive ->
+                        archive.getEntry(nativeEntry)?.let { sha256(archive.getInputStream(it)) }
+                    }
+                }
+                if (installedHashes.singleOrNull() != expectedGameNative) return@runCatching false
+            }
+            LOADER_PATCH -> if (installedFactory() != PATCH_FACTORY) return@runCatching false
+            else -> return@runCatching false
+        }
         expectedRevision.markerSchema == PATCH_MARKER_SCHEMA &&
             expectedRevision.moduleVersion.isNotBlank() &&
             expectedRevision.launchGuardPublicKey.isNotBlank() &&
@@ -116,7 +133,8 @@ internal class DirectPackagePatchManager(
         val moduleNative = File(moduleDirectory, game.module.nativeFile)
         require(moduleDex.isFile && moduleDex.length() > 0L) { "Direct patch loader DEX is missing" }
         require(moduleNative.isFile && moduleNative.length() > 0L) { "Direct patch native payload is missing" }
-        require(dexContainsLaunchGuard(moduleDex)) {
+        val externalControllerOnly = game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER
+        require(externalControllerOnly || dexContainsLaunchGuard(moduleDex)) {
             "This add-on must be updated before it can use guarded direct launch"
         }
 
@@ -130,6 +148,12 @@ internal class DirectPackagePatchManager(
         require(sources.all { it.file.isFile && it.file.canRead() && it.file.length() > 0L }) {
             "Android did not expose the installed game APK set"
         }
+        val expectedGameNativeSha256 = if (externalControllerOnly) {
+            expectedGameNativeSha256(game).also { require(it.isNotBlank()) }
+        } else ""
+        val gameNativeSource = if (externalControllerOnly) {
+            findAndVerifyGameNativeSource(sources, game.abi, expectedGameNativeSha256)
+        } else null
 
         val moduleFingerprint = "${verifiedModule.build}-${sha256(moduleDex).take(16)}-${sha256(moduleNative).take(16)}"
         val outputDirectory = File(patchRoot, "${game.versionCode}-$PATCH_MARKER_SCHEMA-$moduleFingerprint")
@@ -142,7 +166,10 @@ internal class DirectPackagePatchManager(
         val requiresUninstall = !installedClusterSignedBy(sources, signingMaterial.certificate)
         val sourceAlreadyPatched = installedFactory() == PATCH_FACTORY || installedPatchMarker() != null
         val inheritExistingInstallation = sourceAlreadyPatched && !requiresUninstall
-        val sourcesToWrite = if (inheritExistingInstallation) sources.take(1) else sources
+        val sourcesToWrite = if (inheritExistingInstallation) {
+            if (gameNativeSource == null || gameNativeSource.name == "base.apk") sources.take(1)
+            else sources.filter { it.name == "base.apk" || it.name == gameNativeSource.name }
+        } else sources
         val expectedFiles = sourcesToWrite.map { File(finalDirectory, it.name) }
         if (expectedFiles.all(File::isFile) && runCatching {
                 validateCluster(expectedFiles, game.versionCode, signingMaterial.certificate, true)
@@ -171,9 +198,16 @@ internal class DirectPackagePatchManager(
         check(finalDirectory.isDirectory) { "Could not create direct patch storage" }
         val unsignedBase = File(outputDirectory, "base-unsigned.apk")
         val signedBase = File(finalDirectory, "base.apk")
+        val embeddedGameLibrary = if (externalControllerOnly) {
+            prepareEmbeddedGameLibrary(game, moduleDirectory, outputDirectory, expectedGameNativeSha256)
+        } else null
 
         try {
-            onProgress?.invoke("Patching ${game.module.title}", "Embedding the verified loader into the base APK.")
+            onProgress?.invoke(
+                "Patching ${game.module.title}",
+                if (externalControllerOnly) "Replacing the verified game library in the APK set."
+                else "Embedding the verified loader into the base APK."
+            )
             rewriteBase(
                 sources.first().file,
                 unsignedBase,
@@ -183,7 +217,10 @@ internal class DirectPackagePatchManager(
                 verifiedModule.build,
                 verifiedModule.version,
                 sourceAlreadyPatched,
-                "lib/${game.abi}/libYourSaviour.so"
+                "lib/${game.abi}/libYourSaviour.so",
+                externalControllerOnly,
+                expectedGameNativeSha256,
+                embeddedGameLibrary?.takeIf { gameNativeSource?.name == "base.apk" }
             )
             signApk(unsignedBase, signedBase, signingMaterial)
             check(unsignedBase.delete()) { "Could not clear the temporary base APK" }
@@ -193,9 +230,23 @@ internal class DirectPackagePatchManager(
                     "Signing ${game.module.title}",
                     "Preparing APK split ${index + 1} of ${sources.size - 1}."
                 )
-                signApk(source.file, File(finalDirectory, source.name), signingMaterial)
+                val signedSplit = File(finalDirectory, source.name)
+                if (embeddedGameLibrary != null && source.name == gameNativeSource?.name) {
+                    val unsignedSplit = File(outputDirectory, "${source.name}.unsigned")
+                    rewriteNativeLibrarySplit(
+                        source.file,
+                        unsignedSplit,
+                        "lib/${game.abi}/libil2cpp.so",
+                        embeddedGameLibrary
+                    )
+                    signApk(unsignedSplit, signedSplit, signingMaterial)
+                    check(unsignedSplit.delete()) { "Could not clear temporary native split" }
+                } else {
+                    signApk(source.file, signedSplit, signingMaterial)
+                }
             }
             validateCluster(expectedFiles, game.versionCode, signingMaterial.certificate, true)
+            embeddedGameLibrary?.let { check(it.delete()) { "Could not clear the extracted game library" } }
             onProgress?.invoke(
                 "Patch ready",
                 if (requiresUninstall) {
@@ -303,7 +354,10 @@ internal class DirectPackagePatchManager(
         moduleBuild: Long,
         moduleVersion: String,
         alreadyPatched: Boolean,
-        nativeEntry: String
+        nativeEntry: String,
+        externalControllerOnly: Boolean,
+        gameNativeSha256: String,
+        embeddedGameLibrary: File?
     ) {
         require(NATIVE_ENTRY_PATTERN.matches(nativeEntry)) { "Unsupported direct patch ABI path" }
         ZipFile(source).use { archive ->
@@ -327,34 +381,40 @@ internal class DirectPackagePatchManager(
             val manifestEntry = archive.getEntry(MANIFEST_ENTRY)
                 ?: error("The base APK has no AndroidManifest.xml")
             val manifest = archive.getInputStream(manifestEntry).use { it.readBytes() }
-            val patchedManifest = if (alreadyPatched) manifest else BinaryXmlStringPool.replaceExact(
-                manifest,
-                ORIGINAL_FACTORY,
-                PATCH_FACTORY
-            )
+            val patchedManifest = if (externalControllerOnly || alreadyPatched) manifest
+                else BinaryXmlStringPool.replaceExact(manifest, ORIGINAL_FACTORY, PATCH_FACTORY)
 
             val counting = CountingOutputStream(FileOutputStream(output))
             ZipOutputStream(counting).use { destination ->
                 destination.setLevel(6)
                 entries.forEach { entry ->
-                    if (entry.isDirectory || entry.name == MANIFEST_ENTRY || entry.name == embeddedDex ||
-                        entry.name == previousNativeEntry || entry.name == nativeEntry || entry.name == MARKER_ENTRY ||
-                        isJarSignature(entry.name)) return@forEach
-                    putCopiedEntry(archive, entry, destination, counting)
+                    if (entry.isDirectory || entry.name == MANIFEST_ENTRY || entry.name == MARKER_ENTRY ||
+                        isJarSignature(entry.name) || (!externalControllerOnly &&
+                            (entry.name == embeddedDex || entry.name == previousNativeEntry ||
+                                entry.name == nativeEntry))) return@forEach
+                    if (embeddedGameLibrary != null && entry.name == gameNativeEntry("arm64-v8a")) {
+                        putStoredFile(destination, entry.name, embeddedGameLibrary, counting)
+                    } else {
+                        putCopiedEntry(archive, entry, destination, counting)
+                    }
                 }
                 putBytes(destination, MANIFEST_ENTRY, patchedManifest, ZipEntry.STORED, counting)
-                putFile(destination, embeddedDex, moduleDex, ZipEntry.DEFLATED, counting)
-                putFile(destination, nativeEntry, moduleNative, ZipEntry.DEFLATED, counting)
+                if (!externalControllerOnly) {
+                    putFile(destination, embeddedDex, moduleDex, ZipEntry.DEFLATED, counting)
+                    putFile(destination, nativeEntry, moduleNative, ZipEntry.DEFLATED, counting)
+                }
                 val marker = JSONObject()
                     .put("schema", PATCH_MARKER_SCHEMA)
                     .put("package", targetPackage)
                     .put("versionCode", versionCode)
                     .put("moduleBuild", moduleBuild)
                     .put("moduleVersion", moduleVersion)
-                    .put("dex", embeddedDex)
-                    .put("nativeEntry", nativeEntry)
+                    .put("patchKind", if (externalControllerOnly) EXTERNAL_CONTROLLER_PATCH else LOADER_PATCH)
+                    .put("dex", if (externalControllerOnly) "" else embeddedDex)
+                    .put("nativeEntry", if (externalControllerOnly) "" else nativeEntry)
                     .put("dexSha256", sha256(moduleDex))
                     .put("nativeSha256", sha256(moduleNative))
+                    .put("gameNativeSha256", gameNativeSha256)
                     .put("launchGuardSchema", LAUNCH_GUARD_SCHEMA)
                     .put("launchGuardPublicKey", launchGuardPublicKey(signingMaterial()))
                     .toString()
@@ -362,6 +422,56 @@ internal class DirectPackagePatchManager(
             }
         }
         require(output.isFile && output.length() > 0L) { "Could not create the patched base APK" }
+    }
+
+    private fun rewriteNativeLibrarySplit(
+        source: File,
+        output: File,
+        nativeEntry: String,
+        replacement: File
+    ) {
+        ZipFile(source).use { archive ->
+            requireNotNull(archive.getEntry(nativeEntry)) { "Native split is missing $nativeEntry" }
+            val counting = CountingOutputStream(FileOutputStream(output))
+            ZipOutputStream(counting).use { destination ->
+                destination.setLevel(6)
+                archive.entries().asSequence().forEach { entry ->
+                    if (entry.isDirectory || entry.name == nativeEntry || isJarSignature(entry.name)) return@forEach
+                    putCopiedEntry(archive, entry, destination, counting)
+                }
+                putStoredFile(destination, nativeEntry, replacement, counting)
+            }
+        }
+        require(output.isFile && output.length() > 0L) { "Could not rewrite the native split" }
+    }
+
+    private fun putStoredFile(
+        destination: ZipOutputStream,
+        name: String,
+        file: File,
+        counting: CountingOutputStream
+    ) {
+        val crc = java.util.zip.CRC32().also { checksum ->
+            file.inputStream().buffered().use { input ->
+                val buffer = ByteArray(COPY_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    checksum.update(buffer, 0, count)
+                }
+            }
+        }.value
+        val entry = ZipEntry(name).apply {
+            time = PATCH_TIMESTAMP
+            method = ZipEntry.STORED
+            size = file.length()
+            compressedSize = size
+            this.crc = crc
+            extra = alignmentExtra(counting.count, name, alignmentFor(name))
+        }
+        destination.putNextEntry(entry)
+        file.inputStream().buffered().use { it.copyTo(destination, COPY_BUFFER_SIZE) }
+        destination.closeEntry()
     }
 
     private fun putCopiedEntry(
@@ -470,21 +580,47 @@ internal class DirectPackagePatchManager(
         // Keep PackageManager here only for manifest identity; installation still performs the
         // platform's own signature validation before accepting the APK cluster.
         if (requirePayload) {
-            ZipFile(base).use { archive ->
-                require(archive.entries().asSequence().any { NATIVE_ENTRY_PATTERN.matches(it.name) })
+            val marker = ZipFile(base).use { archive ->
                 val markerEntry = requireNotNull(archive.getEntry(MARKER_ENTRY))
                 val marker = archive.getInputStream(markerEntry).use {
                     JSONObject(String(it.readBytes(), Charsets.UTF_8))
                 }
                 require(marker.optInt("schema") == PATCH_MARKER_SCHEMA)
+                require(marker.optString("package") == targetPackage)
+                require(marker.optLong("versionCode", -1L) == versionCode)
                 require(marker.optLong("moduleBuild", -1L) >= 0L)
                 require(marker.optString("moduleVersion").isNotBlank())
                 require(marker.optInt("launchGuardSchema") == LAUNCH_GUARD_SCHEMA)
                 require(marker.optString("launchGuardPublicKey") ==
                     Base64.encodeToString(certificate.publicKey.encoded, Base64.NO_WRAP))
-                require(archive.entries().asSequence().any { DEX_NAME.matches(it.name) })
+                marker
             }
-            require(archiveFactory(base) == PATCH_FACTORY)
+            when (marker.optString("patchKind")) {
+                EXTERNAL_CONTROLLER_PATCH -> {
+                    require(targetPackage == FREE_FIRE_PACKAGE)
+                    val expectedGameNative = marker.optString("gameNativeSha256")
+                    require(expectedGameNative.isNotBlank())
+                    val nativeEntry = gameNativeEntry("arm64-v8a")
+                    val actualHashes = apks.mapNotNull { apk ->
+                        ZipFile(apk).use { archive ->
+                            archive.getEntry(nativeEntry)?.let { entry ->
+                                sha256(archive.getInputStream(entry))
+                            }
+                        }
+                    }
+                    require(actualHashes.singleOrNull() == expectedGameNative) {
+                        "Patched APK set does not contain the verified $nativeEntry"
+                    }
+                }
+                LOADER_PATCH -> {
+                    ZipFile(base).use { archive ->
+                        require(archive.entries().asSequence().any { NATIVE_ENTRY_PATTERN.matches(it.name) })
+                        require(archive.entries().asSequence().any { DEX_NAME.matches(it.name) })
+                    }
+                    require(archiveFactory(base) == PATCH_FACTORY)
+                }
+                else -> error("Unsupported direct patch payload")
+            }
         }
     }
 
@@ -527,8 +663,56 @@ internal class DirectPackagePatchManager(
         launchGuardSchema = marker.optInt("launchGuardSchema"),
         launchGuardPublicKey = marker.optString("launchGuardPublicKey"),
         dexSha256 = marker.optString("dexSha256"),
-        nativeSha256 = marker.optString("nativeSha256")
+        nativeSha256 = marker.optString("nativeSha256"),
+        gameNativeSha256 = marker.optString("gameNativeSha256")
     )
+
+    private fun expectedGameNativeSha256(game: InstalledGame): String =
+        if (game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
+            PluginLoader(context).embeddedLibrarySha256(game.module)
+        } else ""
+
+    private fun findAndVerifyGameNativeSource(
+        sources: List<SourceApk>,
+        abi: String,
+        expectedPatchedSha256: String
+    ): SourceApk {
+        require(targetPackage == FREE_FIRE_PACKAGE) {
+            "Library-only external-controller patching is not configured for $targetPackage"
+        }
+        val entryName = gameNativeEntry(abi)
+        val matches = sources.filter { source ->
+            ZipFile(source.file).use { it.getEntry(entryName) != null }
+        }
+        val source = matches.singleOrNull()
+            ?: error("Installed APK set must contain exactly one $entryName")
+        val actualSha256 = ZipFile(source.file).use { archive ->
+            sha256(archive.getInputStream(requireNotNull(archive.getEntry(entryName))))
+        }
+        require(actualSha256 == FREE_FIRE_ORIGINAL_IL2CPP_SHA256 ||
+            actualSha256 == expectedPatchedSha256) {
+            "Installed Free Fire libil2cpp.so is an unknown build: $actualSha256"
+        }
+        return source
+    }
+
+    private fun prepareEmbeddedGameLibrary(
+        game: InstalledGame,
+        moduleDirectory: File,
+        outputDirectory: File,
+        expectedSha256: String
+    ): File {
+        val output = File(outputDirectory, "embedded-libil2cpp.so")
+        val loader = PluginLoader(context)
+        check(loader.loadNativeForExtraction(game.module, File(moduleDirectory, game.module.nativeFile)) &&
+            loader.extractEmbeddedLibrary(game.module, output)) {
+            "Embedded game library extraction failed"
+        }
+        check(sha256(output) == expectedSha256) { "Embedded game library hash mismatch" }
+        return output
+    }
+
+    private fun gameNativeEntry(abi: String) = "lib/$abi/libil2cpp.so"
 
     @Suppress("DEPRECATION")
     private fun installedPackageInfo(): PackageInfo =
@@ -639,6 +823,10 @@ internal class DirectPackagePatchManager(
     }
 
     private fun sha256(file: File): String = file.inputStream().use { input ->
+        sha256(input)
+    }
+
+    private fun sha256(input: java.io.InputStream): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(COPY_BUFFER_SIZE)
         while (true) {
@@ -646,7 +834,7 @@ internal class DirectPackagePatchManager(
             if (count < 0) break
             digest.update(buffer, 0, count)
         }
-        digest.digest().toHex()
+        return digest.digest().toHex()
     }
 
     private fun sha256(bytes: ByteArray): String =
@@ -722,6 +910,11 @@ internal class DirectPackagePatchManager(
         private const val LAUNCH_NONCE_BYTES = 16
         private const val LAUNCH_MESSAGE_PREFIX = "jester-direct-patch-launch-v1"
         private const val LAUNCH_GUARD_DEX_DESCRIPTOR = "Lcom/android/support/DirectLaunchGuard;"
+        private const val EXTERNAL_CONTROLLER_PATCH = "external_controller_library"
+        private const val LOADER_PATCH = "loader"
+        private const val FREE_FIRE_PACKAGE = "com.dts.freefireth"
+        private const val FREE_FIRE_ORIGINAL_IL2CPP_SHA256 =
+            "bf70daa86a1c0224b6e0191918a7912829615858f31eb2c4fd644d020effbdff"
         private const val EXTRA_LAUNCH_SCHEMA = "com.moodtools.directpatch.guard.SCHEMA"
         private const val EXTRA_LAUNCH_ISSUED_AT = "com.moodtools.directpatch.guard.ISSUED_AT"
         private const val EXTRA_LAUNCH_NONCE = "com.moodtools.directpatch.guard.NONCE"

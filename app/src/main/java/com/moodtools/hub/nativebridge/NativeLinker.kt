@@ -6,11 +6,5 @@ object NativeLinker {
     }
 
     @JvmStatic
-    external fun load(nativePath: String, packageName: String): Boolean
-
-    @JvmStatic
-    external fun unload()
-
-    @JvmStatic
     external fun inspectRuntime(): Int
 }

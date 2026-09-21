@@ -13,6 +13,7 @@ data class ModuleConfig(
     val nativeFile: String,
     val iconFile: String?,
     val nonRootMethod: NonRootMethod = NonRootMethod.INJECTION,
+    val rootMethod: RootMethod = RootMethod.INJECTION,
     /** Ordered, signed setup choices. The first item is the maintainer recommendation. */
     val nonRootMethods: List<NonRootMethod> = listOf(nonRootMethod),
     /** Device-local choice; never serialized into or trusted as module metadata. */
@@ -52,6 +53,7 @@ data class ModuleConfig(
 }
 
 enum class NonRootMethod(val jsonValue: String, val displayName: String) {
+    NONE("none", "Root only"),
     INJECTION("injection", "Injection"),
     DIRECT_PATCH("direct_patch", "Patch"),
     IDENTITY_SHELL("identity_shell", "Identity shell");
@@ -90,6 +92,18 @@ enum class NonRootMethod(val jsonValue: String, val displayName: String) {
     }
 }
 
+enum class RootMethod(val jsonValue: String, val displayName: String) {
+    INJECTION("injection", "Injection"),
+    EXTERNAL_CONTROLLER("external_controller", "Injector");
+
+    companion object {
+        fun fromJson(value: String?): RootMethod = entries.firstOrNull {
+            it.jsonValue == value?.trim()?.lowercase()
+        } ?: if (value.isNullOrBlank()) INJECTION
+        else throw IllegalArgumentException("Unsupported root method: $value")
+    }
+}
+
 internal fun resolveNonRootMethodChoice(
     module: ModuleConfig,
     saved: NonRootMethod?,
@@ -98,8 +112,12 @@ internal fun resolveNonRootMethodChoice(
     ?: saved?.takeIf(module.nonRootMethods::contains)
     ?: module.nonRootMethod
 
+internal fun ModuleConfig.isVisibleInLauncher(rootMode: Boolean): Boolean =
+    rootMode || nonRootMethod != NonRootMethod.NONE
+
 data class LauncherMethodPresentation(
     val method: NonRootMethod,
+    val displayName: String,
     val badgeLabel: String,
     val setupLabel: String,
     val fieldLabel: String,
@@ -110,21 +128,46 @@ data class LauncherMethodPresentation(
 
 internal fun launcherMethodPresentation(
     configuredNonRootMethod: NonRootMethod,
-    rootMode: Boolean
+    rootMode: Boolean,
+    rootMethod: RootMethod = RootMethod.INJECTION
 ): LauncherMethodPresentation = if (rootMode) {
     LauncherMethodPresentation(
         method = NonRootMethod.INJECTION,
-        badgeLabel = "INJECTION",
+        displayName = rootMethod.displayName,
+        badgeLabel = if (rootMethod == RootMethod.EXTERNAL_CONTROLLER) "INJECTOR" else "INJECTION",
         setupLabel = "ROOT SETUP",
         fieldLabel = "Root method",
-        badgeDescription = "Root method: Injection",
-        explanationTitle = "How root injection works",
-        explanation = "Jester Mods starts the installed game and injects the verified add-on through the root runtime. " +
-            "The original game package and signing certificate stay unchanged."
+        badgeDescription = "Root method: ${rootMethod.displayName}",
+        explanationTitle = if (rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
+            "How external control works"
+        } else "How root injection works",
+        explanation = if (rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
+            "Jester Mods hosts the menu outside the game, installs the verified game library with root, and opens the game normally."
+        } else {
+            "Jester Mods starts the installed game and injects the verified add-on through the root runtime. " +
+                "The original game package and signing certificate stay unchanged."
+        }
+    )
+} else if (
+    rootMethod == RootMethod.EXTERNAL_CONTROLLER &&
+    configuredNonRootMethod != NonRootMethod.NONE
+) {
+    LauncherMethodPresentation(
+        method = NonRootMethod.INJECTION,
+        displayName = "BlackBox controller",
+        badgeLabel = "CONTROLLER",
+        setupLabel = "NON-ROOT SETUP",
+        fieldLabel = "Non-root method",
+        badgeDescription = "Non-root method: BlackBox controller",
+        explanationTitle = "How BlackBox control works",
+        explanation = "Jester Mods installs the verified game library only inside BlackBox private storage and " +
+            "hosts the menu outside the game process. The Android-installed game remains unchanged."
     )
 } else when (configuredNonRootMethod) {
+    NonRootMethod.NONE -> error("Root-only add-ons must not be presented in the non-root launcher")
     NonRootMethod.INJECTION -> LauncherMethodPresentation(
         method = NonRootMethod.INJECTION,
+        displayName = NonRootMethod.INJECTION.displayName,
         badgeLabel = "INJECTION",
         setupLabel = "NON-ROOT SETUP",
         fieldLabel = "Non-root method",
@@ -135,6 +178,7 @@ internal fun launcherMethodPresentation(
     )
     NonRootMethod.DIRECT_PATCH -> LauncherMethodPresentation(
         method = NonRootMethod.DIRECT_PATCH,
+        displayName = NonRootMethod.DIRECT_PATCH.displayName,
         badgeLabel = "PATCH",
         setupLabel = "NON-ROOT SETUP",
         fieldLabel = "Non-root method",
@@ -145,6 +189,7 @@ internal fun launcherMethodPresentation(
     )
     NonRootMethod.IDENTITY_SHELL -> LauncherMethodPresentation(
         method = NonRootMethod.IDENTITY_SHELL,
+        displayName = NonRootMethod.IDENTITY_SHELL.displayName,
         badgeLabel = "SHELL",
         setupLabel = "NON-ROOT SETUP",
         fieldLabel = "Non-root method",
@@ -167,13 +212,14 @@ internal fun launcherMethodBadgePresentations(
     val lockedMethod = installedNonRootMethod?.takeIf(module.nonRootMethods::contains)
     val presentation = launcherMethodPresentation(
         lockedMethod ?: module.effectiveNonRootMethod,
-        rootMode
+        rootMode,
+        module.rootMethod
     )
     if (rootMode || !module.offersNonRootMethodChoice || lockedMethod != null) {
         return listOf(presentation)
     }
     return module.nonRootMethods.map { method ->
-        launcherMethodPresentation(method, rootMode = false)
+        launcherMethodPresentation(method, rootMode = false, rootMethod = module.rootMethod)
     }
 }
 

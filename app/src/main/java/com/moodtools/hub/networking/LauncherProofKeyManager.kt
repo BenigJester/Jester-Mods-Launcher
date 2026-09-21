@@ -183,6 +183,25 @@ internal class LauncherProofKeyManager(context: Context) {
             "keyId=$keyId"
         ).joinToString("\n")
 
+        fun storeKeyRedemptionCanonical(
+            nonce: String,
+            installationId: String,
+            deviceId: String,
+            recoveryId: String,
+            flavor: String,
+            accessVersion: Int,
+            keyId: String
+        ): String = listOf(
+            "moodtools-store-key-redeem-v1",
+            "nonce=$nonce",
+            "installationId=$installationId",
+            "deviceId=$deviceId",
+            "recoveryId=$recoveryId",
+            "flavor=$flavor",
+            "accessVersion=$accessVersion",
+            "keyId=$keyId"
+        ).joinToString("\n")
+
         fun modulePayloadCanonical(
             nonce: String,
             method: String,

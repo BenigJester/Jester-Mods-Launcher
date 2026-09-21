@@ -23,6 +23,13 @@ data class LauncherLease(
     val expiresAt: Long,
     val grantExpiresAt: Long = expiresAt
 )
+data class LauncherStoreKeyRedemption(
+    val lease: LauncherLease,
+    val entitlementExpiresAt: Long,
+    val addedDays: Int,
+    val scope: String,
+    val alreadyRedeemed: Boolean
+)
 data class LauncherAccountIdentity(
     val grantPassIdentity: String,
     val deviceId: String,
@@ -89,7 +96,7 @@ class LauncherAccessManager(context: Context) {
             recoveryId = recoveryId,
             installationId = installationId,
             proofKeyId = proofIdentity.keyId,
-            flavor = BuildConfig.FLAVOR,
+            flavor = BuildConfig.ACCESS_FLAVOR,
             accessVersion = ACCESS_VERSION
         )
     }
@@ -116,7 +123,7 @@ class LauncherAccessManager(context: Context) {
                 expectedScope = scope,
                 expectedDeviceId = deviceId,
                 expectedRecoveryId = recoveryId,
-                expectedFlavor = BuildConfig.FLAVOR,
+                expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                 expectedProofKeyId = proofIdentity.keyId
             )
             val now = System.currentTimeMillis() / 1_000L
@@ -162,7 +169,7 @@ class LauncherAccessManager(context: Context) {
                         .put("installationId", installationId)
                         .put("deviceId", deviceId)
                         .put("recoveryId", recoveryId)
-                        .put("flavor", BuildConfig.FLAVOR)
+                        .put("flavor", BuildConfig.ACCESS_FLAVOR)
                         .put("accessVersion", ACCESS_VERSION)
                         .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
                         .put("proofKeyId", proofIdentity.keyId)
@@ -181,7 +188,7 @@ class LauncherAccessManager(context: Context) {
                         expectedScope = scope,
                         expectedDeviceId = deviceId,
                         expectedRecoveryId = recoveryId,
-                        expectedFlavor = BuildConfig.FLAVOR,
+                        expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                         expectedProofKeyId = proofIdentity.keyId
                     )
                     check(preferences.edit()
@@ -258,7 +265,7 @@ class LauncherAccessManager(context: Context) {
                     envelope = JSONObject(offlineLeaseText),
                     digitalKey = key,
                     expectedDeviceId = deviceId,
-                    expectedFlavor = BuildConfig.FLAVOR,
+                    expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                     expectedProofKeyId = proofIdentity.keyId
                 )
             }.getOrNull()
@@ -283,7 +290,7 @@ class LauncherAccessManager(context: Context) {
                                 .put("digitalKey", key)
                                 .put("installationId", installationId)
                                 .put("deviceId", deviceId)
-                                .put("flavor", BuildConfig.FLAVOR)
+                                .put("flavor", BuildConfig.ACCESS_FLAVOR)
                                 .put("accessVersion", ACCESS_VERSION)
                                 .put("managedExpiry", true)
                         )
@@ -323,7 +330,7 @@ class LauncherAccessManager(context: Context) {
                 .put("digitalKey", key)
                 .put("installationId", installationId)
                 .put("deviceId", deviceId)
-                .put("flavor", BuildConfig.FLAVOR)
+                .put("flavor", BuildConfig.ACCESS_FLAVOR)
                 .put("accessVersion", accessVersion)
         )
         if (!response.optBoolean("ok") || response.optLong("issuedAt") != issuedAt ||
@@ -343,7 +350,7 @@ class LauncherAccessManager(context: Context) {
                 .put("installationId", installationId)
                 .put("deviceId", deviceId)
                 .put("recoveryId", recoveryId)
-                .put("flavor", BuildConfig.FLAVOR)
+                .put("flavor", BuildConfig.ACCESS_FLAVOR)
                 .put("accessVersion", accessVersion)
                 .put("managedExpiry", accessVersion == ACCESS_VERSION)
                 .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
@@ -363,7 +370,7 @@ class LauncherAccessManager(context: Context) {
                     envelope = it,
                     digitalKey = digitalKey,
                     expectedDeviceId = deviceId,
-                    expectedFlavor = BuildConfig.FLAVOR,
+                    expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                     expectedProofKeyId = proofIdentity.keyId
                 )
                 require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
@@ -408,7 +415,7 @@ class LauncherAccessManager(context: Context) {
                 envelope = it,
                 digitalKey = digitalKey,
                 expectedDeviceId = deviceId,
-                expectedFlavor = BuildConfig.FLAVOR,
+                expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                 expectedProofKeyId = proofIdentity.keyId
             )
             require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
@@ -434,7 +441,7 @@ class LauncherAccessManager(context: Context) {
             .appendQueryParameter("installation", installationId)
             .appendQueryParameter("device", deviceId)
             .appendQueryParameter("challenge", challenge)
-            .appendQueryParameter("flavor", BuildConfig.FLAVOR)
+            .appendQueryParameter("flavor", BuildConfig.ACCESS_FLAVOR)
             .appendQueryParameter("accessVersion", ACCESS_VERSION.toString())
             .appendQueryParameter("proofKeyId", proofIdentity.keyId)
             .build().toString()
@@ -476,7 +483,7 @@ class LauncherAccessManager(context: Context) {
                 nonce = proofNonce,
                 installationId = installationId,
                 deviceId = deviceId,
-                flavor = BuildConfig.FLAVOR,
+                flavor = BuildConfig.ACCESS_FLAVOR,
                 accessVersion = accessVersion,
                 packageName = packageName,
                 slug = slug,
@@ -546,7 +553,7 @@ class LauncherAccessManager(context: Context) {
                 nonce = nonce,
                 installationId = installationId,
                 deviceId = deviceId,
-                flavor = BuildConfig.FLAVOR,
+                flavor = BuildConfig.ACCESS_FLAVOR,
                 accessVersion = accessVersion,
                 keyId = identity.keyId
             )
@@ -595,7 +602,7 @@ class LauncherAccessManager(context: Context) {
                 nonce = nonce,
                 installationId = installationId,
                 deviceId = deviceId,
-                flavor = BuildConfig.FLAVOR,
+                flavor = BuildConfig.ACCESS_FLAVOR,
                 accessVersion = accessVersion,
                 keyId = identity.keyId,
                 publicKey = identity.publicKey
@@ -644,7 +651,7 @@ class LauncherAccessManager(context: Context) {
                     installationId = installationId,
                     deviceId = deviceId,
                     recoveryId = recoveryId,
-                    flavor = BuildConfig.FLAVOR,
+                    flavor = BuildConfig.ACCESS_FLAVOR,
                     accessVersion = activeAccessVersion(),
                     keyId = identity.keyId
                 )
@@ -694,7 +701,7 @@ class LauncherAccessManager(context: Context) {
             nonce = nonce,
             installationId = installationId,
             deviceId = deviceId,
-            flavor = BuildConfig.FLAVOR,
+            flavor = BuildConfig.ACCESS_FLAVOR,
             accessVersion = accessVersion,
             keyId = identity.keyId
         )
@@ -705,7 +712,7 @@ class LauncherAccessManager(context: Context) {
                 nonce = nonce,
                 installationId = installationId,
                 deviceId = deviceId,
-                flavor = BuildConfig.FLAVOR,
+                flavor = BuildConfig.ACCESS_FLAVOR,
                 accessVersion = accessVersion,
                 keyId = identity.keyId,
                 chainHash = evidence.chainHash
@@ -802,8 +809,82 @@ class LauncherAccessManager(context: Context) {
         .put("digitalKey", digitalKey)
         .put("installationId", installationId)
         .put("deviceId", deviceId)
-        .put("flavor", BuildConfig.FLAVOR)
+        .put("flavor", BuildConfig.ACCESS_FLAVOR)
         .put("accessVersion", activeAccessVersion())
+
+    fun redeemStoreKey(value: String): LauncherStoreKeyRedemption {
+        val compact = value.uppercase().filter { it in 'A'..'Z' || it in '2'..'7' }
+        require(compact.startsWith("JM") && compact.length == 34) { "Enter a valid Jester Mods access key" }
+        val storeKey = "JM-" + compact.drop(2).chunked(4).joinToString("-")
+        require(storeKey.matches(STORE_KEY_PATTERN)) { "Enter a valid Jester Mods access key" }
+        val keyHash = hashedId(storeKey)
+        val proofIdentity = proofKeys.identity()
+        val proof = proofKeys.sign(
+            keyHash,
+            LauncherProofKeyManager.storeKeyRedemptionCanonical(
+                nonce = keyHash,
+                installationId = installationId,
+                deviceId = deviceId,
+                recoveryId = recoveryId,
+                flavor = BuildConfig.ACCESS_FLAVOR,
+                accessVersion = ACCESS_VERSION,
+                keyId = proofIdentity.keyId
+            )
+        )
+        val response = postJson(
+            "$BASE_URL/api/launcher/key/redeem",
+            JSONObject()
+                .put("key", storeKey)
+                .put("installationId", installationId)
+                .put("deviceId", deviceId)
+                .put("recoveryId", recoveryId)
+                .put("flavor", BuildConfig.ACCESS_FLAVOR)
+                .put("accessVersion", ACCESS_VERSION)
+                .put("proofKeyId", proofIdentity.keyId)
+                .put("publicKey", proofIdentity.publicKey)
+                .put("proof", proof.toJson())
+        )
+        requireServiceOk(response, "The access key could not be activated")
+        require(response.optBoolean("recoveryBound") &&
+            response.optString("proofKeyId") == proofIdentity.keyId) {
+            "The access key was not durably bound to this device"
+        }
+        val digitalKey = response.getString("digitalKey")
+        val issuedAt = response.getLong("issuedAt")
+        val expiresAt = response.getLong("expiresAt")
+        val grantExpiresAt = response.getLong("grantExpiresAt")
+        val entitlementExpiresAt = response.getLong("entitlementExpiresAt")
+        val addedDays = response.getInt("days")
+        val scope = response.getString("scope")
+        require(digitalKey.length in 80..4096 && validManagedAccessWindow(issuedAt, expiresAt) &&
+            grantExpiresAt >= expiresAt && entitlementExpiresAt > issuedAt &&
+            addedDays in setOf(7, 15, 30) && scope == "free-fire") {
+            "The activated access window is invalid"
+        }
+        val offlineLease = response.getJSONObject("offlineLease").also {
+            val claims = LauncherOfflineLeaseVerifier.verify(
+                envelope = it,
+                digitalKey = digitalKey,
+                expectedDeviceId = deviceId,
+                expectedFlavor = BuildConfig.ACCESS_FLAVOR,
+                expectedProofKeyId = proofIdentity.keyId
+            )
+            require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt &&
+                claims.grantExpiresAt == grantExpiresAt)
+        }.toString()
+        saveLease(digitalKey, issuedAt, expiresAt, ACCESS_VERSION, offlineLease)
+        check(preferences.edit()
+            .putString(RECOVERY_BOUND_KEY, proofIdentity.keyId)
+            .remove("$PRIVATE_LEASE_PREFIX$scope")
+            .commit()) { "The activated access state could not be saved" }
+        return LauncherStoreKeyRedemption(
+            lease = LauncherLease(issuedAt, expiresAt, grantExpiresAt),
+            entitlementExpiresAt = entitlementExpiresAt,
+            addedDays = addedDays,
+            scope = scope,
+            alreadyRedeemed = response.optBoolean("alreadyRedeemed")
+        )
+    }
 
     fun redeem(uri: Uri): LauncherLease {
         require(uri.scheme.equals("moodtools-launcher", true) && uri.host.equals("unlock", true))
@@ -822,7 +903,7 @@ class LauncherAccessManager(context: Context) {
                 installationId = installationId,
                 deviceId = deviceId,
                 recoveryId = recoveryId,
-                flavor = BuildConfig.FLAVOR,
+                flavor = BuildConfig.ACCESS_FLAVOR,
                 accessVersion = ACCESS_VERSION,
                 keyId = proofIdentity.keyId
             )
@@ -833,7 +914,7 @@ class LauncherAccessManager(context: Context) {
             .put("deviceId", deviceId)
             .put("recoveryId", recoveryId)
             .put("challenge", challenge)
-            .put("flavor", BuildConfig.FLAVOR)
+            .put("flavor", BuildConfig.ACCESS_FLAVOR)
             .put("accessVersion", ACCESS_VERSION)
             .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
             .put("proofKeyId", proofIdentity.keyId)
@@ -855,7 +936,7 @@ class LauncherAccessManager(context: Context) {
                 envelope = it,
                 digitalKey = digitalKey,
                 expectedDeviceId = deviceId,
-                expectedFlavor = BuildConfig.FLAVOR,
+                expectedFlavor = BuildConfig.ACCESS_FLAVOR,
                 expectedProofKeyId = proofIdentity.keyId
             )
             require(claims.issuedAt == issuedAt && claims.expiresAt == expiresAt)
@@ -983,6 +1064,7 @@ class LauncherAccessManager(context: Context) {
         private const val LEGACY_BROKEN_ANDROID_ID = "9774d56d682e549c"
         private val ID_PATTERN = Regex("[A-Za-z0-9_-]{43}")
         private val PRIVATE_SCOPE_PATTERN = Regex("[a-z0-9][a-z0-9._-]{2,63}")
+        private val STORE_KEY_PATTERN = Regex("JM(?:-[A-Z2-7]{4}){8}")
     }
 }
 

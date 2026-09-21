@@ -25,7 +25,7 @@
 
         <meta-data
             android:name="com.moodtools.identity_shell_version"
-            android:value="15" />
+            android:value="35" />
 
         <meta-data
             android:name="com.moodtools.identity_payload_authority"

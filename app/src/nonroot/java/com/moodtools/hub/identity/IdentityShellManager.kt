@@ -24,6 +24,8 @@ import com.moodtools.hub.PackageReplacementKind
 import com.moodtools.hub.PackageReplacementRequest
 import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
+import com.moodtools.hub.modules.PluginLoader
+import com.moodtools.hub.modules.RootMethod
 import com.moodtools.hub.soulpatch.BinaryXmlStringPool
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -133,6 +135,7 @@ internal class IdentityShellManager(
             "Android did not expose the complete installed game package"
         }
         if (!root.mkdirs() && !root.isDirectory) error("Could not create identity-shell storage")
+        val embeddedGameLibrary = prepareEmbeddedGameLibrary(game, moduleDirectory)
         val gamePayload = File(root, GAME_PAYLOAD)
         writeGamePayload(sources, gamePayload)
 
@@ -149,7 +152,7 @@ internal class IdentityShellManager(
             FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
             rewriteTemplate(
                 template, unsigned, label, branding, game.versionName, game.versionCode,
-                sources, game.abi
+                sources, game.abi, embeddedGameLibrary
             )
             check(template.delete()) { "Could not clear the temporary shell template" }
         }
@@ -157,6 +160,7 @@ internal class IdentityShellManager(
         signApk(unsigned, signed, material)
         check(unsigned.delete()) { "Could not clear the unsigned shell" }
         validateShell(signed, material.certificate, game.versionName, game.versionCode)
+        verifyEmbeddedGameLibrary(signed, game.abi, embeddedGameLibrary)
 
         onProgress?.invoke(
             "Shell ready",
@@ -184,6 +188,9 @@ internal class IdentityShellManager(
         require(root.isDirectory && File(root, METADATA_FILE).isFile) {
             "The preserved shell setup is unavailable. Reinstall the official game before creating it again."
         }
+        val moduleDirectory = File(context.filesDir, "menus/$targetPackage")
+        ModuleIntegrityVerifier().verify(moduleDirectory, game.module, game.abi)
+        val embeddedGameLibrary = prepareEmbeddedGameLibrary(game, moduleDirectory)
 
         onProgress?.invoke(
             "Repairing $label shell",
@@ -196,7 +203,7 @@ internal class IdentityShellManager(
             FileOutputStream(template).use { output -> input.copyTo(output, COPY_BUFFER_SIZE) }
             rewriteTemplate(
                 template, unsigned, label, branding, game.versionName, game.versionCode,
-                installedSources(installed), game.abi
+                installedSources(installed), game.abi, embeddedGameLibrary
             )
             check(template.delete()) { "Could not clear the temporary repair template" }
         }
@@ -204,6 +211,7 @@ internal class IdentityShellManager(
         signApk(unsigned, signed, material)
         check(unsigned.delete()) { "Could not clear the unsigned shell repair" }
         validateShell(signed, material.certificate, game.versionName, game.versionCode)
+        verifyEmbeddedGameLibrary(signed, game.abi, embeddedGameLibrary)
 
         onProgress?.invoke(
             "Shell repair ready",
@@ -269,18 +277,24 @@ internal class IdentityShellManager(
     }
 
     /** Issues a short-lived proof that this shell launch originated in Jester Mods. */
-    fun authorizeLaunch(intent: Intent): Intent {
+    fun authorizeLaunch(intent: Intent): Intent = authorize(intent, ACTION_PLAY)
+
+    /** Issues a short-lived proof that allows the installed shell to clear its own app data. */
+    fun authorizeClearData(intent: Intent): Intent = authorize(intent, ACTION_CLEAR_DATA)
+
+    private fun authorize(intent: Intent, action: String): Intent {
         val issuedAt = System.currentTimeMillis()
         val nonceBytes = ByteArray(LAUNCH_NONCE_BYTES).also(SecureRandom()::nextBytes)
         val nonce = nonceBytes.joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
         val material = signingMaterial()
         val signature = Signature.getInstance("SHA256withRSA").run {
             initSign(material.privateKey)
-            update(launchAuthorizationMessage(targetPackage, issuedAt, nonce))
+            update(launchAuthorizationMessage(targetPackage, action, issuedAt, nonce))
             sign()
         }
         return intent
             .putExtra(EXTRA_LAUNCH_SCHEMA, LAUNCH_GUARD_SCHEMA)
+            .putExtra(EXTRA_LAUNCH_ACTION, action)
             .putExtra(EXTRA_LAUNCH_ISSUED_AT, issuedAt)
             .putExtra(EXTRA_LAUNCH_NONCE, nonce)
             .putExtra(EXTRA_LAUNCH_SIGNATURE, Base64.encodeToString(signature, Base64.NO_WRAP))
@@ -313,7 +327,8 @@ internal class IdentityShellManager(
         versionName: String,
         versionCode: Long,
         nativeSources: List<SourceApk>,
-        abi: String
+        abi: String,
+        embeddedGameLibrary: EmbeddedGameLibrary?
     ) {
         val brandingEntries = resolveBrandingEntries(template)
         ZipFile(template).use { source ->
@@ -373,12 +388,27 @@ internal class IdentityShellManager(
                                 require(copiedLibraries.add(entry.name)) {
                                     "Duplicate native library in identity-shell sources: ${entry.name}"
                                 }
-                                putNativeLibrary(archive, entry, destination, counting)
+                                if (embeddedGameLibrary != null &&
+                                    entry.name == "lib/$abi/libil2cpp.so") {
+                                    putNativeFile(
+                                        embeddedGameLibrary.file,
+                                        entry.name,
+                                        destination,
+                                        counting
+                                    )
+                                } else {
+                                    putNativeLibrary(archive, entry, destination, counting)
+                                }
                             }
                     }
                 }
                 require(copiedLibraries.isNotEmpty()) {
                     "Installed game has no native libraries for $abi"
+                }
+                if (embeddedGameLibrary != null) {
+                    require("lib/$abi/libil2cpp.so" in copiedLibraries) {
+                        "Installed game has no libil2cpp.so for $abi"
+                    }
                 }
             }
         }
@@ -584,10 +614,11 @@ internal class IdentityShellManager(
 
     private fun launchAuthorizationMessage(
         packageName: String,
+        action: String,
         issuedAt: Long,
         nonce: String
     ): ByteArray =
-        "$LAUNCH_MESSAGE_PREFIX\n$packageName\n$issuedAt\n$nonce".toByteArray(Charsets.UTF_8)
+        "$LAUNCH_MESSAGE_PREFIX\n$packageName\n$action\n$issuedAt\n$nonce".toByteArray(Charsets.UTF_8)
 
     private fun putCopiedEntry(
         source: ZipFile,
@@ -651,6 +682,69 @@ internal class IdentityShellManager(
         destination.closeEntry()
     }
 
+    private fun putNativeFile(
+        file: File,
+        name: String,
+        destination: ZipOutputStream,
+        counting: CountingOutputStream
+    ) {
+        val crc = CRC32().also { checksum ->
+            file.inputStream().buffered().use { input ->
+                val buffer = ByteArray(COPY_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    checksum.update(buffer, 0, count)
+                }
+            }
+        }.value
+        val entry = ZipEntry(name).apply {
+            time = PATCH_TIMESTAMP
+            method = ZipEntry.STORED
+            size = file.length()
+            compressedSize = size
+            this.crc = crc
+            extra = alignmentExtra(counting.count, name, alignmentFor(name))
+        }
+        destination.putNextEntry(entry)
+        file.inputStream().buffered().use { it.copyTo(destination, COPY_BUFFER_SIZE) }
+        destination.closeEntry()
+    }
+
+    private fun prepareEmbeddedGameLibrary(
+        game: InstalledGame,
+        moduleDirectory: File
+    ): EmbeddedGameLibrary? {
+        if (game.module.rootMethod != RootMethod.EXTERNAL_CONTROLLER) return null
+        val loader = PluginLoader(context)
+        val expectedSha256 = loader.embeddedLibrarySha256(game.module)
+        val output = File(root, "embedded-libil2cpp.so")
+        if (output.exists()) check(output.delete()) { "Could not replace embedded game library" }
+        check(loader.loadNativeForExtraction(game.module, File(moduleDirectory, game.module.nativeFile)) &&
+            loader.extractEmbeddedLibrary(game.module, output)) {
+            "Embedded game library extraction failed"
+        }
+        check(sha256(output) == expectedSha256) { "Embedded game library hash mismatch" }
+        return EmbeddedGameLibrary(output, expectedSha256)
+    }
+
+    private fun verifyEmbeddedGameLibrary(
+        shell: File,
+        abi: String,
+        embeddedGameLibrary: EmbeddedGameLibrary?
+    ) {
+        if (embeddedGameLibrary == null) return
+        ZipFile(shell).use { archive ->
+            val entry = requireNotNull(archive.getEntry("lib/$abi/libil2cpp.so")) {
+                "Generated shell is missing patched libil2cpp.so"
+            }
+            val actual = archive.getInputStream(entry).use(::sha256)
+            require(actual == embeddedGameLibrary.sha256) {
+                "Generated shell contains the wrong libil2cpp.so"
+            }
+        }
+    }
+
     private fun alignmentFor(name: String): Int =
         if (name.endsWith(".so", ignoreCase = true)) 16 * 1024 else 4
 
@@ -676,7 +770,9 @@ internal class IdentityShellManager(
             leaf.endsWith(".DSA") || leaf.endsWith(".EC")
     }
 
-    private fun sha256(file: File): String = file.inputStream().use { input ->
+    private fun sha256(file: File): String = file.inputStream().use(::sha256)
+
+    private fun sha256(input: java.io.InputStream): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(COPY_BUFFER_SIZE)
         while (true) {
@@ -684,7 +780,7 @@ internal class IdentityShellManager(
             if (count < 0) break
             digest.update(buffer, 0, count)
         }
-        digest.digest().toHex()
+        return digest.digest().toHex()
     }
 
     private fun sha256(bytes: ByteArray): String =
@@ -694,6 +790,7 @@ internal class IdentityShellManager(
         joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
 
     private data class SourceApk(val name: String, val file: File)
+    private data class EmbeddedGameLibrary(val file: File, val sha256: String)
     private data class Branding(val legacy: ByteArray, val foreground: ByteArray, val background: ByteArray)
     private data class BrandingEntries(val legacy: String, val foreground: String, val background: String)
     private data class SigningMaterial(val privateKey: PrivateKey, val certificate: X509Certificate)
@@ -715,7 +812,7 @@ internal class IdentityShellManager(
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
         const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
         const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
-        const val CURRENT_SHELL_VERSION = 15
+        const val CURRENT_SHELL_VERSION = 35
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"
@@ -730,10 +827,13 @@ internal class IdentityShellManager(
         private const val FOREGROUND_ICON_RESOURCE = "identity_shell_icon_foreground_bitmap"
         private const val BACKGROUND_ICON_RESOURCE = "identity_shell_icon_background_bitmap"
         private const val KEY_ALIAS = "jester_moods_identity_shell_v1"
-        private const val LAUNCH_GUARD_SCHEMA = 1
+        private const val LAUNCH_GUARD_SCHEMA = 2
         private const val LAUNCH_NONCE_BYTES = 16
-        private const val LAUNCH_MESSAGE_PREFIX = "jester-identity-shell-launch-v1"
+        private const val LAUNCH_MESSAGE_PREFIX = "jester-identity-shell-launch-v2"
+        private const val ACTION_PLAY = "play"
+        private const val ACTION_CLEAR_DATA = "clear_data"
         private const val EXTRA_LAUNCH_SCHEMA = "com.moodtools.identity.guard.SCHEMA"
+        private const val EXTRA_LAUNCH_ACTION = "com.moodtools.identity.guard.ACTION"
         private const val EXTRA_LAUNCH_ISSUED_AT = "com.moodtools.identity.guard.ISSUED_AT"
         private const val EXTRA_LAUNCH_NONCE = "com.moodtools.identity.guard.NONCE"
         private const val EXTRA_LAUNCH_SIGNATURE = "com.moodtools.identity.guard.SIGNATURE"

@@ -23,12 +23,15 @@ import top.niunaijun.blackbox.core.env.BEnvironment;
 /** Verifies Jester-issued launch tickets and shares the resulting mode with guest processes. */
 final class IdentityLaunchGuard {
     private static final String TAG = "IdentityLaunchGuard";
-    private static final int SCHEMA = 1;
+    static final String ACTION_PLAY = "play";
+    static final String ACTION_CLEAR_DATA = "clear_data";
+    private static final int SCHEMA = 2;
     private static final String EXTRA_SCHEMA = "com.moodtools.identity.guard.SCHEMA";
+    private static final String EXTRA_ACTION = "com.moodtools.identity.guard.ACTION";
     private static final String EXTRA_ISSUED_AT = "com.moodtools.identity.guard.ISSUED_AT";
     private static final String EXTRA_NONCE = "com.moodtools.identity.guard.NONCE";
     private static final String EXTRA_SIGNATURE = "com.moodtools.identity.guard.SIGNATURE";
-    private static final String MESSAGE_PREFIX = "jester-identity-shell-launch-v1";
+    private static final String MESSAGE_PREFIX = "jester-identity-shell-launch-v2";
     private static final String MODE_FILE = "identity-launch-mode-v1";
     private static final String MODE_FULL = "full";
     private static final long MAX_TICKET_AGE_MILLIS = 30_000L;
@@ -36,29 +39,31 @@ final class IdentityLaunchGuard {
 
     private IdentityLaunchGuard() { }
 
-    static boolean authorize(Context context, Intent intent) {
-        if (context == null || intent == null) return false;
+    static String authorize(Context context, Intent intent) {
+        if (context == null || intent == null) return null;
         try {
-            if (intent.getIntExtra(EXTRA_SCHEMA, 0) != SCHEMA) return false;
+            if (intent.getIntExtra(EXTRA_SCHEMA, 0) != SCHEMA) return null;
+            String action = intent.getStringExtra(EXTRA_ACTION);
+            if (!ACTION_PLAY.equals(action) && !ACTION_CLEAR_DATA.equals(action)) return null;
             long issuedAt = intent.getLongExtra(EXTRA_ISSUED_AT, 0L);
             long now = System.currentTimeMillis();
             if (issuedAt <= 0L || issuedAt > now + MAX_CLOCK_SKEW_MILLIS
-                    || now - issuedAt > MAX_TICKET_AGE_MILLIS) return false;
+                    || now - issuedAt > MAX_TICKET_AGE_MILLIS) return null;
             String nonce = intent.getStringExtra(EXTRA_NONCE);
             String encodedSignature = intent.getStringExtra(EXTRA_SIGNATURE);
             if (nonce == null || !nonce.matches("[0-9a-f]{32}")
-                    || encodedSignature == null || encodedSignature.length() > 1024) return false;
+                    || encodedSignature == null || encodedSignature.length() > 1024) return null;
             PublicKey publicKey = ownSigningKey(context);
-            if (publicKey == null) return false;
+            if (publicKey == null) return null;
             java.security.Signature verifier = java.security.Signature.getInstance("SHA256withRSA");
             verifier.initVerify(publicKey);
-            verifier.update(message(context.getPackageName(), issuedAt, nonce));
+            verifier.update(message(context.getPackageName(), action, issuedAt, nonce));
             boolean authorized = verifier.verify(Base64.decode(encodedSignature, Base64.NO_WRAP));
             Log.i(TAG, authorized ? "Verified Jester launch ticket" : "Rejected launch ticket");
-            return authorized;
+            return authorized ? action : null;
         } catch (Throwable error) {
             Log.w(TAG, "Launch ticket verification failed", error);
-            return false;
+            return null;
         } finally {
             clearTicket(intent);
         }
@@ -127,13 +132,15 @@ final class IdentityLaunchGuard {
         return certificate.getPublicKey();
     }
 
-    private static byte[] message(String packageName, long issuedAt, String nonce) {
-        return (MESSAGE_PREFIX + "\n" + packageName + "\n" + issuedAt + "\n" + nonce)
+    private static byte[] message(String packageName, String action, long issuedAt, String nonce) {
+        return (MESSAGE_PREFIX + "\n" + packageName + "\n" + action + "\n"
+                + issuedAt + "\n" + nonce)
                 .getBytes(StandardCharsets.UTF_8);
     }
 
     private static void clearTicket(Intent intent) {
         intent.removeExtra(EXTRA_SCHEMA);
+        intent.removeExtra(EXTRA_ACTION);
         intent.removeExtra(EXTRA_ISSUED_AT);
         intent.removeExtra(EXTRA_NONCE);
         intent.removeExtra(EXTRA_SIGNATURE);

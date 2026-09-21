@@ -392,6 +392,10 @@ public class BActivityThread extends IBActivityThread.Stub {
         }
 
         ApplicationInfo applicationInfo = packageInfo.applicationInfo;
+        if (TextUtils.isEmpty(applicationInfo.processName)) {
+            applicationInfo.processName = processName;
+            Slog.i(TAG, "Restored missing guest ApplicationInfo.processName");
+        }
 
         ensureApacheLegacyOnSharedLibraryPath(applicationInfo);
         if (packageInfo.providers == null) {
@@ -412,7 +416,8 @@ public class BActivityThread extends IBActivityThread.Stub {
                 identityShellApk = BlackBoxCore.getContext().getApplicationInfo().sourceDir;
             } catch (Throwable ignored) {
             }
-            evictHostLoadedApk(packageName);
+            clearStaleUnityInitState(packageName);
+            evictHostLoadedApk(packageName, applicationInfo.sourceDir);
         }
 
         Context packageContext = createPackageContext(applicationInfo);
@@ -483,7 +488,7 @@ public class BActivityThread extends IBActivityThread.Stub {
         }
 
         if (samePackageGuest) {
-            Slog.i(TAG, "protocol-15 native-free guest: skipped NativeCore and native IO setup");
+            Slog.i(TAG, "protocol-34 native-free guest: skipped NativeCore and native IO setup");
         } else {
             NativeCore.init(Build.VERSION.SDK_INT);
             assert packageContext != null;
@@ -562,7 +567,9 @@ public class BActivityThread extends IBActivityThread.Stub {
             installProviders(mInitialApplication, bindData.processName, bindData.providers);
 
             onBeforeApplicationOnCreate(packageName, processName, application);
-            AppInstrumentation.get().callApplicationOnCreate(application);
+            AppInstrumentation appInstrumentation = AppInstrumentation.get();
+            appInstrumentation.injectHook();
+            appInstrumentation.callApplicationOnCreate(application);
             onAfterApplicationOnCreate(packageName, processName, application);
 
             HookManager.get().checkEnv(HCallbackProxy.class);
@@ -643,22 +650,23 @@ public class BActivityThread extends IBActivityThread.Stub {
         }
     }
 
-    private static void evictHostLoadedApk(String packageName) {
+    private static void evictHostLoadedApk(String packageName, String guestApk) {
         Object activityThread = BlackBoxCore.mainThread();
         if (activityThread == null || packageName == null) return;
         evictLoadedApkMap(activityThread, "mPackages", packageName);
         evictLoadedApkMap(activityThread, "mResourcePackages", packageName);
-        evictHostApplication(activityThread, packageName);
+        evictHostApplication(activityThread, packageName, guestApk);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static void evictHostApplication(Object activityThread, String packageName) {
+    private static void evictHostApplication(Object activityThread, String packageName,
+                                             String guestApk) {
         Application hostApplication = null;
         try {
             Reflector initialApplication = Reflector.with(activityThread)
                     .field("mInitialApplication");
             hostApplication = initialApplication.get();
-            if (hostApplication != null && packageName.equals(hostApplication.getPackageName())) {
+            if (isOuterApplication(hostApplication, packageName, guestApk)) {
                 initialApplication.set(null);
             } else {
                 hostApplication = null;
@@ -673,9 +681,13 @@ public class BActivityThread extends IBActivityThread.Stub {
                     .field("sApplications").get();
             if (value instanceof Map) {
                 synchronized (value) {
-                    ((Map) value).remove(packageName);
+                    Object cached = dereference(((Map) value).get(packageName));
+                    if (cached instanceof Application &&
+                            isOuterApplication((Application) cached, packageName, guestApk)) {
+                        ((Map) value).remove(packageName);
+                        Slog.i(TAG, "Evicted outer identity-shell Application cache");
+                    }
                 }
-                Slog.i(TAG, "Evicted outer identity-shell Application cache");
             }
         } catch (Throwable error) {
             Slog.w(TAG, "Could not evict identity-shell Application cache: "
@@ -703,11 +715,63 @@ public class BActivityThread extends IBActivityThread.Stub {
             field.setAccessible(true);
             Object value = field.get(activityThread);
             if (value instanceof Map) {
-                ((Map) value).remove(packageName);
-                Slog.i(TAG, "Evicted outer identity-shell LoadedApk from " + fieldName);
+                Map map = (Map) value;
+                if (map.remove(packageName) != null) {
+                    Slog.i(TAG, "Evicted identity-shell LoadedApk from " + fieldName);
+                }
             }
         } catch (Throwable error) {
             Slog.w(TAG, "Could not evict identity-shell " + fieldName + ": "
+                    + error.getMessage());
+        }
+    }
+
+    private static Object dereference(Object value) {
+        return value instanceof java.lang.ref.Reference
+                ? ((java.lang.ref.Reference<?>) value).get() : value;
+    }
+
+    private static boolean isOuterApplication(Application application, String packageName,
+                                              String guestApk) {
+        return application != null && guestApk != null &&
+                packageName.equals(application.getPackageName()) &&
+                !guestApk.equals(application.getApplicationInfo().sourceDir);
+    }
+
+    private static void clearStaleUnityInitState(String packageName) {
+        Context context = BlackBoxCore.getContext();
+        if (context == null) return;
+
+        File marker = new File(context.getNoBackupFilesDir(), "unity-init-state-v34");
+        if (marker.isFile()) return;
+
+        boolean cleared = true;
+        File[] caches = context.getFilesDir().listFiles(
+                (dir, name) -> name.endsWith(".pdcache"));
+        if (caches != null) {
+            for (File cache : caches) {
+                if (cache.exists() && !cache.delete()) {
+                    cleared = false;
+                    Slog.w(TAG, "Could not remove stale Unity cache " + cache.getName());
+                }
+            }
+        }
+
+        boolean preferencesCleared = context.getSharedPreferences(
+                packageName + ".v2.playerprefs", Context.MODE_PRIVATE)
+                .edit()
+                .remove("APPLICATION_INIT_FAILED_TIMES")
+                .remove("SkipGetDefaultExecutionOrderFailedTimes")
+                .remove("PD_CACHE_INIT_FAILED_TIMES")
+                .commit();
+        if (!preferencesCleared) cleared = false;
+
+        try {
+            if (cleared && (marker.isFile() || marker.createNewFile())) {
+                Slog.i(TAG, "Cleared stale Unity initialization state for protocol 34");
+            }
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not mark Unity initialization migration: "
                     + error.getMessage());
         }
     }
@@ -1201,7 +1265,7 @@ public class BActivityThread extends IBActivityThread.Stub {
         } finally {
             Binder.restoreCallingIdentity(origId);
             try {
-                ContentProviderDelegate.init();
+                ContentProviderDelegate.init(context);
             } catch (Exception e) {
                 Slog.w(TAG, "Error initializing ContentProviderDelegate: " + e.getMessage());
             }
@@ -1209,19 +1273,75 @@ public class BActivityThread extends IBActivityThread.Stub {
     }
 
     public static Context createPackageContext(ApplicationInfo info) {
-        try {
-            return BlackBoxCore.getContext().createPackageContext(info.packageName,
-                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
-        } catch (Exception e) {
-            Slog.w(TAG, "Framework package context failed for " + info.packageName + ": " + e);
+        boolean exactPackageGuest = info.packageName.equals(BlackBoxCore.getHostPkg());
+        if (!exactPackageGuest) {
+            try {
+                return BlackBoxCore.getContext().createPackageContext(info.packageName,
+                        Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+            } catch (Exception e) {
+                Slog.w(TAG, "Framework package context failed for " + info.packageName + ": " + e);
+            }
+        } else {
+            Slog.i(TAG, "Creating exact-package guest context from virtual ApplicationInfo");
         }
         try {
             Object activityThread = BlackBoxCore.mainThread();
-            Object loadedApk = BRActivityThread.get(activityThread).getPackageInfo(
+            Class<?> compatibilityInfoClass = Class.forName(
+                    "android.content.res.CompatibilityInfo");
+            Object compatibilityInfo;
+            try {
+                compatibilityInfo = Reflector.on(compatibilityInfoClass)
+                        .field("DEFAULT_COMPATIBILITY_INFO").get();
+            } catch (Throwable defaultError) {
+                Object appBindData = Reflector.with(activityThread)
+                        .field("mBoundApplication").get();
+                compatibilityInfo = Reflector.with(appBindData)
+                        .field("compatInfo").get();
+                Slog.i(TAG, "Using bound process CompatibilityInfo for guest context");
+            }
+            Object loadedApk = Reflector.with(activityThread).method(
+                    "getPackageInfo",
+                    ApplicationInfo.class,
+                    compatibilityInfoClass,
+                    int.class).call(
                     info,
-                    BRCompatibilityInfo.get().DEFAULT_COMPATIBILITY_INFO(),
+                    compatibilityInfo,
                     Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
-            Context context = (Context) BRContextImpl.get().createAppContext(activityThread, loadedApk);
+            if (loadedApk == null) {
+                throw new IllegalStateException("ActivityThread returned a null LoadedApk");
+            }
+            Context context;
+            if (exactPackageGuest) {
+                BRLoadedApk.getWithException(loadedApk)._set_mSecurityViolation(false);
+                BRLoadedApk.getWithException(loadedApk)._set_mApplicationInfo(info);
+                Reflector.with(loadedApk).field("mClassLoader").set(null);
+                Object instrumentedAppDir = Reflector.with(activityThread)
+                        .field("mInstrumentedAppDir").get();
+                Object instrumentationAppDir = Reflector.with(activityThread)
+                        .field("mInstrumentationAppDir").get();
+                if (TextUtils.isEmpty(info.sourceDir)) {
+                    throw new IllegalStateException("Guest ApplicationInfo has no sourceDir");
+                }
+                Application application;
+                try {
+                    Reflector.with(activityThread).field("mInstrumentedAppDir").set("");
+                    Reflector.with(activityThread).field("mInstrumentationAppDir").set("");
+                    application = BRLoadedApk.getWithException(loadedApk)
+                            .makeApplication(false, null);
+                } finally {
+                    Reflector.with(activityThread).field("mInstrumentedAppDir")
+                            .set(instrumentedAppDir);
+                    Reflector.with(activityThread).field("mInstrumentationAppDir")
+                            .set(instrumentationAppDir);
+                }
+                context = application == null ? null : application.getBaseContext();
+                Slog.i(TAG, "Created guest Application context through LoadedApk without instrumentation paths");
+            } else {
+                context = Reflector.on(Class.forName("android.app.ContextImpl")).method(
+                        "createAppContext",
+                        Class.forName("android.app.ActivityThread"),
+                        Class.forName("android.app.LoadedApk")).call(activityThread, loadedApk);
+            }
             if (context != null) {
                 Slog.i(TAG, "Created guest context directly from virtual ApplicationInfo for "
                         + info.packageName);
@@ -1229,6 +1349,10 @@ public class BActivityThread extends IBActivityThread.Stub {
             }
         } catch (Throwable error) {
             Slog.e(TAG, "Direct guest context creation failed for " + info.packageName, error);
+            if (exactPackageGuest) {
+                throw new IllegalStateException("Unable to create exact-package guest context",
+                        error);
+            }
         }
         return null;
     }
@@ -1334,7 +1458,7 @@ public class BActivityThread extends IBActivityThread.Stub {
             }
         } finally {
             Binder.restoreCallingIdentity(origId);
-            ContentProviderDelegate.init();
+            ContentProviderDelegate.init(context);
         }
     }
 

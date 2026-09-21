@@ -5,6 +5,11 @@ import com.moodtools.hub.networking.SignedEnvelopeVerifier
 import org.json.JSONObject
 import java.io.File
 
+internal fun expiredPrivateModulePackages(
+    installed: Map<String, String>,
+    deniedScopes: Set<String>
+): Set<String> = installed.filterValues(deniedScopes::contains).keys
+
 class ModuleRepository(private val context: Context) {
     private val menuDirectory: File
         get() = File(context.filesDir, "menus")
@@ -78,6 +83,7 @@ class ModuleRepository(private val context: Context) {
                 nativeFile = json.optString("native_file", "libmenu_native.so"),
                 iconFile = json.optString("icon_file").takeIf { it.isNotBlank() },
                 nonRootMethod = nonRootMethod,
+                rootMethod = RootMethod.fromJson(json.optString("root_method").takeIf { it.isNotBlank() }),
                 nonRootMethods = nonRootMethods,
                 supportedVersionCodes = supportedVersionCodes,
                 catalogSlug = json.optString("module_slug").takeIf { it.matches(SLUG) }

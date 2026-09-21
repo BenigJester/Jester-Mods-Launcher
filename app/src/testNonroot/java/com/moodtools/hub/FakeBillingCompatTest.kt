@@ -12,11 +12,11 @@ class FakeBillingCompatTest {
     @Test
     fun `billing compatibility is not gated by module configuration`() {
         val config = JSONObject(
-            File("../modules/com.ChillyRoom.DungeonShooter/config.json")
+            File("../modules/com.example.module/config.json")
                 .readText(Charsets.UTF_8)
         )
 
-        assertEquals("com.ChillyRoom.DungeonShooter", config.getString("package_name"))
+        assertEquals("com.example.module", config.getString("package_name"))
         assertFalse(config.has("fake_iap_compatibility"))
     }
 

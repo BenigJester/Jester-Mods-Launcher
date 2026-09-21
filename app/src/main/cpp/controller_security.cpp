@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <string>
 
 namespace {
 
@@ -65,8 +64,9 @@ jint inspectThreads() {
     dirent* entry = nullptr;
     while ((entry = readdir(tasks)) != nullptr) {
         if (entry->d_name[0] == '.') continue;
-        std::string path = std::string("/proc/self/task/") + entry->d_name + "/comm";
-        FILE* comm = fopen(path.c_str(), "re");
+        char path[128] = {};
+        if (snprintf(path, sizeof(path), "/proc/self/task/%s/comm", entry->d_name) <= 0) continue;
+        FILE* comm = fopen(path, "re");
         if (comm == nullptr) continue;
         char name[128] = {};
         if (fgets(name, sizeof(name), comm) != nullptr &&
@@ -88,6 +88,6 @@ Java_com_moodtools_hub_nativebridge_NativeLinker_inspectRuntime(JNIEnv*, jclass)
 }
 
 extern "C" JNIEXPORT jint JNICALL
-JNI_OnLoad(JavaVM* /*vm*/, void* /*reserved*/) {
+JNI_OnLoad(JavaVM*, void*) {
     return JNI_VERSION_1_6;
 }

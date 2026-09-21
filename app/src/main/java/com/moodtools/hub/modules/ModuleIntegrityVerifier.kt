@@ -91,6 +91,9 @@ class ModuleIntegrityVerifier(
             },
             nonRootMethod
         )
+        val rootMethod = RootMethod.fromJson(
+            signedConfig.optString("rootMethod").takeIf { it.isNotBlank() }
+        )
         require(supportedVersions.isNotEmpty() && supportedAbis.isNotEmpty())
         require(supportedAbis.all { it == "arm64-v8a" || it == "armeabi-v7a" })
         require(abi in supportedAbis) { "Signed module does not support the installed game ABI" }
@@ -100,6 +103,7 @@ class ModuleIntegrityVerifier(
             module.supportedVersionCodes == supportedVersionCodes && module.supportedAbis == supportedAbis)
         require(module.nonRootMethod == nonRootMethod)
         require(module.nonRootMethods == nonRootMethods)
+        require(module.rootMethod == rootMethod)
         require(module.dexFile == DEX_FILE && module.nativeFile == NATIVE_FILE && module.iconFile == null)
 
         val expectedConfig = JSONObject()
@@ -123,6 +127,9 @@ class ModuleIntegrityVerifier(
                         "nonroot_methods",
                         JSONArray(nonRootMethods.map(NonRootMethod::jsonValue))
                     )
+                }
+                if (signedConfig.has("rootMethod")) {
+                    it.put("root_method", rootMethod.jsonValue)
                 }
             }
             .toString()
@@ -196,6 +203,10 @@ class ModuleIntegrityVerifier(
         )
         require(configuredMethod == module.nonRootMethod) {
             "Local test module configuration does not match its non-root method"
+        }
+        require(RootMethod.fromJson(config.optString("root_method").takeIf { it.isNotBlank() }) ==
+            module.rootMethod) {
+            "Local test module configuration does not match its root method"
         }
         require(NonRootMethod.choicesFromJson(
             config.optJSONArray("nonroot_methods")?.let { values ->

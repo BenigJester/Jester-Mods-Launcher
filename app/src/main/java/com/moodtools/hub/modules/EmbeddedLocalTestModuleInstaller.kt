@@ -23,6 +23,7 @@ class EmbeddedLocalTestModuleInstaller(private val context: Context) {
         check(menuRoot.mkdirs() || menuRoot.isDirectory) { "Local test module storage is unavailable" }
         val target = safeChild(menuRoot, BuildConfig.LOCAL_TEST_MODULE_PACKAGE)
         if (installedMarkerMatches(target)) return BuildConfig.LOCAL_TEST_MODULE_PACKAGE
+        if (externalStagePresent(target)) return BuildConfig.LOCAL_TEST_MODULE_PACKAGE
 
         // ModuleRepository deliberately requires the candidate directory name to match
         // package_name. Keep the transaction wrapper separate so the extracted candidate can
@@ -155,5 +156,15 @@ class EmbeddedLocalTestModuleInstaller(private val context: Context) {
         private val ALLOWED_FILES = REQUIRED_FILES + setOf("features.json", "local-test.json")
         private val PACKAGE_PATTERN = Regex("[A-Za-z0-9_.]{3,200}")
         private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
+
+        internal fun externalStagePresent(directory: File): Boolean = runCatching {
+            if (!directory.isDirectory || !REQUIRED_FILES.all { File(directory, it).isFile }) {
+                return@runCatching false
+            }
+            val marker = JSONObject(
+                File(directory, ModuleRepository.LOCAL_TEST_INSTALL_MARKER).readText(Charsets.UTF_8)
+            )
+            marker.optString("source") != "embedded-launcher"
+        }.getOrDefault(false)
     }
 }

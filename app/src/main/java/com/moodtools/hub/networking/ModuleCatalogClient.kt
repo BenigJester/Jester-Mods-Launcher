@@ -232,6 +232,9 @@ class ModuleCatalogClient(
                             iconFile = null,
                             nonRootMethod = nonRootMethod,
                             nonRootMethods = nonRootMethods,
+                            rootMethod = com.moodtools.hub.modules.RootMethod.fromJson(
+                                item.optString("rootMethod").takeIf { it.isNotBlank() }
+                            ),
                             supportedVersionCodes = supportedVersionCodes,
                             catalogSlug = slug
                         ),

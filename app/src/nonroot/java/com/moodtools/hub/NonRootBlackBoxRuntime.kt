@@ -7,7 +7,10 @@ import android.os.Process
 import android.util.AtomicFile
 import android.util.Log
 import com.moodtools.hub.modules.InstalledGame
+import com.moodtools.hub.modules.PluginLoader
+import com.moodtools.hub.modules.RootMethod
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.core.env.BEnvironment
@@ -20,6 +23,9 @@ object NonRootBlackBoxRuntime {
     private const val SESSION_PREFERENCES = "nonroot_blackbox_session"
     private const val ACTIVE_PACKAGE_KEY = "active_package"
     private const val KINGDOM_ADVENTURERS_PACKAGE = "net.kairosoft.android.kingdom_en"
+    private const val FREE_FIRE_PACKAGE = "com.dts.freefireth"
+    private const val FREE_FIRE_ORIGINAL_IL2CPP_SHA256 =
+        "bf70daa86a1c0224b6e0191918a7912829615858f31eb2c4fd644d020effbdff"
     private val packagePattern = Regex("^[A-Za-z0-9_.]+$")
     private val launchedPackages = ConcurrentHashMap.newKeySet<String>()
     private val googleCompatibilityStack = listOf(
@@ -63,6 +69,7 @@ object NonRootBlackBoxRuntime {
         removeRemainingPackageStorage(packageName, DEFAULT_USER_ID)
 
         launchedPackages.remove(packageName)
+        if (packageName == FREE_FIRE_PACKAGE) ExternalControllerService.stop(appContext)
         if (wasActive) clearActivePackage(appContext)
         if (wasActive || wasRunning) finishVirtualGuestTasks(appContext)
         Log.i(TAG, "Removed virtual package identity and data for $packageName")
@@ -101,6 +108,7 @@ object NonRootBlackBoxRuntime {
                 }
         }
         launchedPackages.clear()
+        ExternalControllerService.stop(appContext)
         clearActivePackage(appContext)
         finishVirtualGuestTasks(appContext)
 
@@ -124,10 +132,19 @@ object NonRootBlackBoxRuntime {
             val core = BlackBoxCore.get()
             core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS)
             val userId = DEFAULT_USER_ID
+            val externalController = game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER
+            if (!externalController) ExternalControllerService.stop(context.applicationContext)
+            val expectedPatchedHash = if (externalController) {
+                prepareBlackBoxExternalController(context, game, userId)
+            } else null
 
             prepareGuestSwitch(context, core, game.packageName, userId)
             val retryInternalStorage = needsInternalStorageRetry(game.packageName, userId)
-            if (BlackBoxCore.isRunningApplication(game.packageName, userId) && !retryInternalStorage) {
+            val running = BlackBoxCore.isRunningApplication(game.packageName, userId)
+            val externalControllerReady = expectedPatchedHash != null &&
+                virtualIl2Cpp(game.packageName).takeIf(File::isFile)
+                    ?.let(::sha256) == expectedPatchedHash
+            if (running && !retryInternalStorage && (!externalController || externalControllerReady)) {
                 Log.i(TAG, "Resuming existing virtual session for ${game.packageName} user=$userId")
                 check(launchApk(context, core, game.packageName, userId)) {
                     "BlackBox could not resume ${game.packageName} on user $userId"
@@ -147,7 +164,11 @@ object NonRootBlackBoxRuntime {
                 "Host clone ${game.packageName}: user=$userId base=${hostInfo.sourceDir} " +
                     "splits=${hostInfo.splitSourceDirs?.size ?: 0}"
             )
-            val install = core.installPackageAsUser(game.packageName, userId)
+            val install = if (externalController) {
+                core.installPackageAsUserWithPrivateNativeLibraries(game.packageName, userId)
+            } else {
+                core.installPackageAsUser(game.packageName, userId)
+            }
             if (!install.success) {
                 error(
                     "Game install failed for ${game.packageName}: " +
@@ -156,7 +177,15 @@ object NonRootBlackBoxRuntime {
             }
 
             clearModulePayload(game.packageName, userId)
-            stageModulePayload(context, game, userId)
+            if (externalController) {
+                installBlackBoxExternalLibrary(
+                    context,
+                    game,
+                    requireNotNull(expectedPatchedHash)
+                )
+            } else {
+                stageModulePayload(context, game, userId)
+            }
             retryInternalStorageIfNeeded(game.packageName, userId)
             logGoogleCompatibilityState(core, userId)
 
@@ -178,6 +207,78 @@ object NonRootBlackBoxRuntime {
             ?.withSelectedMenuLanguage(context) ?: return false
         core.startActivity(intent, userId)
         return true
+    }
+
+    fun externalControllerFeatureStateFile(packageName: String): File {
+        require(packageName == FREE_FIRE_PACKAGE) { "Unsupported BlackBox external controller" }
+        return File(BEnvironment.getExternalDataFilesDir(packageName, DEFAULT_USER_ID), "ff_features")
+    }
+
+    private fun prepareBlackBoxExternalController(
+        context: Context,
+        game: InstalledGame,
+        userId: Int
+    ): String {
+        require(game.packageName == FREE_FIRE_PACKAGE) { "Unsupported BlackBox external controller" }
+        val moduleDirectory = File(context.filesDir, "menus/${game.packageName}")
+        val nativePayload = File(moduleDirectory, game.module.nativeFile)
+        val featureState = File(BEnvironment.getExternalDataFilesDir(game.packageName, userId), "ff_features")
+        check(featureState.parentFile?.let { it.mkdirs() || it.isDirectory } == true) {
+            "Could not create BlackBox controller state directory"
+        }
+        val loader = PluginLoader(context)
+        check(loader.loadNativeBlackBox(game.module, nativePayload, featureState)) {
+            "Could not start the BlackBox external controller"
+        }
+        return loader.embeddedLibrarySha256(game.module).also { hash ->
+            require(hash.matches(Regex("[0-9a-f]{64}"))) { "Embedded library hash is invalid" }
+        }
+    }
+
+    private fun installBlackBoxExternalLibrary(
+        context: Context,
+        game: InstalledGame,
+        expectedPatchedHash: String
+    ) {
+        val liveLibrary = virtualIl2Cpp(game.packageName)
+        require(liveLibrary.isFile) { "BlackBox libil2cpp.so is missing" }
+        val liveHash = sha256(liveLibrary)
+        require(liveHash == FREE_FIRE_ORIGINAL_IL2CPP_SHA256 || liveHash == expectedPatchedHash) {
+            "BlackBox libil2cpp.so is an unknown build: $liveHash"
+        }
+        if (liveHash == expectedPatchedHash) return
+
+        val loader = PluginLoader(context)
+        val staged = File(context.codeCacheDir, "blackbox-controller/${game.packageName}/libil2cpp.so")
+        staged.parentFile?.mkdirs()
+        staged.delete()
+        check(loader.extractEmbeddedLibrary(game.module, staged) && staged.isFile) {
+            "Embedded BlackBox library extraction failed"
+        }
+        check(sha256(staged) == expectedPatchedHash) {
+            "Extracted BlackBox library hash mismatch"
+        }
+        copyAtomically(staged, liveLibrary)
+        staged.delete()
+        check(sha256(liveLibrary) == expectedPatchedHash) {
+            "Installed BlackBox library hash mismatch"
+        }
+    }
+
+    private fun virtualIl2Cpp(packageName: String): File =
+        File(BEnvironment.getAppLibDir(packageName), "libil2cpp.so")
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /**

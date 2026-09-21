@@ -1,11 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Menus are hosted inside the game process. The removed compatibility-overlay
-         experiment must not leak special overlay access in through BlackBox. -->
-    <uses-permission
-        android:name="android.permission.SYSTEM_ALERT_WINDOW"
-        tools:node="remove" />
+    <!-- External-controller modules keep their menu in the launcher process. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission
         android:name="android.permission.SYSTEM_OVERLAY_WINDOW"
         tools:node="remove" />
@@ -65,6 +64,14 @@
             android:name=".LauncherTaskLifecycleService"
             android:exported="false"
             android:stopWithTask="false" />
+        <service
+            android:name=".ExternalControllerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started external game controller overlay" />
+        </service>
 
         <!-- Facebook's browser callback cannot resolve directly to an activity that exists only
              inside BlackBox. Receive the standard fbconnect Custom Tab callback in the physical

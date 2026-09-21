@@ -17,6 +17,11 @@ class LauncherUpdatePathTest {
             12,
             "nonroot"
         ))
+        assertTrue(isTrustedStableLauncherDownloadPath(
+            "/download/jester-moods-launcher?file=Jester-Moods-Controller.apk",
+            12,
+            "controller"
+        ))
     }
 
     @Test

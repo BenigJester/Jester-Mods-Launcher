@@ -202,6 +202,9 @@ class UpdateClient(private val moduleRoot: File) {
             },
             nonRootMethod
         )
+        val rootMethod = com.moodtools.hub.modules.RootMethod.fromJson(
+            moduleConfig.optString("rootMethod").takeIf { it.isNotBlank() }
+        )
 
         val files = payload.getJSONObject("files")
         val native = files.getJSONObject("native").getJSONObject(abi)
@@ -277,6 +280,9 @@ class UpdateClient(private val moduleRoot: File) {
                             "nonroot_methods",
                             org.json.JSONArray(nonRootMethods.map { method -> method.jsonValue })
                         )
+                    }
+                    if (moduleConfig.has("rootMethod")) {
+                        it.put("root_method", rootMethod.jsonValue)
                     }
                 }
             nextConfig.writeText(config.toString())

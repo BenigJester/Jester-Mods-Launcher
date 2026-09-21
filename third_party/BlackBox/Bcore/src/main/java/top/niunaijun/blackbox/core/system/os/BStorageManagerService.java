@@ -59,6 +59,13 @@ public class BStorageManagerService extends IBStorageManagerService.Stub impleme
             return new StorageVolume[]{};
         }
 
+        // Exact-package identity shells use the host filesystem directly. Rewriting their
+        // volume root while native I/O redirection is disabled makes free-space checks target
+        // an empty nested BlackBox path and causes false InsufficientStorage failures.
+        if (packageName != null && packageName.equals(BlackBoxCore.getHostPkg())) {
+            return storageVolumes;
+        }
+
         try {
             for (StorageVolume storageVolume : storageVolumes) {
                 BRStorageVolume.get(storageVolume)._set_mPath(BEnvironment.getExternalUserDir(userId));

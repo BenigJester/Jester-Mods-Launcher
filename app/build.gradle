@@ -204,7 +204,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode providers.gradleProperty('launcherVersionCode').map { it.toInteger() }.getOrElse(209)
-        versionName providers.gradleProperty('launcherVersionName').getOrElse('2.0.9')
+        versionName providers.gradleProperty('launcherVersionName').getOrElse('4.1.6')
         buildConfigField 'String', 'UPDATE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9ueWd1XDC7a63XAmkmNPfB52dXe/Q6VF/mUQ9639cDm4uLYrQ7+34p+6Vi1m3eU/KV/lY/BlQPWVHM2gwU/xDT32c+zkfojTn8Fb9kCxNLOOIvpMBLDMxHoZvv63z1MS7lK2Zd1dNrLbM26UK0K01nDL15yWJjQ4fxHvxR1t9sRSXgk9aBft/7R0NMgC2TJDIG1n2Fsk7f82r8gIxIKrI4CnTSKA30zwoH46/GhMmoiqaCOEOdqXNoV7ll+bfeN/PNEACxgOGwY750nkkZEgMLvCNXqto4nFflH0bYUTazaJ5z3fOuCJ8pR5hh5L1hk44Zh8F8wO0qyjCBMoByypObgpF0JURcZb6G/kmvAEB1lZet+yFIeycjCxsksVDVo1SbfXZ10Oum1WZz07X3Bn/i2FjGy6YNzKViRd86khRVa79H9ZIDPx1mb1UYREjpx8tMo/G9pmVY0mooEOBMvzWVm4JxYPQJA8G7kfu/zGS1vWZSUcfG1VwDCUULUicu43AgMBAAE="'
         buildConfigField 'String', 'ACCESS_LEASE_PUBLIC_KEY_DER_BASE64', '"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAm2Mcwr7+L/dXID3KVJbspglExlWgdd/ofCESWgqUdfpXCTh3RhJm7q6qXJiKODtJw2Rs+HsZAXvw+6A0f6Fjo7+A1pgnIGzWCjihcmEl32t2vOr/vXS3XQbjo+yk9QjEZ2T4EiYHc9YK3iKEAowGZtHF1vZPTJkrbjXXWB3eJ7bf3Py37ZKa2sb07SedifEMyE9LgWMVWEbohTT+EkXlTAY6k2+um3wgt1FEUClo0PaBEDv3jSJCVJuqTzrz3xrhx07+tRHdlDxfwyHimfXdsel7wMEZaxb7ssj2Sfkbp59KsCijHiwz4gI22LGOutW+eP2+t7e8dkB+18eaCF/EGzko3U65Xk6ZivgH2Z07WxpUmvQyPEgNE74y1KZhIWEl274M5PaxtYMZAEUlDI2XtSCZVsm4siiKmMbwEd9fYl3uFoOiOkGlc28Yomwlb8PgsnVI7riF6M05RQd4Iy8ZqfVGGQdERKqKrbBIEn9rVM9n/X2nypBj9zpCjtYLcjApAgMBAAE="'
         buildConfigField 'boolean', 'PRIVATE_MODULE_ENABLED', privateModuleBundle != null ? 'true' : 'false'
@@ -250,6 +250,8 @@ android {
             dimension 'executionMode'
             applicationIdSuffix '.hub.root'
             buildConfigField 'boolean', 'IS_ROOT_MODE', 'true'
+            buildConfigField 'boolean', 'CONTROLLER_ONLY', 'false'
+            buildConfigField 'String', 'ACCESS_FLAVOR', '"root"'
             ndk {
                 abiFilters 'arm64-v8a'
             }
@@ -260,10 +262,28 @@ android {
             }
         }
 
+        controller {
+            dimension 'executionMode'
+            applicationIdSuffix '.hub.controller'
+            buildConfigField 'boolean', 'IS_ROOT_MODE', 'true'
+            buildConfigField 'boolean', 'CONTROLLER_ONLY', 'true'
+            buildConfigField 'String', 'ACCESS_FLAVOR', '"root"'
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
+            externalNativeBuild {
+                cmake {
+                    cppFlags '-DEXECUTION_MODE_CONTROLLER=1'
+                }
+            }
+        }
+
         nonroot {
             dimension 'executionMode'
             applicationId 'com.moodtools.hub.nonroot'
             buildConfigField 'boolean', 'IS_ROOT_MODE', 'false'
+            buildConfigField 'boolean', 'CONTROLLER_ONLY', 'false'
+            buildConfigField 'String', 'ACCESS_FLAVOR', '"nonroot"'
             ndk {
                 abiFilters 'arm64-v8a', 'armeabi-v7a'
             }
@@ -333,6 +353,10 @@ android {
     sourceSets {
         main.assets.srcDir(generatedPrivateModuleAssetsDirectory)
         main.assets.srcDir(generatedLocalTestModuleAssetsDirectory)
+        root.java.srcDir('src/externalController/java')
+        controller.java.srcDir('src/externalController/java')
+        nonroot.java.srcDir('src/externalController/java')
+        controller.manifest.srcFile('src/root/AndroidManifest.xml')
         nonroot.assets.srcDir(new File(generatedIdentityShellAssetsDirectory, 'nonroot'))
     }
 
@@ -373,6 +397,50 @@ tasks.configureEach { task ->
                 generatedIdentityShellAssetsDirectory,
                 'nonroot/identity-shell/template.apk'
             ))
+        }
+    }
+}
+
+tasks.register('verifyControllerHardenedTestArtifact') {
+    dependsOn('assembleControllerHardenedTest')
+    doLast {
+        def apk = file("$buildDir/outputs/apk/controller/hardenedTest/app-controller-hardenedTest.apk")
+        if (!apk.isFile()) throw new GradleException("Controller APK was not produced: ${apk}")
+        def forbidden = [
+            'moodtools-injector',
+            'libmoodtools_root_runtime.so',
+            'root-runtime/',
+            '--memfd',
+            '--bp-ld',
+            'AndKittyInjector',
+            'DobbyHook',
+            'KittyMemory',
+            'xdl_open',
+            'xdl_sym'
+        ]
+        def archive = new java.util.zip.ZipFile(apk)
+        try {
+            archive.entries().each { entry ->
+                def entryName = entry.name
+                forbidden.each { signature ->
+                    if (entryName.contains(signature)) {
+                        throw new GradleException("Controller APK contains forbidden entry ${entryName}")
+                    }
+                }
+                if (!entry.directory && (entryName.endsWith('.dex') || entryName.endsWith('.so'))) {
+                    def contents = new String(archive.getInputStream(entry).bytes,
+                        java.nio.charset.StandardCharsets.ISO_8859_1)
+                    forbidden.each { signature ->
+                        if (contents.contains(signature)) {
+                            throw new GradleException(
+                                "Controller APK contains forbidden signature ${signature} in ${entryName}"
+                            )
+                        }
+                    }
+                }
+            }
+        } finally {
+            archive.close()
         }
     }
 }

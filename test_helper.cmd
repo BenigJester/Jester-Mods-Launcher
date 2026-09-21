@@ -964,7 +964,7 @@ if /I "!LAUNCHER_BUILD!"=="release" (
         set "APP_OWNER_FILE=%TEMP%\jester-moods-app-owner-%RANDOM%.txt"
         "%ADB_EXE%" -s "!DEVICE_SERIAL!" shell "pm list packages -U --user 0 %APP_ID%" >"!APP_OWNER_FILE!" 2>nul
         if exist "!APP_OWNER_FILE!" (
-            for /f "usebackq tokens=3 delims=:" %%U in ("!APP_OWNER_FILE!") do if not defined APP_UID set "APP_UID=%%U"
+            for /f "usebackq tokens=1-4 delims=: " %%P in ("!APP_OWNER_FILE!") do if /I "%%Q"=="%APP_ID%" set "APP_UID=%%S"
             del /q "!APP_OWNER_FILE!" >nul 2>nul
         )
         if not defined APP_UID (

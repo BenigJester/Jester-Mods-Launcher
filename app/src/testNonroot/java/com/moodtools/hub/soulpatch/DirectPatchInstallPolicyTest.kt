@@ -52,6 +52,10 @@ class DirectPatchInstallPolicyTest {
             CURRENT_REVISION.copy(nativeSha256 = "old-native"),
             CURRENT_REVISION
         ))
+        assertFalse(directPatchRevisionIsCurrent(
+            CURRENT_REVISION.copy(gameNativeSha256 = "old-game-native"),
+            CURRENT_REVISION
+        ))
     }
 
     private companion object {
@@ -64,7 +68,8 @@ class DirectPatchInstallPolicyTest {
             launchGuardSchema = 1,
             launchGuardPublicKey = "guard-key",
             dexSha256 = "dex",
-            nativeSha256 = "native"
+            nativeSha256 = "native",
+            gameNativeSha256 = "game-native"
         )
     }
 }

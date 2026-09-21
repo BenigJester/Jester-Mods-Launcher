@@ -15,6 +15,7 @@ import android.os.RemoteException;
 import android.util.Log;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -22,6 +23,7 @@ import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.core.system.ServiceManager;
 import top.niunaijun.blackbox.core.system.pm.IBPackageManagerService;
+import top.niunaijun.blackbox.core.system.user.BUserHandle;
 import top.niunaijun.blackbox.entity.pm.InstallOption;
 import top.niunaijun.blackbox.entity.pm.InstallResult;
 import top.niunaijun.blackbox.entity.pm.InstalledPackage;
@@ -712,14 +714,32 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
 
     private ApplicationInfo createFallbackApplicationInfo(String packageName, int flags, int userId) {
         Log.w(TAG, "Creating fallback ApplicationInfo for " + packageName);
-        ApplicationInfo info = new ApplicationInfo();
-        info.packageName = packageName;
-        info.flags = flags;
-        info.uid = 0; 
-        
-        
-        
         String apkPath = findActualApkPath(packageName);
+        ApplicationInfo info = null;
+        if (apkPath != null) {
+            try {
+                PackageInfo archive = BlackBoxCore.getPackageManager().getPackageArchiveInfo(
+                        apkPath, android.content.pm.PackageManager.GET_META_DATA);
+                if (archive != null && archive.applicationInfo != null
+                        && packageName.equals(archive.packageName)) {
+                    info = new ApplicationInfo(archive.applicationInfo);
+                    Log.i(TAG, "Restored fallback guest archive ApplicationInfo");
+                }
+            } catch (Throwable error) {
+                Log.w(TAG, "Could not parse fallback guest ApplicationInfo", error);
+            }
+        }
+        if (info == null) {
+            info = new ApplicationInfo();
+            info.packageName = packageName;
+            info.flags = ApplicationInfo.FLAG_HAS_CODE
+                    | ApplicationInfo.FLAG_ALLOW_BACKUP
+                    | ApplicationInfo.FLAG_SUPPORTS_RTL;
+            info.metaData = new Bundle();
+        }
+        info.packageName = packageName;
+        info.uid = android.os.Process.myUid();
+
         if (apkPath != null) {
             info.sourceDir = apkPath;
             info.publicSourceDir = apkPath;
@@ -731,15 +751,43 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         }
         
         info.dataDir = "/data/data/" + packageName;
-        info.nativeLibraryDir = "/data/app-lib/" + packageName;
-        info.metaData = new Bundle();
-        info.splitNames = new String[]{};
-        
-        
-        info.flags |= ApplicationInfo.FLAG_ALLOW_BACKUP;
-        info.flags |= ApplicationInfo.FLAG_SUPPORTS_RTL;
-        
+        info.nativeLibraryDir = apkPath == null
+                ? null
+                : new File(new File(apkPath).getParentFile(), "lib").getAbsolutePath();
+        Log.i(TAG, "Restored fallback guest nativeLibraryDir: " + info.nativeLibraryDir);
+        if (info.metaData == null) {
+            info.metaData = new Bundle();
+        }
+        restoreFallbackSplitSourceDirs(info, apkPath);
+
         return info;
+    }
+
+    private void restoreFallbackSplitSourceDirs(ApplicationInfo info, String apkPath) {
+        if (apkPath == null) {
+            info.splitNames = new String[]{};
+            return;
+        }
+
+        File[] splitApks = new File(new File(apkPath).getParentFile(), "splits")
+                .listFiles((dir, name) -> name.startsWith("split_") && name.endsWith(".apk"));
+        if (splitApks == null || splitApks.length == 0) {
+            info.splitNames = new String[]{};
+            return;
+        }
+
+        Arrays.sort(splitApks);
+        String[] splitNames = new String[splitApks.length];
+        String[] splitPaths = new String[splitApks.length];
+        for (int i = 0; i < splitApks.length; i++) {
+            String fileName = splitApks[i].getName();
+            splitNames[i] = fileName.substring("split_".length(), fileName.length() - ".apk".length());
+            splitPaths[i] = splitApks[i].getAbsolutePath();
+        }
+        info.splitNames = splitNames;
+        info.splitSourceDirs = splitPaths;
+        info.splitPublicSourceDirs = splitPaths.clone();
+        Log.i(TAG, "Restored fallback guest splitSourceDirs: " + Arrays.toString(splitPaths));
     }
 
     
@@ -750,6 +798,12 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         }
         sIsFindingApkPath = true;
         try {
+            File virtualBaseApk = new File("/data/user/"
+                    + BUserHandle.getUserId(android.os.Process.myUid()) + "/"
+                    + packageName + "/blackbox/data/app/" + packageName + "/base.apk");
+            if (isValidApkPath(virtualBaseApk.getAbsolutePath())) {
+                return virtualBaseApk.getAbsolutePath();
+            }
             
             
             Log.d(TAG, "Skipping PackageManager call to prevent recursion for " + packageName);

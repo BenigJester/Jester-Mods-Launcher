@@ -20,6 +20,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text as RawText
 import com.moodtools.hub.LocalizedText as Text
@@ -52,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.moodtools.hub.modules.LauncherTheme
 import com.moodtools.hub.modules.LauncherLanguage
+import com.moodtools.hub.modules.AccessKeyUiState
 import com.moodtools.hub.modules.launcherThemePreference
 import java.text.DateFormat
 import java.util.Date
@@ -312,6 +318,9 @@ fun LauncherGateScreen(
     onRetry: () -> Unit,
     onEnter: () -> Unit,
     onCopySupportCode: () -> Unit,
+    accessKeyState: AccessKeyUiState,
+    onRedeemAccessKey: (String) -> Unit,
+    onClearAccessKeyResult: () -> Unit,
     onExit: () -> Unit
 ) {
     val context = LocalContext.current
@@ -321,6 +330,7 @@ fun LauncherGateScreen(
         value = true
     }
     val presentation = launcherGatePresentation(state, bootSettled)
+    var accessKey by rememberSaveable { mutableStateOf("") }
     val haloTransition = rememberInfiniteTransition(label = "gate-halo")
     val haloScale by haloTransition.animateFloat(
         initialValue = 0.94f,
@@ -403,6 +413,15 @@ fun LauncherGateScreen(
                                     onUnlock = onUnlock,
                                     onRetry = onRetry,
                                     onCopySupportCode = onCopySupportCode,
+                                    accessKey = accessKey,
+                                    accessKeyState = accessKeyState,
+                                    onAccessKeyChange = {
+                                        accessKey = it.uppercase().filter { character ->
+                                            character.isLetterOrDigit() || character == '-'
+                                        }.take(42)
+                                        onClearAccessKeyResult()
+                                    },
+                                    onRedeemAccessKey = { onRedeemAccessKey(accessKey) },
                                     onExit = onExit
                                 )
                             }
@@ -591,13 +610,22 @@ private fun DefaultGateContent(
     onUnlock: () -> Unit,
     onRetry: () -> Unit,
     onCopySupportCode: () -> Unit,
+    accessKey: String,
+    accessKeyState: AccessKeyUiState,
+    onAccessKeyChange: (String) -> Unit,
+    onRedeemAccessKey: () -> Unit,
     onExit: () -> Unit
 ) {
+    val locked = presentation is LauncherGatePresentation.Locked
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = if (locked) {
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        } else {
+            Modifier.fillMaxSize()
+        },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.weight(0.9f))
+        Spacer(if (locked) Modifier.height(32.dp) else Modifier.weight(0.9f))
         Column(
             modifier = Modifier.fillMaxWidth().background(
                 GateSurface.copy(alpha = 0.97f), RoundedCornerShape(30.dp)
@@ -643,10 +671,71 @@ private fun DefaultGateContent(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        "1. Continue to the Jester Mods website\n2. Complete Linkvertise and the browser check\n3. Tap Open launcher on the website",
+                        "PAID ACCESS KEY",
+                        color = GateAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.3.sp
+                    )
+                    Text(
+                        "Activate your Ko-fi package here. Its time stacks onto any active Launcher and Free Fire access.",
                         color = GateMuted,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    OutlinedTextField(
+                        value = accessKey,
+                        onValueChange = onAccessKeyChange,
+                        enabled = !accessKeyState.activating,
+                        singleLine = true,
+                        label = { Text("JM access key") },
+                        placeholder = { RawText("JM-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(15.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = GateAccent,
+                            unfocusedTextColor = GateAccent,
+                            disabledTextColor = GateAccent.copy(alpha = 0.65f),
+                            focusedBorderColor = GateAccent,
+                            focusedLabelColor = GateAccent,
+                            cursorColor = GateAccent,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
+                            focusedPlaceholderColor = GateMuted,
+                            unfocusedPlaceholderColor = GateMuted
+                        )
+                    )
+                    accessKeyState.error?.let { error ->
+                        Column(
+                            Modifier.fillMaxWidth().background(
+                                Color(0xFFFFB4AB).copy(alpha = 0.10f), RoundedCornerShape(14.dp)
+                            ).padding(13.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                accessKeyErrorTitle(accessKeyState.errorCode),
+                                color = Color(0xFFFFB4AB),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(error, color = GateMuted, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Button(
+                        onClick = onRedeemAccessKey,
+                        enabled = accessKey.isNotBlank() && !accessKeyState.activating,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = GateAccent,
+                            contentColor = Color(0xFF09100E)
+                        )
+                    ) {
+                        if (accessKeyState.activating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = Color(0xFF09100E)
+                            )
+                        } else Text("Activate access key", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
             Spacer(Modifier.height(22.dp))
@@ -674,15 +763,13 @@ private fun DefaultGateContent(
                         contentColor = Color(0xFF09100E)
                     )
                 ) { Text("Try again", fontWeight = FontWeight.Bold) }
-                is LauncherGatePresentation.Locked -> Button(
+                is LauncherGatePresentation.Locked -> OutlinedButton(
                     onClick = onUnlock,
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(vertical = 14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GateAccent,
-                        contentColor = Color(0xFF09100E)
-                    )
-                ) { Text("Continue to Linkvertise", fontWeight = FontWeight.Bold) }
+                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
+                ) { Text("Use free 1-day Linkvertise access", fontWeight = FontWeight.Bold) }
                 else -> error("Unsupported default gate presentation: $presentation")
             }
             if (presentation is LauncherGatePresentation.Locked) {
@@ -698,7 +785,7 @@ private fun DefaultGateContent(
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(if (locked) Modifier.height(24.dp) else Modifier.weight(1f))
     }
 }
 

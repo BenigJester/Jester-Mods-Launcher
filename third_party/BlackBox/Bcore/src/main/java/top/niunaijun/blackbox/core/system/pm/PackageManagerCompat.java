@@ -328,7 +328,8 @@ public class PackageManagerCompat {
             // Exact-package guests must expose the physical package paths just like the
             // original install. Module payloads remain isolated under BEnvironment.
             ai.nativeLibraryDir = baseApplication.nativeLibraryDir;
-        } else if (!p.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
+        } else if (!p.installOption.isFlag(InstallOption.FLAG_SYSTEM)
+                || p.installOption.isFlag(InstallOption.FLAG_PRIVATE_NATIVE_LIBRARIES)) {
             ai.nativeLibraryDir = BEnvironment.getAppLibDir(ai.packageName).getAbsolutePath();
         }
         ai.processName = BPackageManagerService.fixProcessName(p.packageName, ai.packageName);

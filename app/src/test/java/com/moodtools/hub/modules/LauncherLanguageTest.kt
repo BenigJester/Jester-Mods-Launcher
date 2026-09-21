@@ -280,6 +280,53 @@ class LauncherLanguageTest {
     }
 
     @Test
+    fun accessKeyFlowTranslatesOfflineForEveryLanguage() {
+        val text = listOf(
+            "Access key",
+            "Checking your digital key",
+            "PAID ACCESS KEY",
+            "Activate your Ko-fi package here. Its time stacks onto any active Launcher and Free Fire access.",
+            "JM access key",
+            "Root Launcher required",
+            "Activation failed",
+            "Activate access key",
+            "Access vault",
+            "Activate a Ko-fi package. Every key adds its full duration to your current Launcher and Free Fire timers.",
+            "DIGITAL KEY",
+            "Paste",
+            "Activate package  →",
+            "Key already active",
+            "+7 days added",
+            "The existing access records were extended—no duplicate grant was created.",
+            "Free Fire is available only in Jester Mods Root Launcher. Open the Root Launcher to activate this key. Your key was not used.",
+            "Enter the key from your Ko-fi order. Any time you buy is added to the access you already have.",
+            "Open the Root Launcher",
+            "Check your key",
+            "Key already used",
+            "Please try again",
+            "Open Jester Mods Root Launcher and enter this key there. This key has not been used.",
+            "We couldn't find this key. Check the key from your Ko-fi order and try again.",
+            "This key has already been used on another device.",
+            "We couldn't redeem your key right now. Try again in a moment. You won't lose any purchased time.",
+            "Key redeemed successfully",
+            "This key is already active",
+            "No time was added again.",
+            "INCLUDED IN THIS KEY",
+            "Launcher access",
+            "Free Fire access",
+            "7 days",
+            "YOUR ACCESS NOW",
+            "Permanent",
+            "This key was already added, so no extra time was added.",
+            "You're all set. Your Launcher and Free Fire access have been updated."
+        )
+        LauncherLanguage.entries.drop(1).forEach { language ->
+            val missing = text.filter { LauncherLocalization.translate(it, language) == it }
+            assertTrue("Missing $language key translations: ${missing.joinToString(" | ")}", missing.isEmpty())
+        }
+    }
+
+    @Test
     fun loadingDialogsAndDiagnosticsTranslateOfflineForEveryLanguage() {
         val text = listOf(
             "DIAGNOSTICS", "Inspect", "Copy diagnostics", "OK", "All changelogs",

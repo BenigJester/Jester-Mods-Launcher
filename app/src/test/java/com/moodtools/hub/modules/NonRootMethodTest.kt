@@ -26,9 +26,30 @@ class NonRootMethodTest {
         )
         assertEquals(NonRootMethod.DIRECT_PATCH, NonRootMethod.fromJson("direct_patch"))
         assertEquals(NonRootMethod.IDENTITY_SHELL, NonRootMethod.fromJson("identity_shell"))
+        assertEquals(NonRootMethod.NONE, NonRootMethod.fromJson("none"))
         assertThrows(IllegalArgumentException::class.java) {
             NonRootMethod.fromJson("virtual_magic")
         }
+    }
+
+    @Test
+    fun rootOnlyMethodIsAValidSingletonChoice() {
+        assertEquals(
+            listOf(NonRootMethod.NONE),
+            NonRootMethod.choicesFromJson(listOf("none"), NonRootMethod.NONE)
+        )
+    }
+
+    @Test
+    fun rootOnlyModulesAreVisibleOnlyInRootLauncher() {
+        val module = dualMethodModule(selected = NonRootMethod.IDENTITY_SHELL).copy(
+            nonRootMethod = NonRootMethod.NONE,
+            nonRootMethods = listOf(NonRootMethod.NONE),
+            selectedNonRootMethod = null
+        )
+
+        assertEquals(false, module.isVisibleInLauncher(rootMode = false))
+        assertEquals(true, module.isVisibleInLauncher(rootMode = true))
     }
 
     @Test
@@ -46,6 +67,34 @@ class NonRootMethodTest {
         assertEquals("ROOT SETUP", presentation.setupLabel)
         assertEquals("Root method", presentation.fieldLabel)
         assertEquals("How root injection works", presentation.explanationTitle)
+    }
+
+    @Test
+    fun externalControllerUsesInjectorDisplayLabel() {
+        val presentation = launcherMethodPresentation(
+            NonRootMethod.INJECTION,
+            rootMode = true,
+            rootMethod = RootMethod.EXTERNAL_CONTROLLER
+        )
+
+        assertEquals("external_controller", RootMethod.EXTERNAL_CONTROLLER.jsonValue)
+        assertEquals("Injector", presentation.displayName)
+        assertEquals("INJECTOR", presentation.badgeLabel)
+        assertEquals("How external control works", presentation.explanationTitle)
+    }
+
+    @Test
+    fun externalControllerUsesBlackBoxDisplayLabelInNonRootLauncher() {
+        val presentation = launcherMethodPresentation(
+            NonRootMethod.INJECTION,
+            rootMode = false,
+            rootMethod = RootMethod.EXTERNAL_CONTROLLER
+        )
+
+        assertEquals(NonRootMethod.INJECTION, presentation.method)
+        assertEquals("BlackBox controller", presentation.displayName)
+        assertEquals("CONTROLLER", presentation.badgeLabel)
+        assertEquals("How BlackBox control works", presentation.explanationTitle)
     }
 
     @Test
