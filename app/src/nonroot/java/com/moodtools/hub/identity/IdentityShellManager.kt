@@ -847,7 +847,7 @@ internal class IdentityShellManager(
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
         const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
         const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
-        const val CURRENT_SHELL_VERSION = 36
+        const val CURRENT_SHELL_VERSION = 37
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"

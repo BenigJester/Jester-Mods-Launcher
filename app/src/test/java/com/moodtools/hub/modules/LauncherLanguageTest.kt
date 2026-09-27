@@ -418,4 +418,26 @@ class LauncherLanguageTest {
             }
         }
     }
+
+    @Test
+    fun temporaryExternalControllerLifecycleTranslatesOfflineForEveryLanguage() {
+        val text = listOf(
+            "Restore original lib",
+            "Restore original library?",
+            "This external-controller add-on temporarily mounts its verified game library. Restore original lib stops the game and returns to the untouched Google Play library.",
+            "Checking the installed game library.",
+            "Mounting the verified game library temporarily.",
+            "Original library restored"
+        )
+        LauncherLanguage.entries.drop(1).forEach { language ->
+            text.forEach { source ->
+                assertNotEquals(source, LauncherLocalization.translate(source, language))
+            }
+            listOf("Preparing PUBG Mobile", "PUBG Mobile is starting without runtime injection.").forEach { source ->
+                val translated = LauncherLocalization.translate(source, language)
+                assertNotEquals(source, translated)
+                assertTrue(translated.contains("PUBG Mobile"))
+            }
+        }
+    }
 }

@@ -5,6 +5,8 @@
 **/build/
 module-output/
 captures/
+/diagnostics/
+/local-ignore/
 
 # Production module sources are tracked only in this private repository.
 # Generated native/DEX/package outputs remain excluded by the rules below.
@@ -12,6 +14,7 @@ captures/
 # Native build output
 **/.cxx/
 **/.externalNativeBuild/
+**/.build-native/
 cmake-build-*/
 **/CMakeFiles/
 **/CMakeCache.txt

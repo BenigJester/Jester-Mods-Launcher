@@ -7,7 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.moodtools.hub.modules.ModuleConfig
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
@@ -19,8 +21,20 @@ import java.io.File
 /** Hosts a module menu in Jester's process; no controller code enters the game process. */
 class ExternalControllerService : Service() {
     private val pluginLoader by lazy { PluginLoader(this) }
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var activePackage: String? = null
     private var activeModule: ModuleConfig? = null
+    private val repairMenu = Runnable {
+        val packageName = activePackage ?: return@Runnable
+        val module = activeModule ?: return@Runnable
+        runCatching {
+            val directory = ModuleRepository(this).directoryFor(module)
+            val plugin = pluginLoader.load(module) ?: error("Module menu entry point is missing")
+            plugin.onLaunch(PluginContext(
+                this, packageName, directory.absolutePath, "external_controller"
+            ))
+        }.onFailure { error -> Log.e(TAG, "External controller menu repair failed", error) }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,6 +79,7 @@ class ExternalControllerService : Service() {
                     )
                 }.onFailure { error -> Log.e(TAG, "Direct-patch state resend failed", error) }
             }
+            mainHandler.post(repairMenu)
             return START_REDELIVER_INTENT
         }
         runCatching {
@@ -93,7 +108,14 @@ class ExternalControllerService : Service() {
         return START_REDELIVER_INTENT
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        mainHandler.removeCallbacks(repairMenu)
+        mainHandler.postDelayed(repairMenu, MENU_REPAIR_DELAY_MS)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        mainHandler.removeCallbacks(repairMenu)
         activeModule?.let { runCatching { pluginLoader.stopExternal(it) } }
         activeModule = null
         activePackage = null
@@ -110,6 +132,7 @@ class ExternalControllerService : Service() {
         private const val TAG = "JesterExternalControl"
         private const val CHANNEL_ID = "external_controller"
         private const val NOTIFICATION_ID = 4127
+        private const val MENU_REPAIR_DELAY_MS = 750L
         private const val EXTRA_PACKAGE = "package"
         private const val EXTRA_FEATURE_STATE_PATH = "feature_state_path"
         private const val EXTRA_DIRECT_PATCH = "direct_patch"

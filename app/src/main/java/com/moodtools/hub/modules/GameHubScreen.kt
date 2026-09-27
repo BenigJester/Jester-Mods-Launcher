@@ -658,6 +658,7 @@ fun GameHubScreen(
     onBack: () -> Unit,
     onUpdate: (LibraryGame) -> Unit,
     onRepair: (LibraryGame) -> Unit,
+    onRestoreOriginalLibrary: (LibraryGame) -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: (LibraryGame) -> Unit,
     onSelectNonRootMethod: (LibraryGame, NonRootMethod) -> Unit,
@@ -831,6 +832,7 @@ fun GameHubScreen(
                                     onBack = onBack,
                                     onUpdate = { onUpdate(visiblePage.game) },
                                     onRepair = { onRepair(visiblePage.game) },
+                                    onRestoreOriginalLibrary = { onRestoreOriginalLibrary(visiblePage.game) },
                                     onVerify = onVerify,
                                     onLaunch = { onLaunch(visiblePage.game) },
                                     onSelectNonRootMethod = { method ->
@@ -8437,6 +8439,7 @@ private fun ModuleScreen(
     onBack: () -> Unit,
     onUpdate: () -> Unit,
     onRepair: () -> Unit,
+    onRestoreOriginalLibrary: () -> Unit,
     onVerify: (String) -> Unit,
     onLaunch: () -> Unit,
     onSelectNonRootMethod: (NonRootMethod) -> Unit,
@@ -8450,6 +8453,7 @@ private fun ModuleScreen(
     val haptic = LocalHapticFeedback.current
     var confirmRemoval by remember(game.packageName) { mutableStateOf(false) }
     var confirmDataReset by remember(game.packageName) { mutableStateOf(false) }
+    var confirmLibraryRestore by remember(game.packageName) { mutableStateOf(false) }
 
     RefreshableScreen(
         refreshing = refreshing,
@@ -8626,7 +8630,13 @@ private fun ModuleScreen(
                 }
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    "Download a fresh, verified copy of this add-on whenever its files need attention.",
+                    if (BuildConfig.FLAVOR == "root" &&
+                        game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
+                        "This external-controller add-on temporarily mounts its verified game library. " +
+                            "Restore original lib stops the game and returns to the untouched Google Play library."
+                    } else {
+                        "Download a fresh, verified copy of this add-on whenever its files need attention."
+                    },
                     color = Muted,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -8643,6 +8653,18 @@ private fun ModuleScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = PrivateViolet, contentColor = Ink)
                 ) {
                     Text("Repair add-on", fontWeight = FontWeight.Bold)
+                }
+                if (BuildConfig.FLAVOR == "root" &&
+                    game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER && installedGame != null) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { confirmLibraryRestore = true },
+                        enabled = !update.inProgress && !launch.inProgress && !gameDataReset.inProgress,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 14.dp)
+                    ) {
+                        Text("Restore original lib", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -8808,6 +8830,39 @@ private fun ModuleScreen(
         }
         item { Spacer(Modifier.height(12.dp)) }
         }
+    }
+
+    if (confirmLibraryRestore) {
+        AlertDialog(
+            onDismissRequest = { confirmLibraryRestore = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = SurfaceRaised,
+            titleContentColor = Color.White,
+            textContentColor = Muted,
+            title = { Text("Restore original library?") },
+            text = {
+                Text(
+                    "This stops the game and removes the temporary patched-library mount. " +
+                        "Your untouched Google Play library becomes active again; game data is kept."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmLibraryRestore = false
+                        onRestoreOriginalLibrary()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrivateViolet, contentColor = Ink)
+                ) { Text("Restore original lib") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { confirmLibraryRestore = false },
+                    border = BorderStroke(1.dp, Hairline),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent)
+                ) { Text("Cancel") }
+            }
+        )
     }
 
     if (confirmRemoval) {

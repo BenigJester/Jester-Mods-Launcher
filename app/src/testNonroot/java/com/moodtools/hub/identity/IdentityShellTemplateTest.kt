@@ -142,6 +142,10 @@ class IdentityShellTemplateTest {
                 dex.contains("Created guest Application context through LoadedApk without instrumentation paths")
             )
             assertTrue(
+                "Exact-package guest network policy must replace the shell policy before startup",
+                dex.contains("Installed guest network policy before exact-package Application")
+            )
+            assertTrue(
                 "BlackReflection was renamed into a guest-collidable package",
                 dex.contains("Ltop/niunaijun/blackreflection/BlackReflection;")
             )

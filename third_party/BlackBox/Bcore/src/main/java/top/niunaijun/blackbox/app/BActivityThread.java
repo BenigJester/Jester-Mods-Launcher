@@ -1326,6 +1326,20 @@ public class BActivityThread extends IBActivityThread.Stub {
                 try {
                     Reflector.with(activityThread).field("mInstrumentedAppDir").set("");
                     Reflector.with(activityThread).field("mInstrumentationAppDir").set("");
+                    // The shell Application has already installed its network policy in this
+                    // process. Replace it before Android creates the exact-package guest, or a
+                    // guest with per-domain rules fails before its first Activity can draw.
+                    if (BRNetworkSecurityConfigProvider.getRealClass() != null) {
+                        Security.removeProvider("AndroidNSSP");
+                        Context guestContext = (Context) Reflector.on(Class.forName(
+                                "android.app.ContextImpl")).method(
+                                "createAppContext",
+                                Class.forName("android.app.ActivityThread"),
+                                Class.forName("android.app.LoadedApk"))
+                                .call(activityThread, loadedApk);
+                        BRNetworkSecurityConfigProvider.get().install(guestContext);
+                        Slog.i(TAG, "Installed guest network policy before exact-package Application");
+                    }
                     application = BRLoadedApk.getWithException(loadedApk)
                             .makeApplication(false, null);
                 } finally {

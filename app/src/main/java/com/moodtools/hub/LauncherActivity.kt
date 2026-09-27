@@ -315,6 +315,7 @@ class LauncherActivity : ComponentActivity() {
                     onBack = viewModel::closeGame,
                     onUpdate = ::updateLibraryGame,
                     onRepair = viewModel::repairLibraryGame,
+                    onRestoreOriginalLibrary = viewModel::restoreOriginalLibrary,
                     onVerify = ::openTrustedWebPage,
                     onLaunch = ::launchLibraryGame,
                     onSelectNonRootMethod = viewModel::selectNonRootMethod,
@@ -3120,6 +3121,41 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     fun repairLibraryGame(entry: LibraryGame) {
         entry.listing?.let { installModule(it, forceRepair = true) }
+    }
+
+    fun restoreOriginalLibrary(entry: LibraryGame) {
+        if (_launchState.value.inProgress || _updateState.value.inProgress ||
+            _gameDataResetState.value.inProgress) return
+        _launchState.value = LaunchUiState(
+            inProgress = true,
+            headline = "Restoring original library",
+            detail = "Stopping the game and removing the temporary patched library."
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                ExecutionModeLaunchBridge.restoreExternalControllerLibrary(
+                    getApplication<android.app.Application>(),
+                    entry
+                )
+            }.onSuccess {
+                _launchState.value = LaunchUiState(
+                    headline = "Original library restored",
+                    detail = "The untouched Google Play library is active again."
+                )
+                refreshGames(forceGameScan = true)
+            }.onFailure { error ->
+                android.util.Log.e("JesterMoodsLaunch", "Original library restore failed", error)
+                _launchState.value = LaunchUiState(
+                    headline = "Couldn't restore original library",
+                    detail = if (error.message?.contains("not the original Google Play file") == true) {
+                        "Reinstall the game from Google Play once, then try again."
+                    } else {
+                        "Restart Jester Mods and try again."
+                    },
+                    failed = true
+                )
+            }
+        }
     }
 
     fun launchLibraryGame(entry: LibraryGame) {

@@ -46,6 +46,10 @@ object ExecutionModeLaunchBridge {
         }
     }
 
+    fun restoreExternalControllerLibrary(context: Context, game: LibraryGame) {
+        error("Restoring the original game library is available only in Root mode")
+    }
+
     fun isInstalledIdentityShell(context: Context, game: LibraryGame): Boolean =
         game.module.effectiveNonRootMethod == NonRootMethod.IDENTITY_SHELL &&
             identityShellManager(context, game.packageName).isInstalledShell()

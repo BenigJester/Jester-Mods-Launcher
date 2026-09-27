@@ -77,6 +77,8 @@ internal object LauncherAdditionalTranslations {
         putAll(LauncherTranslationChunk18.entries)
         putAll(LauncherTranslationChunk19.entries)
         putAll(LauncherTranslationChunk20.entries)
+        putAll(LauncherTranslationChunk21.entries)
+        putAll(LauncherTranslationChunk22.entries)
     }
     private val exact = entries.filterKeys { !placeholder.containsMatchIn(it) }
     private val templates = entries

@@ -262,22 +262,6 @@ android {
             }
         }
 
-        controller {
-            dimension 'executionMode'
-            applicationIdSuffix '.hub.controller'
-            buildConfigField 'boolean', 'IS_ROOT_MODE', 'true'
-            buildConfigField 'boolean', 'CONTROLLER_ONLY', 'true'
-            buildConfigField 'String', 'ACCESS_FLAVOR', '"root"'
-            ndk {
-                abiFilters 'arm64-v8a'
-            }
-            externalNativeBuild {
-                cmake {
-                    cppFlags '-DEXECUTION_MODE_CONTROLLER=1'
-                }
-            }
-        }
-
         nonroot {
             dimension 'executionMode'
             applicationId 'com.moodtools.hub.nonroot'
@@ -354,9 +338,7 @@ android {
         main.assets.srcDir(generatedPrivateModuleAssetsDirectory)
         main.assets.srcDir(generatedLocalTestModuleAssetsDirectory)
         root.java.srcDir('src/externalController/java')
-        controller.java.srcDir('src/externalController/java')
         nonroot.java.srcDir('src/externalController/java')
-        controller.manifest.srcFile('src/root/AndroidManifest.xml')
         nonroot.assets.srcDir(new File(generatedIdentityShellAssetsDirectory, 'nonroot'))
     }
 
@@ -397,50 +379,6 @@ tasks.configureEach { task ->
                 generatedIdentityShellAssetsDirectory,
                 'nonroot/identity-shell/template.apk'
             ))
-        }
-    }
-}
-
-tasks.register('verifyControllerHardenedTestArtifact') {
-    dependsOn('assembleControllerHardenedTest')
-    doLast {
-        def apk = file("$buildDir/outputs/apk/controller/hardenedTest/app-controller-hardenedTest.apk")
-        if (!apk.isFile()) throw new GradleException("Controller APK was not produced: ${apk}")
-        def forbidden = [
-            'moodtools-injector',
-            'libmoodtools_root_runtime.so',
-            'root-runtime/',
-            '--memfd',
-            '--bp-ld',
-            'AndKittyInjector',
-            'DobbyHook',
-            'KittyMemory',
-            'xdl_open',
-            'xdl_sym'
-        ]
-        def archive = new java.util.zip.ZipFile(apk)
-        try {
-            archive.entries().each { entry ->
-                def entryName = entry.name
-                forbidden.each { signature ->
-                    if (entryName.contains(signature)) {
-                        throw new GradleException("Controller APK contains forbidden entry ${entryName}")
-                    }
-                }
-                if (!entry.directory && (entryName.endsWith('.dex') || entryName.endsWith('.so'))) {
-                    def contents = new String(archive.getInputStream(entry).bytes,
-                        java.nio.charset.StandardCharsets.ISO_8859_1)
-                    forbidden.each { signature ->
-                        if (contents.contains(signature)) {
-                            throw new GradleException(
-                                "Controller APK contains forbidden signature ${signature} in ${entryName}"
-                            )
-                        }
-                    }
-                }
-            }
-        } finally {
-            archive.close()
         }
     }
 }

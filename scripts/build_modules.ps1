@@ -80,6 +80,27 @@ function Compress-GzipFile([string] $Source, [string] $Destination) {
     }
 }
 
+function Get-GzipSha256([string] $Path) {
+    $sourceStream = [System.IO.File]::OpenRead($Path)
+    try {
+        $gzipStream = New-Object System.IO.Compression.GZipStream(
+            $sourceStream,
+            [System.IO.Compression.CompressionMode]::Decompress)
+        try {
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                return ([BitConverter]::ToString($sha256.ComputeHash($gzipStream))).Replace('-', '').ToLowerInvariant()
+            } finally {
+                $sha256.Dispose()
+            }
+        } finally {
+            $gzipStream.Dispose()
+        }
+    } finally {
+        $sourceStream.Dispose()
+    }
+}
+
 function Convert-ToModuleLookupKey([string] $Value) {
     if (-not $Value) {
         return ""
@@ -304,7 +325,12 @@ foreach ($moduleDir in $moduleDirectories) {
         }
     }
 
-    $menuSource = Join-Path $java "Menu.java"
+    $sharedExternalJava = $null
+    $menuSource = if ($sharedExternalJava) {
+        Join-Path $sharedExternalJava "Menu.java"
+    } else {
+        Join-Path $java "Menu.java"
+    }
     if (-not (Test-Path -LiteralPath $menuSource -PathType Leaf)) {
         throw "Module ${name} must include the shared Menu.java shell."
     }
@@ -332,7 +358,11 @@ foreach ($moduleDir in $moduleDirectories) {
     # module cannot turn that abort into a BlackBox relaunch loop.
     $javaNativeMethods = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::Ordinal)
-    Get-ChildItem -LiteralPath $java -Recurse -File -Filter '*.java' | ForEach-Object {
+    $javaAuditDirectories = @($java)
+    if ($sharedExternalJava) { $javaAuditDirectories += $sharedExternalJava }
+    $javaAuditDirectories | ForEach-Object {
+      Get-ChildItem -LiteralPath $_ -Recurse -File -Filter '*.java'
+    } | ForEach-Object {
         $javaSourceText = Get-Content -LiteralPath $_.FullName -Raw
         [regex]::Matches(
             $javaSourceText,
@@ -383,7 +413,16 @@ foreach ($moduleDir in $moduleDirectories) {
         }
     }
 
-    $javaSources = Get-ChildItem -LiteralPath $java -Recurse -Filter "*.java" | ForEach-Object { $_.FullName }
+    $javaSources = @(Get-ChildItem -LiteralPath $java -Recurse -Filter "*.java" |
+        ForEach-Object { $_.FullName })
+    if ($sharedExternalJava) {
+        $moduleJavaNames = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase)
+        $javaSources | ForEach-Object { [void] $moduleJavaNames.Add([IO.Path]::GetFileName($_)) }
+        $javaSources += Get-ChildItem -LiteralPath $sharedExternalJava -Recurse -Filter "*.java" |
+            Where-Object { -not $moduleJavaNames.Contains($_.Name) } |
+            ForEach-Object { $_.FullName }
+    }
     if (-not $javaSources) {
         throw "No Java sources found for $name"
     }
@@ -449,6 +488,34 @@ foreach ($moduleDir in $moduleDirectories) {
             $embeddedIl2CppGzip = Join-Path $work 'native\libil2cpp.patched.so.gz'
             Compress-GzipFile $embeddedIl2CppSource $embeddedIl2CppGzip
             $cmakeArgs += "-DEMBEDDED_IL2CPP_GZIP=$embeddedIl2CppGzip"
+        }
+        $embeddedGameLibraryGzip = Join-Path $cpp 'Embedded\libUE4.patched.so.gz'
+        if (Test-Path -LiteralPath $embeddedGameLibraryGzip -PathType Leaf) {
+            $embeddedGameLibrarySha256 = Get-GzipSha256 $embeddedGameLibraryGzip
+            $moduleRuntime = Join-Path $java 'ModuleRuntime.java'
+            $moduleRuntimeText = Get-Content -LiteralPath $moduleRuntime -Raw
+            $declaredHash = [regex]::Match(
+                $moduleRuntimeText,
+                'EMBEDDED_IL2CPP_SHA256\s*=\s*"([0-9a-fA-F]{64})"').Groups[1].Value.ToLowerInvariant()
+            if ($declaredHash -ne $embeddedGameLibrarySha256) {
+                throw "Module ${name} declares embedded game library hash ${declaredHash}, but libUE4.patched.so.gz contains ${embeddedGameLibrarySha256}."
+            }
+            $originalGameLibrary = Join-Path $cpp 'Embedded\libUE4.patched.so'
+            $gameLibraryBytes = if (Test-Path -LiteralPath $originalGameLibrary -PathType Leaf) {
+                (Get-Item -LiteralPath $originalGameLibrary).Length
+            } else {
+                $gzipStream = [IO.File]::OpenRead($embeddedGameLibraryGzip)
+                try {
+                    $gzipStream.Seek(-4, [IO.SeekOrigin]::End) | Out-Null
+                    $sizeBytes = New-Object byte[] 4
+                    [void] $gzipStream.Read($sizeBytes, 0, 4)
+                    [BitConverter]::ToUInt32($sizeBytes, 0)
+                } finally {
+                    $gzipStream.Dispose()
+                }
+            }
+            $cmakeArgs += "-DEMBEDDED_GAME_LIBRARY_GZIP=$embeddedGameLibraryGzip"
+            $cmakeArgs += "-DEMBEDDED_GAME_LIBRARY_BYTES=$gameLibraryBytes"
         }
         & $cmake @cmakeArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
