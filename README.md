@@ -1,96 +1,94 @@
 <div align="center">
-  <img src="app/src/main/res/drawable/menu_icon.png" alt="Jester Mods" width="112" />
+  <img src="app/src/main/res/drawable/menu_icon.png" alt="Jester Mods logo" width="88" />
   <h1>Jester Mods Launcher</h1>
-  <p>Transparency source for the official signed Android launcher.</p>
+  <p>An Android launcher for managing game add-ons in Root and Non-root modes.</p>
+  <p>
+    <a href="https://github.com/BenigJester/Jester-Mods-Launcher/releases">Downloads</a> ·
+    <a href="#build-from-source">Build from source</a> ·
+    <a href="SECURITY.md">Security</a> ·
+    <a href="PRIVACY.md">Privacy</a>
+  </p>
 </div>
 
-## Why this repository exists
+## About the project
 
-This repository lets users and researchers inspect how the launcher handles
-network access, update signatures, module integrity, root/non-root execution,
-and direct-patch launch authorization. It is published from a clean snapshot;
-private development history, production game modules, server code, payloads,
-credentials, signing keys, and reverse-engineering work material are excluded.
+Jester Mods brings add-on discovery, installation, compatibility checks, and
+signed updates into one launcher. Choose the Root or Non-root APK for your device.
 
-The source is available for transparency. It is not a promise that arbitrary
-forks can use the production module service. See [SOURCE_AVAILABLE.md](SOURCE_AVAILABLE.md).
+This repository publishes the Android client for transparency and security
+review. It includes the launcher UI, catalog and update logic, integrity checks,
+and a neutral example module. Production game modules, backend code, credentials,
+and signing keys remain private.
 
-## Verify an official APK
+Local builds are for development and review; they cannot download protected
+production modules. See the [source-available terms](SOURCE_AVAILABLE.md) before
+redistributing or modifying the project.
 
-Official Root and Non-root APKs use certificate SHA-256:
+## Download and verify
+
+Get the official APKs from [GitHub Releases](https://github.com/BenigJester/Jester-Mods-Launcher/releases)
+or the [launcher download page](https://jester.moodtools.workers.dev/game/jester-mods-launcher).
+
+| APK | Use |
+| --- | --- |
+| Root | Devices with root access |
+| Non-root | Devices without root access, using the supported compatibility or patch method |
+
+Both official APKs use this signing-certificate SHA-256:
 
 ```text
 AA65ABF5EB089BFD92E3138A9BFA0D6BA8E0F875FF0B26E295AF656D67CCDA29
 ```
 
-Verify an APK with Android SDK Build Tools:
+Check the certificate with Android SDK Build Tools and compare the file hash
+with the hash published for that release:
 
 ```powershell
-apksigner verify --verbose --print-certs .\Jester-Mods.apk
-Get-FileHash .\Jester-Mods.apk -Algorithm SHA256
+apksigner verify --verbose --print-certs .\Jester-Moods-Root.apk
+Get-FileHash .\Jester-Moods-Root.apk -Algorithm SHA256
 ```
 
-Do not install an APK when its signer differs from the fingerprint above.
-Release notes should publish the exact APK SHA-256 separately for each flavor.
+Use the Non-root filename when verifying that APK. Do not install a file with
+a different signer.
 
-## Security boundary
+## Build from source
 
-- Catalogs, launcher releases, module manifests, and module files are checked
-  against signed metadata before use.
-- Protected module downloads require a fresh Android Keystore proof plus
-  hardware-backed attestation of the official package and release signer.
-- A public-source build has a different signer and cannot receive production
-  module payloads from the service.
-- A direct-patched game loads its module only after verifying a fresh ticket
-  signed by the launcher-held Android Keystore key embedded in that patched
-  installation. A normal game-icon launch delegates to the original game.
-- Production game modules and their native targets remain private. Only the
-  neutral `modules/com.example.module/` template is included.
-
-These controls reduce unauthorized delivery, copied credentials, and casual
-direct launching. No client-side protection can promise absolute secrecy on a
-device fully controlled by an authorized rooted user. See [SECURITY.md](SECURITY.md).
-
-## Build the launcher
-
-Requirements: JDK 17+, Android SDK Platform 35, Android NDK, CMake, Ninja, and
-PowerShell on Windows.
+You need JDK 17+, Android SDK Platform 35, Android NDK, CMake, and Ninja.
+The Windows helpers also require PowerShell.
 
 ```powershell
 .\gradlew.bat :app:assembleRootDebug :app:assembleNonrootDebug --no-daemon
 ```
 
-Debug APKs are locally signed and intentionally cannot use the production
-module channel. Production builds fail closed unless an external release
-keystore and matching public certificate fingerprint are supplied. The
-private signing key is never part of this repository.
+The resulting APKs are under `app/build/outputs/apk/`. Debug builds use a local
+signing key. Official release signing requires an external keystore, which is
+not included here. Production-only Root external-controller methods are
+excluded from this snapshot; the Root injection path remains available for review.
 
-## Repository contents
+### Source map
 
-| Path | Purpose |
+| Path | Contents |
 | --- | --- |
-| `app/src/main/` | Shared launcher UI, access, catalog, integrity, and update logic |
-| `app/src/root/` | Root execution bridge and runtime |
+| `app/src/main/` | Shared UI, access, catalog, integrity, and update logic |
+| `app/src/root/` | Public Root execution bridge and injection runtime |
 | `app/src/nonroot/` | Non-root compatibility and guarded patch manager |
-| `modules/com.example.module/` | Synthetic module template, including `DirectLaunchGuard` |
-| `third_party/` | Vendored dependencies governed by their own licenses |
-| `scripts/` | Local build and test helpers safe for the transparency snapshot |
+| `app/src/test/` | Launcher unit tests |
+| `modules/com.example.module/` | Neutral example module |
+| `third_party/` | Dependencies and their license notices |
+| `scripts/` | Local build and test helpers |
 
-The Cloudflare authorization service, publishing tools, real modules, compiled
-module payloads, offsets, dumps, and operational notes are intentionally not
-published. Their absence does not prevent review of the Android client’s trust
-and guard behavior.
+## Security, privacy, and licensing
 
-## Data and permissions
+Signed metadata protects launcher updates and module integrity. Protected
+downloads use Android Keystore proofs and attestation; direct-patched games
+verify a launcher-issued ticket before loading a module. These checks do not
+promise absolute protection on a device controlled by its owner.
 
-The launcher needs network access for signed metadata, access verification,
-updates, and protected module delivery. Root execution is present only in the
-Root flavor. Package installation permissions are used by update and supported
-non-root patch flows. See [PRIVACY.md](PRIVACY.md) for the data inventory.
+For details, see [Security](SECURITY.md), [Privacy](PRIVACY.md),
+[Source-available terms](SOURCE_AVAILABLE.md), and
+[Third-party notices](THIRD_PARTY_NOTICES.md).
 
-## Reporting concerns
-
-Use a private GitHub Security Advisory for vulnerabilities. For authenticity
-concerns, include the APK SHA-256, signer fingerprint, download URL, launcher
-flavor, and version/build. Do not post active digital keys or device identifiers
-in a public issue.
+Report vulnerabilities through a
+[private GitHub Security Advisory](https://github.com/BenigJester/Jester-Mods-Launcher/security/advisories/new).
+Include the launcher version, flavor, APK hash, and reproduction steps.
+Keep digital keys and device identifiers out of public issues.

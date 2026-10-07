@@ -16,6 +16,17 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
+internal fun mergeCatalogs(
+    preferredModules: List<CatalogModule>,
+    retainedModules: List<CatalogModule>
+): List<CatalogModule> {
+    val preferredSlugs = preferredModules.mapTo(hashSetOf()) { it.slug }
+    // A public publication supersedes its previously cached private entry with the same slug.
+    return (preferredModules + retainedModules.filter { it.slug !in preferredSlugs }).also { modules ->
+        require(modules.map { it.slug }.distinct().size == modules.size)
+    }
+}
+
 class ModuleCatalogClient(
     private val context: Context,
     private val accessManager: LauncherAccessManager
@@ -128,13 +139,6 @@ class ModuleCatalogClient(
         SignedEnvelopeVerifier.payload(envelope).getString("scope").also {
             require(it.matches(PRIVATE_SCOPE_PATTERN))
         }
-
-    private fun mergeCatalogs(
-        publicModules: List<CatalogModule>,
-        privateModules: List<CatalogModule>
-    ): List<CatalogModule> = (publicModules + privateModules).also { modules ->
-        require(modules.map { it.slug }.distinct().size == modules.size)
-    }
 
     private fun requestCatalog(): JSONObject {
         val connection = open(

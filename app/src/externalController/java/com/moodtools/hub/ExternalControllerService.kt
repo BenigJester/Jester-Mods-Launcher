@@ -108,12 +108,6 @@ class ExternalControllerService : Service() {
         return START_REDELIVER_INTENT
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        mainHandler.removeCallbacks(repairMenu)
-        mainHandler.postDelayed(repairMenu, MENU_REPAIR_DELAY_MS)
-        super.onTaskRemoved(rootIntent)
-    }
-
     override fun onDestroy() {
         mainHandler.removeCallbacks(repairMenu)
         activeModule?.let { runCatching { pluginLoader.stopExternal(it) } }
@@ -132,7 +126,6 @@ class ExternalControllerService : Service() {
         private const val TAG = "JesterExternalControl"
         private const val CHANNEL_ID = "external_controller"
         private const val NOTIFICATION_ID = 4127
-        private const val MENU_REPAIR_DELAY_MS = 750L
         private const val EXTRA_PACKAGE = "package"
         private const val EXTRA_FEATURE_STATE_PATH = "feature_state_path"
         private const val EXTRA_DIRECT_PATCH = "direct_patch"

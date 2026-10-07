@@ -91,7 +91,7 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
                         resolve.activityInfo.processName,
                         userId
                 );
-            if (processRecord == null) {
+            if (processRecord == null || processRecord.bActivityThread == null) {
                 continue;
             }
             try {

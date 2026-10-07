@@ -559,6 +559,15 @@ public class IConnectivityManagerProxy extends BinderInvocationStub {
         }
     }
 
+    @ProxyMethod("listenForNetwork")
+    public static class ListenForNetwork extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            MethodParameterUtils.replaceFirstAppPkg(args);
+            return method.invoke(who, args);
+        }
+    }
+
     
     @ProxyMethod("registerNetworkCallback")
     public static class RegisterNetworkCallback extends MethodHook {

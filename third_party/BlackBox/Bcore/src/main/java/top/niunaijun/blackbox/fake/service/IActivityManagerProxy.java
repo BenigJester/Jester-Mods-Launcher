@@ -490,12 +490,17 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 return method.invoke(who, args);
             }
 
-            
+            String sourceGuestPackage = BActivityThread.getAppPackageName();
+            if ("com.mojang.minecraftpe".equals(sourceGuestPackage)
+                    && "com.google.android.gms.games.internal.appshortcuts.service.START"
+                    .equals(intent.getAction())) {
+                Slog.i("GoogleSignInCompat", "Skipping unavailable Play Games app-shortcuts service");
+                return 0;
+            }
 
             int userId = intent.getIntExtra("_B_|_UserId", -1);
             userId = userId == -1 ? BActivityThread.getUserId() : userId;
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, userId);
-            String sourceGuestPackage = BActivityThread.getAppPackageName();
             if (FakeBillingCompat.shouldUseFallback(intent, sourceGuestPackage)) {
                 return FakeBillingCompat.bind(connection, sourceGuestPackage);
             }
@@ -790,11 +795,11 @@ public class IActivityManagerProxy extends ClassInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             int hostUserId = BlackBoxCore.getHostUserId();
-            if (hostUserId != 0 && args != null && args.length > 0) {
+            if (args != null && args.length > 0) {
                 int lastIndex = args.length - 1;
                 if (args[lastIndex] instanceof Integer) {
                     int userId = (int) args[lastIndex];
-                    if (userId == 0) {
+                    if (userId == 0 || userId == -1) {
                         args[lastIndex] = hostUserId;
                     }
                 }
