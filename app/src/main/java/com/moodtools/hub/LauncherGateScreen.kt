@@ -1,5 +1,8 @@
 package com.moodtools.hub
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -10,6 +13,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
@@ -617,6 +623,8 @@ private fun DefaultGateContent(
     onExit: () -> Unit
 ) {
     val locked = presentation is LauncherGatePresentation.Locked
+    val context = LocalContext.current
+    var accessKeyExpanded by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = if (locked) {
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -662,10 +670,91 @@ private fun DefaultGateContent(
                 color = GateMuted,
                 style = MaterialTheme.typography.bodyMedium
             )
-            if (presentation is LauncherGatePresentation.Locked) {
-                Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(22.dp))
+            when (presentation) {
+                is LauncherGatePresentation.Checking -> CircularProgressIndicator(
+                    color = GateAccent,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+                is LauncherGatePresentation.RootDenied,
+                is LauncherGatePresentation.SecurityBlocked -> Button(
+                    onClick = onExit,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFFB4AB),
+                        contentColor = Color(0xFF250000)
+                    )
+                ) { Text("Exit", fontWeight = FontWeight.Bold) }
+                is LauncherGatePresentation.ConnectionRequired -> Button(
+                    onClick = onRetry,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = GateAccent,
+                        contentColor = Color(0xFF09100E)
+                    )
+                ) { Text("Try again", fontWeight = FontWeight.Bold) }
+                is LauncherGatePresentation.Locked -> Button(
+                    onClick = onUnlock,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = GateAccent,
+                        contentColor = GateInk
+                    )
+                ) { Text("Use free 1-day Linkvertise access", fontWeight = FontWeight.Bold) }
+                else -> error("Unsupported default gate presentation: $presentation")
+            }
+            if (locked) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://youtu.be/VhDykReio3E")))
+                        }.onFailure {
+                            Toast.makeText(
+                                context,
+                                LauncherLocalization.translate("Could not open tutorial."),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 13.dp),
+                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
+                ) {
+                    Text("Linkvertise Tutorial", fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { accessKeyExpanded = !accessKeyExpanded },
+                    enabled = !accessKeyState.activating,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 13.dp),
+                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
+                ) {
+                    Text(
+                        if (accessKeyExpanded) "Hide details" else "Activate access key",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            AnimatedVisibility(
+                visible = locked && accessKeyExpanded,
+                enter = expandVertically(
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    expandFrom = Alignment.Top
+                ) + fadeIn(tween(300)),
+                exit = shrinkVertically(
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                    shrinkTowards = Alignment.Top
+                ) + fadeOut(tween(300))
+            ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().background(
+                    modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(
                         GateRaised, RoundedCornerShape(18.dp)
                     ).padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -737,40 +826,6 @@ private fun DefaultGateContent(
                         } else Text("Activate access key", fontWeight = FontWeight.Bold)
                     }
                 }
-            }
-            Spacer(Modifier.height(22.dp))
-            when (presentation) {
-                is LauncherGatePresentation.Checking -> CircularProgressIndicator(
-                    color = GateAccent,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
-                is LauncherGatePresentation.RootDenied,
-                is LauncherGatePresentation.SecurityBlocked -> Button(
-                    onClick = onExit,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFFFB4AB),
-                        contentColor = Color(0xFF250000)
-                    )
-                ) { Text("Exit", fontWeight = FontWeight.Bold) }
-                is LauncherGatePresentation.ConnectionRequired -> Button(
-                    onClick = onRetry,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = GateAccent,
-                        contentColor = Color(0xFF09100E)
-                    )
-                ) { Text("Try again", fontWeight = FontWeight.Bold) }
-                is LauncherGatePresentation.Locked -> OutlinedButton(
-                    onClick = onUnlock,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
-                ) { Text("Use free 1-day Linkvertise access", fontWeight = FontWeight.Bold) }
-                else -> error("Unsupported default gate presentation: $presentation")
             }
             if (presentation is LauncherGatePresentation.Locked) {
                 Spacer(Modifier.height(10.dp))

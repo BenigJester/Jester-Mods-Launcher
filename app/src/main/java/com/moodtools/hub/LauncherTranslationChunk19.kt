@@ -2,6 +2,22 @@ package com.moodtools.hub
 
 internal object LauncherTranslationChunk19 {
     val entries = mapOf(
+        "Use free 1-day Linkvertise access" to arrayOf(
+            "Gamitin ang libreng 1-araw na access sa Linkvertise", "Linkvertise로 무료 1일 이용하기", "Linkvertiseで無料の1日アクセスを利用", "通过 Linkvertise 获取免费 1 天访问权限", "Usar acceso gratuito de 1 día con Linkvertise", "Dùng quyền truy cập miễn phí 1 ngày qua Linkvertise", "Gunakan akses gratis 1 hari melalui Linkvertise", "Usar acesso gratuito de 1 dia pelo Linkvertise", "استخدام وصول مجاني ليوم واحد عبر Linkvertise"
+        ),
+        "Complete the free Linkvertise route once to activate this launcher for one day. When the website confirms your route, tap Open launcher to come back here." to arrayOf(
+            "Kumpletuhin ang libreng Linkvertise route nang isang beses para magamit ang launcher sa loob ng isang araw. Kapag nakumpirma ito ng website, i-tap ang Open launcher para bumalik dito.",
+            "무료 Linkvertise 절차를 한 번 완료하면 런처를 하루 동안 사용할 수 있습니다. 웹사이트에서 완료를 확인하면 Open launcher를 눌러 여기로 돌아오세요.",
+            "無料のLinkvertise手順を一度完了すると、このランチャーを1日間利用できます。サイトで完了が確認されたら、Open launcherをタップしてここに戻ってください。",
+            "完成一次免费的 Linkvertise 流程，即可启用此启动器一天。网站确认完成后，点击 Open launcher 返回这里。",
+            "Completa una vez el proceso gratuito de Linkvertise para activar este lanzador durante un día. Cuando el sitio confirme que lo completaste, pulsa Open launcher para volver aquí.",
+            "Hoàn tất quy trình Linkvertise miễn phí một lần để kích hoạt trình khởi chạy trong một ngày. Khi trang web xác nhận hoàn tất, nhấn Open launcher để quay lại đây.",
+            "Selesaikan proses Linkvertise gratis satu kali untuk mengaktifkan peluncur selama satu hari. Setelah situs mengonfirmasi penyelesaiannya, ketuk Open launcher untuk kembali ke sini.",
+            "Conclua uma vez o processo gratuito do Linkvertise para ativar este inicializador por um dia. Quando o site confirmar a conclusão, toque em Open launcher para voltar aqui.",
+            "أكمل خطوات Linkvertise المجانية مرة واحدة لتفعيل هذا المشغّل ليوم واحد. عندما يؤكد الموقع إكمالها، اضغط على Open launcher للعودة إلى هنا."
+        ),
+        "Linkvertise Tutorial" to arrayOf("Gabay sa Linkvertise", "Linkvertise 이용 안내", "Linkvertiseの使い方", "Linkvertise 教程", "Tutorial de Linkvertise", "Hướng dẫn Linkvertise", "Tutorial Linkvertise", "Tutorial do Linkvertise", "شرح Linkvertise"),
+        "Could not open tutorial." to arrayOf("Hindi mabuksan ang gabay.", "이용 안내를 열 수 없습니다.", "使い方の動画を開けませんでした。", "无法打开教程。", "No se pudo abrir el tutorial.", "Không thể mở hướng dẫn.", "Tidak dapat membuka tutorial.", "Não foi possível abrir o tutorial.", "تعذر فتح الشرح."),
         "Access key" to arrayOf("Susi sa access", "액세스 키", "アクセスキー", "访问密钥", "Clave de acceso", "Khóa truy cập", "Kunci akses", "Chave de acesso", "مفتاح الوصول"),
         "Checking your digital key" to arrayOf("Sinusuri ang iyong digital key", "디지털 키 확인 중", "デジタルキーを確認中", "正在检查您的数字密钥", "Comprobando tu clave digital", "Đang kiểm tra khóa kỹ thuật số", "Memeriksa kunci digital Anda", "Verificando sua chave digital", "جارٍ التحقق من مفتاحك الرقمي"),
         "PAID ACCESS KEY" to arrayOf("BAYAD NA ACCESS KEY", "유료 액세스 키", "有料アクセスキー", "付费访问密钥", "CLAVE DE ACCESO DE PAGO", "KHÓA TRUY CẬP TRẢ PHÍ", "KUNCI AKSES BERBAYAR", "CHAVE DE ACESSO PAGA", "مفتاح وصول مدفوع"),
