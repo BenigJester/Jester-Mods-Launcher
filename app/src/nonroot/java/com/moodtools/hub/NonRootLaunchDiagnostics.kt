@@ -25,7 +25,6 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
     fun install() { LaunchDiagnostics.backend = this }
 
     fun begin(context: Context, game: InstalledGame, verifiedModule: com.moodtools.hub.modules.VerifiedModuleInstall? = null): File? = runCatching {
-        val previous = LaunchSessionRecorder.current(game.packageName)
         val directory = File(context.filesDir, "menus/${game.packageName}")
         val metadata = JSONObject().apply {
             put("package", game.packageName)
@@ -46,13 +45,8 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             put("hostInternetPermission", context.checkSelfPermission("android.permission.INTERNET"))
             if (Build.VERSION.SDK_INT >= 26) put("webView", runCatching { android.webkit.WebView.getCurrentWebViewPackage()?.versionName }.getOrNull() ?: "unavailable")
         }
-        val session = LaunchSessionRecorder.begin(game.packageName, metadata.toString())
-        // Keep the newest session, its predecessor, and the most recent failure.
-        val sessions = session.parentFile!!.listFiles().orEmpty().filter(::isSessionDirectory)
-            .sortedByDescending { it.name.substringBefore('-').toLongOrNull() ?: 0 }
-        val lastFailure = sessions.firstOrNull { it != session && isFailureDirectory(it) }
-        sessions.filter { it !in sessions.take(2) && it != lastFailure && it != previous }.forEach(File::deleteRecursively)
-        session
+        // Each launch gets isolated files; history is removed only by the explicit Clear action.
+        LaunchSessionRecorder.begin(game.packageName, metadata.toString())
     }.getOrNull()
 
     private fun hash(file: File): String = if (!file.isFile) "unavailable" else
@@ -85,11 +79,6 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
 
     private fun isSessionDirectory(file: File): Boolean = file.isDirectory &&
         file.name.matches(Regex("[0-9]+-[a-f0-9-]+")) && file.canonicalFile.parentFile == file.parentFile?.canonicalFile
-
-    private fun isFailureDirectory(session: File) = session.listFiles().orEmpty().any {
-        it.name.startsWith("failure-") || it.name.startsWith("exit-") ||
-            it.name == "launch-error.txt" || it.name == "possible-stall"
-    }
 
     @Synchronized override fun reports(context: Context): List<LaunchDiagnosticReport> {
         val sessions = runCatching { LaunchSessionRecorder.root().listFiles().orEmpty()

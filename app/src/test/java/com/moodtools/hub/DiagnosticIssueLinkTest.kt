@@ -6,6 +6,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiagnosticIssueLinkTest {
+    @Test fun `installer reports prefill details for each diagnostic type`() {
+        for (kind in listOf("launcher update", "add-on transfer", "add-on update check", "companion installer", "package setup")) {
+            val report = "Jester Mods $kind diagnostics\nPackage: com.test.game\nStage: Failed\nLauncher: 4.3.0\nEvent trail: HTTP 502"
+            val link = diagnosticIssueLink("Jester Mods $kind diagnostics", report)
+            val query = URI(link).rawQuery.split('&').associate {
+                it.substringBefore('=') to URLDecoder.decode(it.substringAfter('='), "UTF-8")
+            }
+            assertEquals("Jester Mods $kind diagnostics", query.getValue("title"))
+            assertTrue(query.getValue("body").contains(report))
+        }
+    }
+
+    @Test fun `large installer reports and non-ascii titles stay within browser limit`() {
+        val link = diagnosticIssueLink("診断".repeat(300), "Stage & details?\n".repeat(5000))
+        assertTrue(link.length < 6500)
+        assertEquals("github.com", URI(link).host)
+    }
+
     private fun report(summary: String) = LaunchDiagnosticReport("123-abc", "com.test.game", "Game", 123,
         "Game crash recorded", true, false, "Full report not put in URL", summary)
 

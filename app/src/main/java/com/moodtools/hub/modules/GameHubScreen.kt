@@ -3829,6 +3829,13 @@ private fun InstallerDiagnosticsPanel(
             ) {
                 Text("Copy diagnostics")
             }
+            InstallerDiagnosticGithubButton(
+                report = report,
+                title = clipboardLabel,
+                accent = accent,
+                palette = ActivePalette,
+                modifier = Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, bottom = 15.dp)
+            )
         }
     }
 }

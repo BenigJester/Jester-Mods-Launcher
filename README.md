@@ -50,7 +50,11 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Per-game diagnostics with copy, export, sharing, and clear controls
 - [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
 
-### 4.3.0 source update
+### 4.3.1 source update
+
+Extends prefilled GitHub issue sharing to download, update, repair, and setup diagnostics.
+Game-session history now remains until manually cleared with Clear diagnostics; starting
+a game no longer prunes old reports. Diagnostic storage grows until cleared.
 
 Adds themed, localized diagnostics and report sharing, fixes BlackBox resume/session tracking,
 improves WebView permission compatibility, bounds access checks, and safely handles unexpected

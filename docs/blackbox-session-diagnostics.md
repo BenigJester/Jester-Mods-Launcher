@@ -44,9 +44,10 @@ ADB connection is required. The launcher does not terminate the guest to obtain 
   crash-record availability. Auxiliary Google processes are not attributed as game deaths.
 - A stalled main guest attempts one bounded Java thread snapshot on a diagnostic daemon thread.
   The host never waits for this snapshot; a completely wedged runtime may provide no stacks.
-- Per-process and host event files are capped at 64 KiB. Keep recent sessions and the latest known
-  failure; protect the current running session during a resume attempt. Superseded resume attempts
-  are hidden. Failure reports are not immediately erased by the next game launch.
+- Per-process and host event files are capped at 64 KiB. Session history is retained until the user
+  selects Clear diagnostics; starting a game never prunes previous reports. Superseded resume
+  attempts are hidden. New launches still use isolated files rather than mixing game sessions.
+  Total history storage grows until manually cleared.
 - Full exports are capped at 512 KiB, summaries at 12,000 characters, and shared cache copies at eight.
 
 No automatic upload, touch/keyboard recording, screenshots, raw logcat, exception messages, native
@@ -99,8 +100,8 @@ version bump or release publication is performed by this implementation task.
 
 Root installs a separate collector; no BlackBox checkpoints, startup timeout, thread watchdog,
 ANR/stall classification or slow-launch prompt is enabled. Both injection and external-controller
-launches start a new game session. The newest two sessions and latest captured failure per game
-are retained. Android's system crash policy and signal handlers are not replaced.
+launches start a new game session. Prior sessions and captured crashes are retained until the user
+selects Clear diagnostics. Android's system crash policy and signal handlers are not replaced.
 
 While the launcher UI is resumed, root reads a finite snapshot of the crash buffer at most once
 every 15 seconds, with a three-second process deadline and concurrent bounded output draining.

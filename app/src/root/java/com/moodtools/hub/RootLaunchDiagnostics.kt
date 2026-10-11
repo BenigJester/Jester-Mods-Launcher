@@ -40,10 +40,7 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
                 put("abi", game.abi); put("rootMethod", game.module.rootMethod.toString())
                 put("payloadSha256", payloadSha256 ?: "unavailable")
             }.toString())
-            val sameGame = sessions().filter { (_, meta) -> meta.optString("package") == game.packageName }
-            val keep = sameGame.take(2).map { it.first }.toMutableSet()
-            sameGame.firstOrNull { File(it.first, "crash.txt").isFile }?.let { keep += it.first }
-            sameGame.filter { it.first !in keep }.forEach { (old, _) -> old.deleteRecursively() }
+            // Keep prior sessions until the user explicitly clears this game's diagnostics.
         }
     }
 
