@@ -135,6 +135,8 @@ public final class PlayStoreCrashPolicy {
                 sdkInt, sourceGuestPackage, servicePackage);
         if (shouldArm) {
             sUidMismatchArmed = true;
+            LaunchSessionRecorder.hostEvent(LaunchSessionRecorder.current(sourceGuestPackage),
+                    "play_store_policy_armed " + STATE_ID + " helper=" + servicePackage);
         }
         return shouldArm;
     }

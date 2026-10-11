@@ -42,7 +42,7 @@ object NonRootBlackBoxRuntime {
         if (!packagePattern.matches(packageName)) return false
         return runCatching {
             BlackBoxCore.get().ensureBlackProcessInitialized()
-            BlackBoxCore.isRunningApplication(packageName, DEFAULT_USER_ID)
+            BlackBoxCore.getBActivityManager().getResumableActivityPid(packageName, DEFAULT_USER_ID) > 0
         }.getOrDefault(false)
     }
 
@@ -55,6 +55,7 @@ object NonRootBlackBoxRuntime {
 
         val wasActive = activePackage(appContext) == packageName
         val wasRunning = BlackBoxCore.isRunningApplication(packageName, DEFAULT_USER_ID)
+        NonRootLaunchDiagnostics.stop(packageName)
         runCatching { core.stopPackage(packageName, DEFAULT_USER_ID) }
             .onFailure { error ->
                 Log.w(TAG, "Could not stop virtual package $packageName before removal", error)
@@ -102,6 +103,7 @@ object NonRootBlackBoxRuntime {
             addAll(runningModulePackages(appContext))
         }
         packagesToStop.forEach { packageName ->
+            NonRootLaunchDiagnostics.stop(packageName)
             runCatching { core.stopPackage(packageName, DEFAULT_USER_ID) }
                 .onFailure { error ->
                     Log.w(TAG, "Could not stop virtual package $packageName", error)
@@ -125,12 +127,16 @@ object NonRootBlackBoxRuntime {
             }
     }
 
-    fun launch(context: Context, game: InstalledGame): Boolean {
+    fun launch(context: Context, game: InstalledGame, verifiedModule: com.moodtools.hub.modules.VerifiedModuleInstall? = null): Boolean {
         lastFailureDetail = null
+        val previousDiagnosticSession = top.niunaijun.blackbox.utils.LaunchSessionRecorder.current(game.packageName)
+        var diagnosticSession = NonRootLaunchDiagnostics.begin(context, game, verifiedModule)
         return runCatching {
             require(packagePattern.matches(game.packageName)) { "Invalid game package name" }
             val core = BlackBoxCore.get()
+            NonRootLaunchDiagnostics.event(diagnosticSession, "blackbox_service_wait_started")
             core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS)
+            NonRootLaunchDiagnostics.event(diagnosticSession, "blackbox_service_ready")
             val userId = DEFAULT_USER_ID
             val externalController = game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER
             if (!externalController) ExternalControllerService.stop(context.applicationContext)
@@ -144,16 +150,30 @@ object NonRootBlackBoxRuntime {
             val externalControllerReady = expectedPatchedHash != null &&
                 virtualIl2Cpp(game.packageName).takeIf(File::isFile)
                     ?.let(::sha256) == expectedPatchedHash
-            if (running && !retryInternalStorage && (!externalController || externalControllerReady)) {
+            val resumePid = BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId)
+            if (resumePid > 0 && previousDiagnosticSession != null && diagnosticSession != null &&
+                !retryInternalStorage && (!externalController || externalControllerReady)) {
+                val requestedAt = System.currentTimeMillis()
                 Log.i(TAG, "Resuming existing virtual session for ${game.packageName} user=$userId")
-                check(launchApk(context, core, game.packageName, userId)) {
-                    "BlackBox could not resume ${game.packageName} on user $userId"
+                val dispatched = launchApk(context, core, game.packageName, userId)
+                val confirmed = dispatched && awaitActivityResume(previousDiagnosticSession, requestedAt, 3000) {
+                    BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId, requestedAt) == resumePid
                 }
-                launchedPackages += game.packageName
-                rememberActivePackage(context, game.packageName)
-                return@runCatching true
+                if (confirmed) {
+                    top.niunaijun.blackbox.utils.LaunchSessionRecorder.resume(previousDiagnosticSession, diagnosticSession)
+                    diagnosticSession = previousDiagnosticSession
+                    NonRootLaunchDiagnostics.event(diagnosticSession, "resume_confirmed pid=$resumePid")
+                    launchedPackages += game.packageName
+                    rememberActivePackage(context, game.packageName)
+                    return@runCatching true
+                }
+                // Never fold a replacement PID into the old physical session. Retry fresh in this press.
+                NonRootLaunchDiagnostics.event(diagnosticSession, "resume_unconfirmed_fresh_retry")
+                NonRootLaunchDiagnostics.stopSession(diagnosticSession)
+                diagnosticSession = NonRootLaunchDiagnostics.begin(context, game, verifiedModule)
             }
 
+            if (running) NonRootLaunchDiagnostics.stopSession(previousDiagnosticSession)
             runCatching { core.stopPackage(game.packageName, userId) }
             clearModulePayload(game.packageName, userId)
             ensureGoogleCompatibilityStack(context, core, userId)
@@ -176,6 +196,7 @@ object NonRootBlackBoxRuntime {
                 )
             }
 
+            NonRootLaunchDiagnostics.event(diagnosticSession, "guest_package_installed")
             clearModulePayload(game.packageName, userId)
             if (externalController) {
                 installBlackBoxExternalLibrary(
@@ -189,13 +210,19 @@ object NonRootBlackBoxRuntime {
             retryInternalStorageIfNeeded(game.packageName, userId)
             logGoogleCompatibilityState(core, userId)
 
+            NonRootLaunchDiagnostics.event(diagnosticSession, "game_activity_launch_requested")
+            val requestedAt = System.currentTimeMillis()
             check(launchApk(context, core, game.packageName, userId)) {
                 "BlackBox launchApk returned false for ${game.packageName} on user $userId"
             }
+            check(awaitActivityResume(diagnosticSession, requestedAt, SERVICE_READY_TIMEOUT_MS) {
+                BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId, requestedAt) > 0
+            }) { "BlackBox game activity did not confirm startup within the launch deadline" }
             launchedPackages += game.packageName
             rememberActivePackage(context, game.packageName)
             true
         }.onFailure { error ->
+            NonRootLaunchDiagnostics.failure(diagnosticSession, error)
             lastFailureDetail = error.message ?: error.javaClass.simpleName
             Log.e(TAG, "Virtual launch failed for ${game.packageName}: $lastFailureDetail", error)
             runCatching { clearModulePayload(game.packageName, DEFAULT_USER_ID) }
@@ -207,6 +234,16 @@ object NonRootBlackBoxRuntime {
             ?.withSelectedMenuLanguage(context) ?: return false
         core.startActivity(intent, userId)
         return true
+    }
+
+    private fun awaitActivityResume(session: File?, requestedAt: Long, timeout: Long, live: () -> Boolean): Boolean {
+        val deadline = android.os.SystemClock.elapsedRealtime() + timeout
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            // A storage failure must not prevent an otherwise confirmed game launch.
+            if ((session == null || sessionResumedSince(session, requestedAt)) && live()) return true
+            Thread.sleep(100)
+        }
+        return false
     }
 
     fun externalControllerFeatureStateFile(packageName: String): File {
@@ -302,9 +339,10 @@ object NonRootBlackBoxRuntime {
             packageName != targetPackage && packagePattern.matches(packageName) &&
                 (packageName == rememberedPackage || BlackBoxCore.isRunningApplication(packageName, userId))
         }
-        val targetRunning = BlackBoxCore.isRunningApplication(targetPackage, userId)
+        val targetRunning = BlackBoxCore.getBActivityManager().getResumableActivityPid(targetPackage, userId) > 0
 
         conflictingPackages.forEach { packageName ->
+            NonRootLaunchDiagnostics.stop(packageName)
             Log.i(TAG, "Stopping previous virtual session $packageName before opening $targetPackage")
             runCatching { core.stopPackage(packageName, userId) }
                 .onFailure { error -> Log.w(TAG, "Could not stop previous guest $packageName", error) }

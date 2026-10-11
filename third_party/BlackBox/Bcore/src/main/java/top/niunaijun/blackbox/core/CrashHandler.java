@@ -17,6 +17,7 @@ public class CrashHandler implements Thread.UncaughtExceptionHandler {
 
     @Override
     public void uncaughtException(Thread t, Throwable e) {
+        top.niunaijun.blackbox.utils.LaunchSessionRecorder.failure("uncaught_java", e);
         if (BlackBoxCore.get().getExceptionHandler() != null) {
             BlackBoxCore.get().getExceptionHandler().uncaughtException(t, e);
         }

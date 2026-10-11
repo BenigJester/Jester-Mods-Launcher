@@ -1077,6 +1077,9 @@ fun GameHubScreen(
             gameCompanionInstallOpen = gameInstall.visible,
             packageSetupOpen = packageSetup.visible
         )
+        if (activeOverlay == null && !launch.inProgress && page == LauncherPage.Library) {
+            LaunchDiagnosticsPortal(palette = ActivePalette, prompts = true)
+        }
         when (activeOverlay) {
             LauncherOverlay.LAUNCHER_UPDATE -> LauncherUpdateDialog(
                 update = launcherUpdate,
@@ -8828,6 +8831,7 @@ private fun ModuleScreen(
                 }
             }
         }
+        item { LaunchDiagnosticsPortal(palette = ActivePalette, packageName = game.packageName) }
         item { Spacer(Modifier.height(12.dp)) }
         }
     }

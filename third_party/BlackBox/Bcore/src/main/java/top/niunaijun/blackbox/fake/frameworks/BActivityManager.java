@@ -126,6 +126,19 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
         Slog.e(TAG, "Failed to start activity after " + maxRetries + " retries");
     }
 
+    public int getResumableActivityPid(String packageName, int userId) {
+        return getResumableActivityPid(packageName, userId, 0);
+    }
+
+    public int getResumableActivityPid(String packageName, int userId, long resumedSince) {
+        try {
+            IBActivityManagerService service = getService();
+            return service == null ? 0 : service.getResumableActivityPid(packageName, userId, resumedSince);
+        } catch (RemoteException error) {
+            return 0;
+        }
+    }
+
     public int startActivityAms(int userId, Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode, int flags, Bundle options) {
         int retryCount = 0;
         final int maxRetries = 3;

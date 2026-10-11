@@ -149,6 +149,14 @@ internal object TransferFailurePolicy {
         error: LauncherServiceException?,
         operation: TransferFailureOperation
     ): TransferFailurePresentation? = when (error?.code) {
+        "UNEXPECTED_SERVICE_RESPONSE" -> TransferFailurePresentation(
+            headline = if (operation == TransferFailureOperation.UPDATE_CHECK) {
+                "Couldn't reach the update service"
+            } else {
+                "Couldn't reach the download service"
+            },
+            detail = "The connection or service was temporarily unavailable. Any partial download is safe; try again when the connection is stable."
+        )
         "ACCESS_REQUIRED", "ACCESS_EXPIRED" -> TransferFailurePresentation(
             headline = "Launcher access is required",
             detail = "Your launcher access has expired. Unlock the launcher again, then retry."

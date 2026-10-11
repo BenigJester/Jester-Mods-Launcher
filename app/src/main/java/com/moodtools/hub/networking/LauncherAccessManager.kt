@@ -247,6 +247,7 @@ class LauncherAccessManager(context: Context) {
     private fun privateElapsedKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_elapsed"
 
     fun currentLease(): LauncherLease? {
+        val deadline = AccessCheckDeadline()
         val now = System.currentTimeMillis() / 1000L
         val key = preferences.getString(DIGITAL_KEY, null).orEmpty()
         val issuedAt = preferences.getLong(ISSUED_AT, 0L)
@@ -256,7 +257,7 @@ class LauncherAccessManager(context: Context) {
         val accessVersion = activeAccessVersion()
         if (accessVersion == ACCESS_VERSION && offlineLeaseText.isEmpty()) {
             clearLease()
-            return recoverLease(ACCESS_VERSION)
+            return recoverLease(ACCESS_VERSION, deadline)
         }
         if (accessVersion == ACCESS_VERSION && offlineLeaseText.isNotEmpty()) {
             val proofIdentity = proofKeys.identity()
@@ -271,7 +272,7 @@ class LauncherAccessManager(context: Context) {
             }.getOrNull()
             if (claims == null || claims.issuedAt != issuedAt || claims.expiresAt != expiresAt) {
                 clearLease()
-                return recoverLease(ACCESS_VERSION)
+                return recoverLease(ACCESS_VERSION, deadline)
             }
             val clockStatus = LauncherOfflineLeaseVerifier.clockStatus(
                 issuedAt = issuedAt,
@@ -283,8 +284,8 @@ class LauncherAccessManager(context: Context) {
             )
             return when (clockStatus) {
                 LauncherLeaseClockStatus.VALID -> {
-                    try {
-                        val response = postJson(
+                    val response = try {
+                        postJson(
                             "$BASE_URL/api/launcher/access",
                             JSONObject()
                                 .put("digitalKey", key)
@@ -292,27 +293,39 @@ class LauncherAccessManager(context: Context) {
                                 .put("deviceId", deviceId)
                                 .put("flavor", BuildConfig.ACCESS_FLAVOR)
                                 .put("accessVersion", ACCESS_VERSION)
-                                .put("managedExpiry", true)
+                                .put("managedExpiry", true),
+                            deadline = deadline
                         )
-                        if (!response.optBoolean("ok")) {
-                            clearLease()
-                            recoverLease(ACCESS_VERSION)
-                        } else {
-                            acceptProtocol4Lease(response, proofIdentity, requireRecoveryBound = true)
-                        }
                     } catch (error: Exception) {
+                        val fallbackNow = System.currentTimeMillis() / 1_000L
+                        if (LauncherOfflineLeaseVerifier.clockStatus(
+                                issuedAt = issuedAt,
+                                expiresAt = expiresAt,
+                                now = fallbackNow,
+                                lastSeen = lastSeen,
+                                elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                                lastElapsedRealtimeMillis = preferences.getLong(LAST_ELAPSED_REALTIME, 0L)
+                            ) != LauncherLeaseClockStatus.VALID) throw error
                         android.util.Log.w(
                             "JesterMoodsAccess",
                             "The access server could not be reached; using the verified offline lease.",
                             error
                         )
-                        rememberLeaseClock(now)
-                        LauncherLease(issuedAt, expiresAt, claims.grantExpiresAt)
+                        rememberLeaseClock(fallbackNow)
+                        return LauncherLease(issuedAt, expiresAt, claims.grantExpiresAt)
+                    }
+                    // An explicit server rejection must not fall back to the rejected lease
+                    // if the subsequent recovery request times out.
+                    if (!response.optBoolean("ok")) {
+                        clearLease()
+                        recoverLease(ACCESS_VERSION, deadline)
+                    } else {
+                        acceptProtocol4Lease(response, proofIdentity, requireRecoveryBound = true)
                     }
                 }
                 LauncherLeaseClockStatus.EXPIRED -> {
                     clearLease()
-                    recoverLease(ACCESS_VERSION)
+                    recoverLease(ACCESS_VERSION, deadline)
                 }
                 LauncherLeaseClockStatus.ROLLED_BACK -> null
             }
@@ -322,7 +335,7 @@ class LauncherAccessManager(context: Context) {
             (lastSeen == 0L || now + CLOCK_SKEW_SECONDS >= lastSeen)
         if (!valid) {
             clearLease()
-            return recoverLease(DEVICE_LOCK_ACCESS_VERSION)
+            return recoverLease(DEVICE_LOCK_ACCESS_VERSION, deadline)
         }
         val response = postJson(
             "$BASE_URL/api/launcher/access",
@@ -331,18 +344,19 @@ class LauncherAccessManager(context: Context) {
                 .put("installationId", installationId)
                 .put("deviceId", deviceId)
                 .put("flavor", BuildConfig.ACCESS_FLAVOR)
-                .put("accessVersion", accessVersion)
+                .put("accessVersion", accessVersion),
+            deadline = deadline
         )
         if (!response.optBoolean("ok") || response.optLong("issuedAt") != issuedAt ||
             response.optLong("expiresAt") != expiresAt) {
             clearLease()
-            return recoverLease(DEVICE_LOCK_ACCESS_VERSION)
+            return recoverLease(DEVICE_LOCK_ACCESS_VERSION, deadline)
         }
         rememberLeaseClock(now)
         return LauncherLease(issuedAt, expiresAt)
     }
 
-    private fun recoverLease(accessVersion: Int = ACCESS_VERSION): LauncherLease? {
+    private fun recoverLease(accessVersion: Int, deadline: AccessCheckDeadline): LauncherLease? {
         val proofIdentity = proofKeys.identity()
         val response = postJson(
             "$BASE_URL/api/launcher/recover",
@@ -354,7 +368,8 @@ class LauncherAccessManager(context: Context) {
                 .put("accessVersion", accessVersion)
                 .put("managedExpiry", accessVersion == ACCESS_VERSION)
                 .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
-                .put("proofKeyId", proofIdentity.keyId)
+                .put("proofKeyId", proofIdentity.keyId),
+            deadline = deadline
         )
         if (!response.optBoolean("ok")) return null
         val digitalKey = response.optString("digitalKey")
@@ -1002,8 +1017,10 @@ class LauncherAccessManager(context: Context) {
     private fun postJson(
         address: String,
         body: JSONObject,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        deadline: AccessCheckDeadline? = null
     ): JSONObject {
+        if (deadline != null) return deadline.await { postJson(address, body, headers) }
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -1018,8 +1035,19 @@ class LauncherAccessManager(context: Context) {
         }
         return try {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-            JSONObject(stream.bufferedReader().use { it.readText() })
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { reader ->
+                val result = StringBuilder()
+                val buffer = CharArray(4096)
+                while (result.length <= MAX_LAUNCHER_RESPONSE_CHARS) {
+                    val count = reader.read(buffer, 0, minOf(buffer.size, MAX_LAUNCHER_RESPONSE_CHARS + 1 - result.length))
+                    if (count < 0) break
+                    result.append(buffer, 0, count)
+                }
+                result.toString()
+            }.orEmpty()
+            parseLauncherServiceResponse(status, connection.contentType, text)
         } finally {
             connection.disconnect()
         }

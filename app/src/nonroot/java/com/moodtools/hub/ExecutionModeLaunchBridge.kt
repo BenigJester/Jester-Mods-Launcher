@@ -234,7 +234,7 @@ object ExecutionModeLaunchBridge {
             }
         }
         onProgress?.invoke("Verifying add-on", "Checking the signed add-on before launch.")
-        runCatching {
+        val verifiedModule = runCatching {
             val directory = File(context.filesDir, "menus/${game.packageName}")
             ModuleIntegrityVerifier().verify(directory, game.module, game.abi)
         }.getOrElse { error ->
@@ -297,7 +297,7 @@ object ExecutionModeLaunchBridge {
             else "Getting Jester Mods ready."
         )
         onProgress?.invoke("Opening game", "Starting ${game.module.title} now.")
-        val launched = NonRootBlackBoxRuntime.launch(context, game)
+        val launched = NonRootBlackBoxRuntime.launch(context, game, verifiedModule)
         if (launched) {
             if (externalController) {
                 ExternalControllerService.startBlackBox(

@@ -47,6 +47,15 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Repair and removal flows with explicit user confirmation
 - [x] First-run language selection and localized launcher content
 - [x] Smart cleanup for cached download artifacts
+- [x] Per-game diagnostics with copy, export, sharing, and clear controls
+- [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
+
+### 4.3.0 source update
+
+Adds themed, localized diagnostics and report sharing, fixes BlackBox resume/session tracking,
+improves WebView permission compatibility, bounds access checks, and safely handles unexpected
+HTML or malformed service responses. Diagnostics do not prove that a game reached its menu.
+Reports stay on the device unless shared; review them before attaching them to a public issue.
 
 ### Integrity and access
 

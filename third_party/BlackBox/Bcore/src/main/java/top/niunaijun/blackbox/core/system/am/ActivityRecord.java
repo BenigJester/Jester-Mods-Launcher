@@ -19,6 +19,7 @@ public class ActivityRecord extends Binder {
     public Intent intent;
     public int userId;
     public boolean finished;
+    public long lastResumedAt;
     public ProcessRecord processRecord;
 
     public static ActivityRecord create(Intent intent, ActivityInfo info, IBinder resultTo, int userId) {

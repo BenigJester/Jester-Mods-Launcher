@@ -44,6 +44,7 @@ public class SimpleCrashFix {
             Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
                 @Override
                 public void uncaughtException(Thread thread, Throwable throwable) {
+                    LaunchSessionRecorder.failure("uncaught_java", throwable);
                     
                     if (isNullContextCrash(throwable)) {
                         Slog.w(TAG, "Caught null context crash, preventing crash: " + throwable.getMessage());

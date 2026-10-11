@@ -29,6 +29,23 @@ Supported direct-patch flows create a launcher-signed replacement package only
 after an explicit user action. Android may erase the original game’s local data
 on the first signer-changing replacement; the UI must disclose that risk.
 
+## Launch and crash diagnostics
+
+Diagnostics are stored in the launcher's private app storage. They can include
+game/launcher versions, device model, Android version, ABI, module hashes,
+launch stages, and filtered crash stack traces or native fault addresses.
+Non-root mode records BlackBox sessions and suspected startup stalls; Root
+mode reads matching game crashes from Android's crash buffer using root access.
+Exception messages, raw crash logs, and memory dumps are not retained in Root
+reports. Diagnostics do not automatically identify a faulty hook or prove that
+a game reached its menu.
+
+Reports are not automatically uploaded. Copy, export, or sharing requires an
+explicit user action. The GitHub flow saves the report and opens a prefilled
+issue; users must review, attach the saved file, and submit it themselves.
+Clearing diagnostics removes that game's saved reports, not game data,
+previously exported files, or Android's system crash logs.
+
 ## Public reports
 
 Remove digital keys, identifiers, certificate chains, complete request bodies,

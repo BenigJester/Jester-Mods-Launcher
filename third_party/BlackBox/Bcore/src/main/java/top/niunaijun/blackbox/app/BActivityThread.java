@@ -179,6 +179,8 @@ public class BActivityThread extends IBActivityThread.Stub {
                 throw new RuntimeException("reject init process: " + appConfig.processName + ", this process is : " + this.mAppConfig.processName);
             }
             this.mAppConfig = appConfig;
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.attach(appConfig.packageName);
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("guest_process_initialized");
             IBinder iBinder = asBinder();
             try {
                 iBinder.linkToDeath(new DeathRecipient() {
@@ -315,6 +317,8 @@ public class BActivityThread extends IBActivityThread.Stub {
     }
 
     public void bindApplication(final String packageName, final String processName) {
+        top.niunaijun.blackbox.utils.LaunchSessionRecorder.attach(packageName);
+        top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("application_bind_started");
         if (Looper.myLooper() != Looper.getMainLooper()) {
             final ConditionVariable conditionVariable = new ConditionVariable();
             BlackBoxCore.get().getHandler().post(() -> {
@@ -569,12 +573,21 @@ public class BActivityThread extends IBActivityThread.Stub {
             onBeforeApplicationOnCreate(packageName, processName, application);
             AppInstrumentation appInstrumentation = AppInstrumentation.get();
             appInstrumentation.injectHook();
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("application_onCreate_started");
             appInstrumentation.callApplicationOnCreate(application);
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("application_onCreate_completed");
+            try {
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("permission INTERNET="
+                        + application.checkSelfPermission("android.permission.INTERNET")
+                        + " guestUid=" + android.os.Process.myUid()
+                        + " hostUid=" + BlackBoxCore.getHostUid());
+            } catch (Throwable ignored) { }
             onAfterApplicationOnCreate(packageName, processName, application);
 
             HookManager.get().checkEnv(HCallbackProxy.class);
         } catch (Exception e) {
             Slog.e(TAG, "Critical error in handleBindApplication", e);
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.failure("application_bind", e);
             throw new RuntimeException("Unable to makeApplication", e);
         }
     }

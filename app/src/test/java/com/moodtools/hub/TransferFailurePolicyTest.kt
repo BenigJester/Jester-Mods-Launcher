@@ -9,6 +9,17 @@ import org.junit.Test
 
 class TransferFailurePolicyTest {
     @Test
+    fun htmlServiceResponsesExplainRetryWithoutBlamingStorageOrExpiredAccess() {
+        val result = TransferFailurePolicy.present(
+            LauncherServiceException("UNEXPECTED_SERVICE_RESPONSE", "Launcher service HTTP 403: received HTML"),
+            TransferFailureOperation.ADD_ON_DOWNLOAD
+        )
+        assertEquals("Couldn't reach the download service", result.headline)
+        assertFalse(result.detail.contains("storage", ignoreCase = true))
+        assertEquals(true, result.detail.contains("try again"))
+    }
+
+    @Test
     fun differentSignerExplainsWhyManualOfficialInstallIsRequired() {
         val result = TransferFailurePolicy.present(
             IllegalArgumentException("The update is not signed by this launcher"),

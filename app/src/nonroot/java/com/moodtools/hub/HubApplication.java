@@ -16,6 +16,7 @@ import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback;
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration;
 import top.niunaijun.blackbox.core.env.BEnvironment;
+import top.niunaijun.blackbox.utils.LaunchSessionRecorder;
 
 /** Initializes BlackBox and module callbacks inside the single non-root launcher package. */
 public final class HubApplication extends Application {
@@ -64,6 +65,7 @@ public final class HubApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        NonRootLaunchDiagnostics.INSTANCE.install();
         registerModuleLoader();
         BlackBoxCore.get().doCreate();
     }
@@ -130,6 +132,7 @@ public final class HubApplication extends Application {
                 String activityName = activity.getClass().getName();
                 android.util.Log.i("NonRootBlackBox", "activity " + phase + "="
                         + activityName + " package=" + activity.getPackageName());
+                LaunchSessionRecorder.event(activity.getPackageName(), "activity_" + phase + " " + activityName);
             }
 
             private void registerDirectActivityLifecycle(final Application application) {
@@ -294,6 +297,7 @@ public final class HubApplication extends Application {
                     return;
                 }
                 try {
+                    LaunchSessionRecorder.event(packageName, "module_attach_started");
                     Class<?> main = Class.forName(findEntryPoint(packageName), true, loader);
                     try {
                         main.getMethod("StartRoot", android.app.Activity.class).invoke(null, activity);
@@ -304,7 +308,9 @@ public final class HubApplication extends Application {
                         android.util.Log.i("NonRootBlackBox",
                                 "Legacy Context module attached for " + packageName);
                     }
+                    LaunchSessionRecorder.event(packageName, "module_attach_completed");
                 } catch (Throwable error) {
+                    LaunchSessionRecorder.failure("module_attach", error);
                     android.util.Log.e("NonRootBlackBox", "Could not start module for " + packageName, error);
                 }
             }
@@ -360,14 +366,18 @@ public final class HubApplication extends Application {
             DexClassLoader loader = new DexClassLoader(
                     dexFile.getAbsolutePath(), optimized.getAbsolutePath(),
                     moduleDirectory.getAbsolutePath(), getClassLoader());
+            LaunchSessionRecorder.event(packageName, "module_class_initialize_started");
             Class.forName(entryPoint, true, loader);
             Class<?> runtime = loader.loadClass(namespace + ".ModuleRuntime");
+            LaunchSessionRecorder.event(packageName, "module_native_load_started");
             runtime.getMethod("loadNative", String.class).invoke(null, nativeFile.getAbsolutePath());
+            LaunchSessionRecorder.event(packageName, "module_native_load_completed");
             moduleLoaders.put(packageName, loader);
             android.util.Log.i("NonRootBlackBox", "Module loaded for " + packageName);
             return true;
         } catch (Throwable error) {
             android.util.Log.e("NonRootBlackBox", "Could not load module for " + packageName, error);
+            LaunchSessionRecorder.failure("module_load", error);
             return false;
         }
     }

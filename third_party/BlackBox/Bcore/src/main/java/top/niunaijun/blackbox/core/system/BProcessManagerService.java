@@ -64,9 +64,10 @@ public class BProcessManagerService implements ISystemService {
                     if (app.initLock != null) {
                         app.initLock.block();
                     }
-                    if (app.bActivityThread != null) {
+                    if (app.bActivityThread != null && app.bActivityThread.asBinder().isBinderAlive()) {
                         return app;
                     }
+                    onProcessDie(app);
                 }
                 bpid = getUsingBPidL();
                 Slog.d(TAG, "init bUid = " + buid + ", bPid = " + bpid);
@@ -94,6 +95,7 @@ public class BProcessManagerService implements ISystemService {
                 app = null;
             } else {
                 app.pid = getPid(BlackBoxCore.getContext(), ProxyManifest.getProcessName(app.bpid));
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.processCreated(packageName, app.pid);
             }
         }
         return app;
@@ -163,6 +165,7 @@ public class BProcessManagerService implements ISystemService {
     }
 
     private void attachClientL(final ProcessRecord app, final IBinder appThread) {
+        final File diagnosticSession = top.niunaijun.blackbox.utils.LaunchSessionRecorder.current(app.getPackageName());
         IBActivityThread activityThread = IBActivityThread.Stub.asInterface(appThread);
         if (activityThread == null) {
             app.kill();
@@ -172,6 +175,10 @@ public class BProcessManagerService implements ISystemService {
             appThread.linkToDeath(new IBinder.DeathRecipient() {
                 @Override
                 public void binderDied() {
+                    if (app.getPackageName().equals(app.processName)) {
+                        top.niunaijun.blackbox.utils.LaunchSessionRecorder.hostEvent(diagnosticSession,
+                                "main_process_died pid=" + app.pid);
+                    }
                     Log.d(TAG, "App Died: " + app.processName);
                     appThread.unlinkToDeath(this, 0);
                     onProcessDie(app);
@@ -193,7 +200,8 @@ public class BProcessManagerService implements ISystemService {
         synchronized (mProcessLock) {
             record.kill();
             Map<String, ProcessRecord> process = mProcessMap.get(record.buid);
-            if (process != null) {
+            // A delayed old death callback must not evict a replacement process with the same name.
+            if (process != null && process.get(record.processName) == record) {
                 process.remove(record.processName);
                 if (process.isEmpty()) {
                     mProcessMap.remove(record.buid);

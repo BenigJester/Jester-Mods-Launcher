@@ -143,6 +143,7 @@ public class CrashMonitor {
             Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
                 @Override
                 public void uncaughtException(Thread thread, Throwable throwable) {
+                    LaunchSessionRecorder.failure("uncaught_java", throwable);
                     handleCrash("JavaException", thread, throwable);
 
                     // Never swallow guest-app crashes: swallowing leaves app in black-screen limbo.

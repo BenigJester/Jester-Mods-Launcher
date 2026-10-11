@@ -570,6 +570,7 @@ public class ActivityStack {
                 return;
             }
             Log.d(TAG, "onActivityResumed : " + activityRecord.component.toString());
+            activityRecord.lastResumedAt = System.currentTimeMillis();
             activityRecord.task.removeActivity(activityRecord);
             activityRecord.task.addTopActivity(activityRecord);
         }
@@ -643,16 +644,36 @@ public class ActivityStack {
         }
     }
 
-    @SuppressWarnings("deprecation")
+    public int getResumableActivityPid(String packageName, long resumedSince) {
+        synchronized (mTasks) {
+            synchronizeTasks();
+            for (TaskRecord task : mTasks.values()) {
+                for (ActivityRecord activity : task.activities) {
+                    ProcessRecord process = activity.processRecord;
+                    if (!activity.finished && activity.lastResumedAt >= resumedSince
+                            && activity.token != null && activity.info != null
+                            && packageName.equals(activity.info.packageName) && process != null
+                            && process.pid > 0 && process.bActivityThread != null
+                            && process.bActivityThread.asBinder().isBinderAlive()) return process.pid;
+                }
+            }
+            return 0;
+        }
+    }
+
     private void synchronizeTasks() {
-        List<ActivityManager.RecentTaskInfo> recentTasks = mAms.getRecentTasks(100, 0);
+        // Own AppTasks include EXCLUDE_FROM_RECENTS guests. Recents is not a task-liveness API.
+        List<ActivityManager.AppTask> appTasks = mAms.getAppTasks();
         Map<Integer, TaskRecord> newTacks = new LinkedHashMap<>();
-        for (int i = recentTasks.size() - 1; i >= 0; i--) {
-            ActivityManager.RecentTaskInfo next = recentTasks.get(i);
-            TaskRecord taskRecord = mTasks.get(next.id);
+        for (int i = appTasks.size() - 1; i >= 0; i--) {
+            ActivityManager.RecentTaskInfo next;
+            try { next = appTasks.get(i).getTaskInfo(); }
+            catch (RuntimeException removedTask) { continue; }
+            if (next == null || next.numActivities <= 0) continue;
+            TaskRecord taskRecord = mTasks.get(next.taskId);
             if (taskRecord == null)
                 continue;
-            newTacks.put(next.id, taskRecord);
+            newTacks.put(next.taskId, taskRecord);
         }
         mTasks.clear();
         mTasks.putAll(newTacks);

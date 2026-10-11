@@ -1063,6 +1063,24 @@ public class IActivityManagerProxy extends ClassInvocationStub {
         }
     }
 
+    @ProxyMethod("checkPermissionForDevice")
+    public static class checkPermissionForDevice extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            remapUid(args, BActivityThread.getBUid(), BActivityThread.getBAppId(),
+                    BlackBoxCore.getHostUid());
+            return method.invoke(who, args);
+        }
+
+        public static void remapUid(Object[] args, int guestUid, int guestAppId, int hostUid) {
+            // (permission, pid, uid, deviceId): the final integer is NOT the UID.
+            // Only translate this guest's identity; keep Android's permission verdict.
+            if (args == null || args.length < 3 || !(args[2] instanceof Integer)) return;
+            int uid = (Integer) args[2];
+            if (uid == guestUid || uid == guestAppId) args[2] = hostUid;
+        }
+    }
+
     @ProxyMethod("checkPermission")
     public static class checkPermission extends MethodHook {
         @Override

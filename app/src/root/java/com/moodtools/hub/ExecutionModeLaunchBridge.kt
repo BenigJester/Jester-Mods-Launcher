@@ -13,6 +13,7 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 
@@ -21,7 +22,10 @@ object ExecutionModeLaunchBridge {
     private const val ROOT_RUNTIME_DIRECTORY = "/data/local/tmp/moodtools-standalone-root"
     private val packagePattern = Regex("^[A-Za-z0-9_.]+$")
 
-    fun prepare(context: Context): String? = null
+    fun prepare(context: Context): String? {
+        RootLaunchDiagnostics.install(context)
+        return null
+    }
 
     fun onLauncherTaskRemoved(context: Context) = Unit
 
@@ -227,6 +231,7 @@ object ExecutionModeLaunchBridge {
         // target-owned memfds, and passes only those descriptors to the game.
         // No payload is installed in /data/adb or copied into another app's data.
         report("Opening game", "Starting ${game.module.title} now.")
+        RootLaunchDiagnostics.begin(context, game, runCatching { sha256(nativePayload) }.getOrNull())
         val injection = RootShell.run(
             "${quote(remoteInjector)} " +
                 "--package ${quote(game.packageName)} " +
@@ -242,6 +247,19 @@ object ExecutionModeLaunchBridge {
 
         report("Opening game", "${game.module.title} is starting now.")
         return true
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun extractInjector(context: Context, assetPath: String): File {

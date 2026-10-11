@@ -32,6 +32,10 @@ import static android.content.pm.PackageManager.GET_META_DATA;
 
 
 public class BActivityManagerService extends IBActivityManagerService.Stub implements ISystemService {
+    @Override
+    public int getResumableActivityPid(String packageName, int userId, long resumedSince) {
+        return getOrCreateSpaceLocked(userId).mStack.getResumableActivityPid(packageName, resumedSince);
+    }
     public static final String TAG = "BActivityManagerService";
     private static final BActivityManagerService sService = new BActivityManagerService();
     private final Map<Integer, UserSpace> mUserSpace = new HashMap<>();

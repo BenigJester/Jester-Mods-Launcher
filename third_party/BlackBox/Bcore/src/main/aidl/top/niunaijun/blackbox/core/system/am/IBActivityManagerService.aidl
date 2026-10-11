@@ -58,4 +58,5 @@ interface IBActivityManagerService {
     void getIntentSender(in IBinder target, String packageName, int uid, int userId);
     String getPackageForIntentSender(in IBinder target, int userId);
     int getUidForIntentSender(in IBinder target, int userId);
+    int getResumableActivityPid(String packageName, int userId, long resumedSince);
 }
