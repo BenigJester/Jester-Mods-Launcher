@@ -135,13 +135,23 @@ class GameInstallClient(private val context: Context) {
             )
         }
         ensureNotCancelled(isCancelled)
-        onPreparationProgress(0.68f)
+        onPreparationProgress(0.60f)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             require(context.packageManager.canRequestPackageInstalls()) {
                 "Allow Jester Mods to install games in Android settings"
             }
         }
-        onPreparationProgress(0.74f)
+        if (source.format == GamePackageFormat.APKS) {
+            ZipFile(packageFile).use { archive ->
+                GameObbManager(context).stage(archive, game.config.packageName, source.versionCode, isCancelled) { completed, total ->
+                    onPreparationProgress(progressBetween(0.60f, 0.77f, completed, total))
+                }
+            }
+        }
+        GameObbManager(context).install(game.config.packageName, source.versionCode, isCancelled = isCancelled) { completed, total ->
+            onPreparationProgress(progressBetween(0.77f, 0.88f, completed, total))
+        }
+        onPreparationProgress(0.88f)
 
         // A verified standalone APK can be handed directly to Android from the foreground
         // user action. This avoids the PackageInstaller broadcast-to-activity hop that is
@@ -185,7 +195,7 @@ class GameInstallClient(private val context: Context) {
                     if (preparedPercent != lastPreparedPercent || preparedBytes >= totalInstallBytes) {
                         lastPreparedPercent = preparedPercent
                         onPreparationProgress(
-                            progressBetween(0.74f, 0.96f, preparedBytes, totalInstallBytes)
+                            progressBetween(0.88f, 0.96f, preparedBytes, totalInstallBytes)
                         )
                     }
                 }
@@ -286,9 +296,7 @@ class GameInstallClient(private val context: Context) {
         return try {
             ZipFile(packageFile).use { archive ->
                 ensureNotCancelled(isCancelled)
-                require(archive.entries().asSequence().none {
-                    !it.isDirectory && it.name.endsWith(".obb", ignoreCase = true)
-                }) { "APKPure packages containing OBB files are not supported yet" }
+                GameExpansionFiles.inspect(archive, game.config.packageName)
                 val entries = archive.entries().asSequence()
                     .filter { !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true) }
                     .toList()

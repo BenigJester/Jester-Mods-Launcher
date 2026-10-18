@@ -55,14 +55,23 @@ internal fun InstallerDiagnosticGithubButton(report: String, title: String, acce
         onDismissRequest = { confirm = false; pendingText = null },
         shape = RoundedCornerShape(28.dp), containerColor = palette.surfaceRaised,
         title = { Text("Share full report", color = Color.White) },
-        text = { Text("GitHub issues are public. Review your report before sharing. Save the file, then attach it on GitHub and submit the issue. A GitHub account is required.", color = palette.muted) },
+        text = { Text("GitHub issues are public. Key details will be filled in for you. Tell us what happened, then submit. A GitHub account is required. You can optionally save and attach the full report for more detail.", color = palette.muted) },
         confirmButton = {
+            TextButton(onClick = {
+                confirm = false
+                val text = pendingText
+                pendingText = null
+                error = runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(diagnosticIssueLink(pendingTitle, requireNotNull(text)))))
+                }.isFailure
+            }) { Text("Open GitHub report", color = accent) }
+        },
+        dismissButton = {
             TextButton(onClick = {
                 confirm = false
                 error = runCatching { saveReport.launch("Jester-diagnostics-${System.currentTimeMillis()}.txt") }.isFailure
                 if (error) pendingText = null
             }) { Text("Save and open GitHub", color = accent) }
-        },
-        dismissButton = { TextButton(onClick = { confirm = false; pendingText = null }) { Text("Dismiss", color = palette.muted) } }
+        }
     )
 }

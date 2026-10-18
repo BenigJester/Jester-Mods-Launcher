@@ -49,7 +49,28 @@ public class IWindowSessionProxy extends BinderInvocationStub {
         if (method != null && "addToDisplayAsUser".equals(method.getName())) {
             rewriteRequestedUserId(args);
         }
-        return super.invoke(proxy, method, args);
+        boolean adding = method != null && ("addToDisplay".equals(method.getName())
+                || "addToDisplayAsUser".equals(method.getName()) || "addToDisplayWithoutInputChannel".equals(method.getName()));
+        int type = -1;
+        if (adding && args != null) for (Object arg : args) {
+            if (arg instanceof WindowManager.LayoutParams) type = ((WindowManager.LayoutParams) arg).type;
+        }
+        try {
+            Object result = super.invoke(proxy, method, args);
+            if (adding && result instanceof Integer && (Integer) result < 0) {
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.event(
+                        "window_add_rejected type=" + type + " result=" + result);
+            }
+            return result;
+        } catch (Throwable error) {
+            if (adding) {
+                Throwable cause = error instanceof java.lang.reflect.InvocationTargetException && error.getCause() != null
+                        ? error.getCause() : error;
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.event(
+                        "window_add_exception type=" + type + " cause=" + cause.getClass().getName());
+            }
+            throw error;
+        }
     }
 
     private static void rewriteRequestedUserId(Object[] args) {

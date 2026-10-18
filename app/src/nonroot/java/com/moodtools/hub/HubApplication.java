@@ -8,9 +8,9 @@ import dalvik.system.DexClassLoader;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback;
@@ -25,7 +25,7 @@ public final class HubApplication extends Application {
     private static final int MODULE_ATTACH_MAX_RETRIES = 20;
     private static final String FACEBOOK_ACTIVITY_PREFIX = "com.facebook.";
 
-    private final Map<String, ClassLoader> moduleLoaders = new HashMap<>();
+    private final Map<String, Class<?>> moduleEntries = new ConcurrentHashMap<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Map<android.app.Activity, Integer> activityResumeGenerations =
             new WeakHashMap<>();
@@ -47,6 +47,13 @@ public final class HubApplication extends Application {
             public boolean isEnableDaemonService() {
                 // The standalone launcher owns the BlackBox lifetime. A daemon would keep the
                 // virtual runtime alive after the user removes the launcher task from Recents.
+                return false;
+            }
+
+            @Override
+            public boolean isEnableLauncherActivity() {
+                // Jester already owns the preparation UI. The extra BlackBox splash dispatches
+                // again from onCreate after rotation/restoration, reopening an already started game.
                 return false;
             }
 
@@ -254,7 +261,7 @@ public final class HubApplication extends Application {
                             "Attaching module after bounded window-focus wait for " +
                                     activity.getPackageName());
                 }
-                startModule(activity);
+                startModule(activity, generation);
             }
 
             private boolean isCurrentResume(android.app.Activity activity, int generation) {
@@ -283,36 +290,51 @@ public final class HubApplication extends Application {
                 return !activity.getClass().getName().startsWith(FACEBOOK_ACTIVITY_PREFIX);
             }
 
-            private void startModule(android.app.Activity activity) {
+            private void startModule(android.app.Activity activity, int generation) {
                 if (activity == null) return;
                 String packageName = activity.getPackageName();
-                ClassLoader loader = moduleLoaders.get(packageName);
-                if (loader == null) {
+                Class<?> main = moduleEntries.get(packageName);
+                if (main == null) {
                     ensureModuleLoaded(packageName, 0);
-                    loader = moduleLoaders.get(packageName);
+                    main = moduleEntries.get(packageName);
                 }
-                if (loader == null) {
+                if (main == null) {
                     android.util.Log.w("NonRootBlackBox",
                             "No staged module loader for activity package=" + packageName);
                     return;
                 }
                 try {
                     LaunchSessionRecorder.event(packageName, "module_attach_started");
-                    Class<?> main = Class.forName(findEntryPoint(packageName), true, loader);
+                    LaunchSessionRecorder.menuAttachment("checking");
                     try {
                         main.getMethod("StartRoot", android.app.Activity.class).invoke(null, activity);
                         android.util.Log.i("NonRootBlackBox",
-                                "Direct Activity module attached for " + packageName);
+                                "Direct Activity module entry returned for " + packageName);
+                        checkMenuAttachment(activity, generation, main, false);
                     } catch (NoSuchMethodException legacyModule) {
                         main.getMethod("Start", android.content.Context.class).invoke(null, activity);
                         android.util.Log.i("NonRootBlackBox",
-                                "Legacy Context module attached for " + packageName);
+                                "Legacy Context module entry returned for " + packageName);
+                        LaunchSessionRecorder.menuAttachment("unsupported");
                     }
-                    LaunchSessionRecorder.event(packageName, "module_attach_completed");
+                    LaunchSessionRecorder.event(packageName, "module_entry_returned");
                 } catch (Throwable error) {
                     LaunchSessionRecorder.failure("module_attach", error);
                     android.util.Log.e("NonRootBlackBox", "Could not start module for " + packageName, error);
                 }
+            }
+
+            private void checkMenuAttachment(final android.app.Activity activity, final int generation,
+                                             final Class<?> main, final boolean finalCheck) {
+                mainHandler.postDelayed(() -> {
+                    if (!isCurrentResume(activity, generation)) return;
+                    String result = MenuAttachmentProbe.inspect(main);
+                    if ("not_attached".equals(result) && !finalCheck) {
+                        checkMenuAttachment(activity, generation, main, true);
+                        return;
+                    }
+                    LaunchSessionRecorder.menuAttachment(result);
+                }, finalCheck ? 2000L : 1000L);
             }
 
             @Override
@@ -320,22 +342,12 @@ public final class HubApplication extends Application {
                 logActivityPhase(activity, "main-created");
             }
 
-            private String findEntryPoint(String packageName) {
-                try {
-                    File directory = BEnvironment.getDataFilesDir(packageName, 0);
-                    String value = new JSONObject(readText(new File(directory, "config.json")))
-                            .optString("entry_point", "").trim();
-                    return value.isEmpty() ? packageName + ".Main" : value;
-                } catch (Throwable ignored) {
-                    return packageName + ".Main";
-                }
-            }
         });
     }
 
     private synchronized boolean ensureModuleLoaded(String packageName, int userId) {
         if (packageName == null || !isModuleTarget(packageName) || userId != 0) return false;
-        if (moduleLoaders.containsKey(packageName)) return true;
+        if (moduleEntries.containsKey(packageName)) return true;
 
         File moduleDirectory = BEnvironment.getDataFilesDir(packageName, userId);
         File nativeFile = new File(moduleDirectory, "libmenu_native.so");
@@ -367,12 +379,14 @@ public final class HubApplication extends Application {
                     dexFile.getAbsolutePath(), optimized.getAbsolutePath(),
                     moduleDirectory.getAbsolutePath(), getClassLoader());
             LaunchSessionRecorder.event(packageName, "module_class_initialize_started");
-            Class.forName(entryPoint, true, loader);
+            Class<?> main = Class.forName(entryPoint, true, loader);
             Class<?> runtime = loader.loadClass(namespace + ".ModuleRuntime");
             LaunchSessionRecorder.event(packageName, "module_native_load_started");
             runtime.getMethod("loadNative", String.class).invoke(null, nativeFile.getAbsolutePath());
             LaunchSessionRecorder.event(packageName, "module_native_load_completed");
-            moduleLoaders.put(packageName, loader);
+            // Keep the exact class (and its loader) for this process lifetime. Activity resumes
+            // must not reinterpret missing/replaced staging metadata as packageName + ".Main".
+            moduleEntries.put(packageName, main);
             android.util.Log.i("NonRootBlackBox", "Module loaded for " + packageName);
             return true;
         } catch (Throwable error) {

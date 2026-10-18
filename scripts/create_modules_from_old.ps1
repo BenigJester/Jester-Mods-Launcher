@@ -21,8 +21,7 @@ $Games = @(
     @{ Old = 'Cooking Madness'; Package = 'com.biglime.cookingmadness'; Title = 'Cooking Madness'; Version = '3.3.7' },
     @{ Old = 'Dungeon Village 2'; Package = 'net.kairosoft.android.bouken2'; Title = 'Dungeon Village 2'; Version = '1.6.0' },
     @{ Old = 'Game Dev Tycoon'; Package = 'com.greenheartgames.gdt'; Title = 'Game Dev Tycoon'; Version = '1.6.18' },
-    @{ Old = 'Kingdom Adventurers'; Package = 'net.kairosoft.android.kingdom_en'; Title = 'Kingdom Adventurers'; Version = '2.6.2' },
-    @{ Old = 'Kingshot'; Package = 'com.run.tower.defense'; Title = 'Kingshot'; Version = '1.11.25' }
+    @{ Old = 'Kingdom Adventurers'; Package = 'net.kairosoft.android.kingdom_en'; Title = 'Kingdom Adventurers'; Version = '2.6.2' }
 )
 
 function Copy-DirectoryContents([string] $Source, [string] $Destination) {

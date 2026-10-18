@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:allowBackup="false">
+        <provider android:name="com.moodtools.diagnostics.DiagnosticProvider"
+            android:authorities="${applicationId}.jester-diagnostics" android:exported="true"
+            android:process=":jester_diagnostics" />
+    </application>
+</manifest>

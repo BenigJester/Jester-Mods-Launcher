@@ -36,6 +36,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    sourceSets.main.java.srcDir('../diagnostic-bootstrap/src/main/java')
 
     packaging {
         jniLibs {

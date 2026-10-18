@@ -38,7 +38,8 @@ class DiagnosticIssueLinkTest {
         }
         assertTrue(query.getValue("title").contains("com.test.game"))
         assertTrue(query.getValue("body").contains("Crash & hook? #地址"))
-        assertTrue(query.getValue("body").contains("Attach the saved"))
+        assertTrue(query.getValue("body").contains("Optional extra details"))
+        assertTrue(query.getValue("body").contains("you can still submit this issue"))
         assertFalse(query.getValue("body").contains("Full report not put in URL"))
     }
 
@@ -46,5 +47,21 @@ class DiagnosticIssueLinkTest {
         val body = URLDecoder.decode(diagnosticIssueLink(report("```\nPC: 123\n```")), "UTF-8")
         assertFalse(body.contains("```"))
         assertTrue(body.contains("PC: 123"))
+    }
+
+    @Test fun `long crash stacks do not bury cause types or startup evidence in issue links`() {
+        val summary = "package: com.test.game\nlauncher: 4.3.2\n" +
+            "cause java.lang.SecurityException\n" +
+            (1..48).joinToString("\n") { "  at com.google.android.gms.common.internal.BaseGmsClient.getRemoteService:$it" } +
+            "\ncause java.lang.Error\n--- LAST STARTUP EVENTS ---\n" +
+            "process-123.txt: 100 application_onCreate_completed\n" +
+            "process-123.txt: 200 activity_direct-resumed game.Screen\n" +
+            "process-123.txt: 300 failure uncaught_java java.lang.Error"
+        val link = diagnosticIssueLink(report(summary))
+        val body = URLDecoder.decode(URI(link).rawQuery.substringAfter("&body="), "UTF-8")
+        assertTrue(link.length < 6500)
+        for (expected in listOf("SecurityException", "cause java.lang.Error", "application_onCreate_completed",
+            "activity_direct-resumed", "failure uncaught_java", "Optional extra details")) assertTrue(expected, body.contains(expected))
+        assertFalse(body.contains("getRemoteService:48"))
     }
 }

@@ -345,6 +345,19 @@ foreach ($moduleDir in $moduleDirectories) {
         throw "Module ${name} must include cpp\Main.cpp."
     }
     $nativeMainText = Get-Content -LiteralPath $nativeMain -Raw
+    # Single-TU modules may keep their runtime/menu implementation in included headers.
+    # Audit only referenced feature/runtime headers, not unrelated or unused files.
+    $nativeMainText = [regex]::Replace(
+        $nativeMainText,
+        '(?m)^#include "((?:Features|Runtime)/[^"]+\.hpp)"\s*$',
+        [System.Text.RegularExpressions.MatchEvaluator] {
+            param($headerMatch)
+            $headerPath = Join-Path $cpp $headerMatch.Groups[1].Value
+            if (-not (Test-Path -LiteralPath $headerPath -PathType Leaf)) {
+                throw "Module ${name} references a missing native header: $headerPath"
+            }
+            return (Get-Content -LiteralPath $headerPath -Raw)
+        })
     Assert-PcEmulatorCompatibility $name $cpp $nativeMainText
     $compatibilityDescriptorReferences = [regex]::Matches(
         $nativeMainText,
@@ -469,17 +482,6 @@ foreach ($moduleDir in $moduleDirectories) {
             "-DCMAKE_MAKE_PROGRAM=$ninja",
             "-DCMAKE_BUILD_TYPE=Release"
         )
-        if ($name -eq 'com.chillyroom.zhmr.gp') {
-            $gameLogicSource = Join-Path $cpp 'Embedded\GameLogic.mod.live_toggle.dll'
-            $gameLogicGzip = Join-Path $work 'native\GameLogic.mod.live_toggle.dll.gz'
-            if (-not (Test-Path -LiteralPath $gameLogicSource -PathType Leaf)) {
-                throw "Embedded GameLogic DLL missing: ${gameLogicSource}"
-            }
-            Compress-GzipFile $gameLogicSource $gameLogicGzip
-            $gameLogicSize = (Get-Item -LiteralPath $gameLogicSource).Length
-            $cmakeArgs += "-DEMBEDDED_GAMELOGIC_GZIP=$gameLogicGzip"
-            $cmakeArgs += "-DEMBEDDED_GAMELOGIC_UNCOMPRESSED_SIZE=$gameLogicSize"
-        }
         $embeddedIl2CppGzipSource = Join-Path $cpp 'Embedded\libil2cpp.patched.so.gz'
         $embeddedIl2CppSource = Join-Path $cpp 'Embedded\libil2cpp.patched.so'
         if (Test-Path -LiteralPath $embeddedIl2CppGzipSource -PathType Leaf) {

@@ -1,4 +1,5 @@
 -keep class com.moodtools.identity.** { *; }
+-keep class com.moodtools.diagnostics.** { *; }
 -keep class top.niunaijun.blackbox.proxy.** { *; }
 -keep class top.niunaijun.blackbox.app.** { *; }
 -keep class top.niunaijun.blackreflection.** { *; }

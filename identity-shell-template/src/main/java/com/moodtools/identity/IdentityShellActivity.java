@@ -24,6 +24,7 @@ import java.util.zip.ZipFile;
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.core.env.BEnvironment;
 import top.niunaijun.blackbox.entity.pm.InstallResult;
+import com.moodtools.diagnostics.DiagnosticRuntime;
 
 /** Direct launcher entry for a generated exact-package shell. */
 public final class IdentityShellActivity extends Activity {
@@ -106,29 +107,35 @@ public final class IdentityShellActivity extends Activity {
             String payloadAuthority = resolvePayloadAuthority();
             BlackBoxCore core = BlackBoxCore.get();
             updateStatus("Starting compatibility service…");
+            DiagnosticRuntime.event("identity_service_wait_started");
             core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
             if (!core.isInstalled(targetPackage, USER_ID)) {
+                DiagnosticRuntime.event("identity_game_import_started");
                 updateStatus("Importing original game…");
                 importOriginalGame(core, targetPackage, payloadAuthority);
             }
             releaseImportedGameBackup(targetPackage, payloadAuthority);
+            DiagnosticRuntime.event("identity_game_import_ready");
 
             updateStatus("Preparing add-on…");
             core.stopPackage(targetPackage, USER_ID);
             if (fullModuleAuthorized || !IdentityLaunchGuard.isExternalControllerShell(this)) {
                 refreshModuleIfAvailable(targetPackage, payloadAuthority);
             }
+            DiagnosticRuntime.event("identity_module_staged");
             IdentityLaunchGuard.persistMode(this, fullModuleAuthorized);
             if (!fullModuleAuthorized) {
                 Log.i(TAG, "External launch: identity compatibility only");
             }
             updateStatus("Opening game…");
+            DiagnosticRuntime.event("game_activity_launch_requested");
             if (!launchGame(core, targetPackage)) {
                 throw new IllegalStateException("The game has no launchable activity");
             }
             runOnUiThread(this::finish);
         } catch (Throwable error) {
             Log.e(TAG, "Identity-shell launch failed", error);
+            DiagnosticRuntime.failure("identity_setup", error);
             showFailure(error.getMessage());
         } finally {
             SETUP_IN_PROGRESS.set(false);

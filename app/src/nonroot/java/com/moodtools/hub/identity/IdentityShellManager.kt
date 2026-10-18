@@ -27,6 +27,7 @@ import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.PluginLoader
 import com.moodtools.hub.modules.RootMethod
 import com.moodtools.hub.soulpatch.BinaryXmlStringPool
+import com.moodtools.hub.RemoteLaunchDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -292,7 +293,10 @@ internal class IdentityShellManager(
     }
 
     /** Issues a short-lived proof that this shell launch originated in Jester Mods. */
-    fun authorizeLaunch(intent: Intent): Intent = authorize(intent, ACTION_PLAY)
+    fun authorizeLaunch(intent: Intent): Intent {
+        RemoteLaunchDiagnostics.begin(context, targetPackage, "identity_shell")
+        return authorize(intent, ACTION_PLAY)
+    }
 
     /** Issues a short-lived proof that allows the installed shell to clear its own app data. */
     fun authorizeClearData(intent: Intent): Intent = authorize(intent, ACTION_CLEAR_DATA)
@@ -352,7 +356,7 @@ internal class IdentityShellManager(
                 destination.setLevel(6)
                 val templateEntries = linkedSetOf<String>()
                 source.entries().asSequence().forEach { entry ->
-                    if (entry.isDirectory || isJarSignature(entry.name)) return@forEach
+                    if (entry.isDirectory || isJarSignature(entry.name) || entry.name == RemoteLaunchDiagnostics.CONFIG) return@forEach
                     templateEntries.add(entry.name)
                     val replacement = when {
                         entry.name == MANIFEST_ENTRY -> {
@@ -399,6 +403,8 @@ internal class IdentityShellManager(
                         putCopiedEntry(source, entry, destination, counting)
                     }
                 }
+                putBytes(destination, RemoteLaunchDiagnostics.CONFIG,
+                    RemoteLaunchDiagnostics.configuration(context, "identity_shell"), ZipEntry.DEFLATED, counting)
                 val copiedLibraries = linkedSetOf<String>()
                 nativeSources.forEach { apk ->
                     ZipFile(apk.file).use { archive ->
@@ -847,7 +853,7 @@ internal class IdentityShellManager(
         const val IDENTITY_METADATA = "com.moodtools.identity_shell"
         const val IDENTITY_VERSION_METADATA = "com.moodtools.identity_shell_version"
         const val PAYLOAD_AUTHORITY_METADATA = "com.moodtools.identity_payload_authority"
-        const val CURRENT_SHELL_VERSION = 37
+        const val CURRENT_SHELL_VERSION = 38
         const val METADATA_FILE = "metadata.json"
         private const val TEMPLATE_ASSET = "identity-shell/template.apk"
         private const val TEMPLATE_PACKAGE = "com.moodtools.identity.template"

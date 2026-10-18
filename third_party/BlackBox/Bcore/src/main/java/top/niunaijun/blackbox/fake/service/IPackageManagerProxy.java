@@ -143,6 +143,42 @@ public class IPackageManagerProxy extends BinderInvocationStub {
         return false;
     }
 
+    private static boolean shouldPreferFacebookPackageCallback(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())
+                || intent.getComponent() != null || intent.getSelector() != null
+                || intent.getData() == null
+                || !FacebookLoginCompat.isAppIdCustomTabCallback(
+                        intent.getData().getScheme(), intent.getData().getEncodedAuthority())) return false;
+        try {
+            String caller = BActivityThread.getAppPackageName();
+            if (caller == null || caller.isEmpty() || caller.startsWith("com.facebook.")
+                    || (intent.getPackage() != null && !caller.equals(intent.getPackage()))) return false;
+            int userId = BActivityThread.getUserId();
+            Intent appIdProbe = new Intent(intent).setPackage(caller);
+            Intent packageProbe = new Intent(Intent.ACTION_VIEW,
+                    android.net.Uri.parse("fbconnect://cct." + caller)).setPackage(caller);
+            packageProbe.addCategory(Intent.CATEGORY_DEFAULT);
+            packageProbe.addCategory(Intent.CATEGORY_BROWSABLE);
+            // Resolve against the virtual package manager, never the physical original game.
+            // resolveActivity can return null for tied matches; the SDK checks the full list.
+            return hasGuestFacebookCallback(appIdProbe, caller, userId)
+                    && hasGuestFacebookCallback(packageProbe, caller, userId);
+        } catch (Throwable error) {
+            Slog.w(TAG, "Could not verify Facebook package callback; retaining the original route");
+            return false;
+        }
+    }
+
+    private static boolean hasGuestFacebookCallback(Intent probe, String caller, int userId) {
+        List<ResolveInfo> activities = BlackBoxCore.getBPackageManager()
+                .queryIntentActivities(probe, PackageManager.GET_RESOLVED_FILTER, null, userId);
+        if (activities == null || activities.isEmpty()) return false;
+        for (ResolveInfo activity : activities) {
+            if (!FacebookLoginCompat.isGuestCustomTabActivity(activity, caller)) return false;
+        }
+        return true;
+    }
+
     private static boolean shouldHideNativeFacebookForGuest(ComponentName componentName) {
         try {
             return FacebookLoginCompat.shouldHideNativeLogin(
@@ -230,7 +266,7 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             // Facebook's native activity runs outside BlackBox and attributes the launch to the
             // non-root host signer. Hide that route from guests so their SDK can select the
             // browser/custom-tab login flow instead of failing Facebook's key-hash check.
-            if (shouldHideNativeFacebookForGuest(intent)) {
+            if (shouldHideNativeFacebookForGuest(intent) || shouldPreferFacebookPackageCallback(intent)) {
                 return null;
             }
 
@@ -745,6 +781,14 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             Intent intent = MethodParameterUtils.getFirstParam(args, Intent.class);
             String type = MethodParameterUtils.getFirstParam(args, String.class);
             Integer flags = MethodParameterUtils.getFirstParam(args, Integer.class);
+
+            if (shouldPreferFacebookPackageCallback(intent)) {
+                // The SDK will retry with fbconnect://cct.<guest>, which our shared relay handles.
+                // Return here so the physical game's app-ID activity cannot leak back as fallback.
+                Slog.i(TAG, "Preferring the package-based Facebook Custom Tab callback");
+                List<ResolveInfo> empty = Collections.emptyList();
+                return BuildCompat.isN() ? ParceledListSliceCompat.create(empty) : empty;
+            }
 
             List<ResolveInfo> resolves = BlackBoxCore.getBPackageManager()
                     .queryIntentActivities(intent, flags, type, BActivityThread.getUserId());

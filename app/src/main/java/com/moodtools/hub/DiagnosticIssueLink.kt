@@ -2,9 +2,17 @@ package com.moodtools.hub
 
 import java.net.URLEncoder
 
-/** Keep browser links small; the complete report travels as a user-selected attachment. */
+/** Keep useful evidence in the issue even when the user cannot attach a file. */
 internal fun diagnosticIssueLink(report: LaunchDiagnosticReport): String {
-    return diagnosticIssueLink("Diagnostics: ${report.packageName.take(120)} / ${report.status.take(80)}", report.summary.take(1800))
+    return diagnosticIssueLink("Diagnostics: ${report.packageName.take(120)} / ${report.status.take(80)}", compactDiagnosticExcerpt(report.summary))
+}
+
+internal fun compactDiagnosticExcerpt(text: String): String {
+    var frames = 0
+    return text.lineSequence().filter { line ->
+        if (line.startsWith("cause ")) frames = 0
+        if (line.trimStart().startsWith("at ")) ++frames <= 6 else true
+    }.joinToString("\n")
 }
 
 internal fun diagnosticIssueLink(reportTitle: String, reportText: String): String {
@@ -12,12 +20,19 @@ internal fun diagnosticIssueLink(reportTitle: String, reportText: String): Strin
     var titleText = reportTitle.take(210)
     while (encode(titleText).length > 600) titleText = titleText.dropLast(1)
     val title = encode(titleText)
-    val heading = "## What happened?\nDescribe the problem and steps to reproduce it here.\n\n" +
-        "## Full diagnostic report\nAttach the saved Jester-diagnostics text file here before submitting.\n\n" +
-        "## Diagnostic excerpt (not the full report)\n"
+    val heading = "## What happened?\nTell us what you saw and what you tapped. Did the game open?\n\n" +
+        "## Automatic diagnostics\nKey details are included below for initial investigation. This is a shortened report.\n"
+    val attachment = "\n\n## Optional extra details\nIf you saved a Jester-diagnostics .txt file, attach it using GitHub's attachment button or file-drop area. " +
+        "If you cannot attach it, you can still submit this issue."
     // Encode before limiting: non-ASCII and punctuation can expand several times in a URL.
-    var excerpt = reportText.take(5500)
-    fun body() = encode(heading + excerpt.replace("```", "'''"))
-    while (body().length > 5500 && excerpt.isNotEmpty()) excerpt = excerpt.dropLast(100.coerceAtMost(excerpt.length))
+    var excerpt = compactDiagnosticExcerpt(reportText.take(24_000))
+    fun body() = encode(heading + excerpt.replace("```", "'''") + "\n[End of shortened diagnostics]" + attachment)
+    while (body().length > 5500 && excerpt.isNotEmpty()) {
+        val lines = excerpt.lines()
+        // Remove long stack traces before sacrificing metadata or the startup event trail.
+        val frame = lines.indexOfLast { it.trimStart().startsWith("at ") }
+        excerpt = if (frame >= 0) lines.filterIndexed { index, _ -> index != frame }.joinToString("\n")
+            else excerpt.dropLast(100.coerceAtMost(excerpt.length))
+    }
     return "https://github.com/BenigJester/Jester-Mods-Launcher/issues/new?title=$title&body=${body()}"
 }

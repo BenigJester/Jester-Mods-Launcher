@@ -3,6 +3,8 @@
 
 
 #include "FileSystemHook.h"
+#include "AdsCacheDex.h"
+#include "BoxCore.h"
 #include "Dobby/dobby.h"
 #include "IO.h"
 #include "Log.h"
@@ -54,6 +56,17 @@ static const char *redirect(const char *pathname) {
     return pathname == nullptr ? nullptr : IO::redirectPath(pathname);
 }
 
+static int sealAdsCacheWriter(int fd, const char *path, int flags) {
+    const int savedErrno = errno;
+    const int result = AdsCacheDex::seal(fd, path, flags, BoxCore::getApiLevel());
+    if (result > 0) ALOGD("AdsCacheDex: sealed supported guest ads-cache writer");
+    if (result < 0) {
+        ALOGE("FileSystemHook: Could not seal supported guest ads DEX (errno=%d)", errno);
+    }
+    errno = savedErrno;
+    return fd;
+}
+
 
 int new_open(const char *pathname, int flags, ...) {
     if (shouldBlock(pathname)) {
@@ -62,13 +75,13 @@ int new_open(const char *pathname, int flags, ...) {
     }
     const char *redirected = redirect(pathname);
     if (!hasModeArgument(flags)) {
-        return orig_open(redirected, flags);
+        return sealAdsCacheWriter(orig_open(redirected, flags), pathname, flags);
     }
     va_list args;
     va_start(args, flags);
     mode_t mode = va_arg(args, mode_t);
     va_end(args);
-    return orig_open(redirected, flags, mode);
+    return sealAdsCacheWriter(orig_open(redirected, flags, mode), pathname, flags);
 }
 
 
@@ -79,13 +92,13 @@ int new_open64(const char *pathname, int flags, ...) {
     }
     const char *redirected = redirect(pathname);
     if (!hasModeArgument(flags)) {
-        return orig_open64(redirected, flags);
+        return sealAdsCacheWriter(orig_open64(redirected, flags), pathname, flags);
     }
     va_list args;
     va_start(args, flags);
     mode_t mode = va_arg(args, mode_t);
     va_end(args);
-    return orig_open64(redirected, flags, mode);
+    return sealAdsCacheWriter(orig_open64(redirected, flags, mode), pathname, flags);
 }
 
 int new_openat(int dirfd, const char *pathname, int flags, ...) {
@@ -95,13 +108,13 @@ int new_openat(int dirfd, const char *pathname, int flags, ...) {
     }
     const char *redirected = redirect(pathname);
     if (!hasModeArgument(flags)) {
-        return orig_openat(dirfd, redirected, flags);
+        return sealAdsCacheWriter(orig_openat(dirfd, redirected, flags), pathname, flags);
     }
     va_list args;
     va_start(args, flags);
     mode_t mode = va_arg(args, mode_t);
     va_end(args);
-    return orig_openat(dirfd, redirected, flags, mode);
+    return sealAdsCacheWriter(orig_openat(dirfd, redirected, flags, mode), pathname, flags);
 }
 
 int new_access(const char *pathname, int mode) {
@@ -142,11 +155,15 @@ DIR *new_opendir(const char *pathname) {
 }
 
 FILE *new_fopen(const char *pathname, const char *mode) {
-    return orig_fopen(redirect(pathname), mode);
+    FILE *file = orig_fopen(redirect(pathname), mode);
+    if (file && mode && mode[0] == 'w') sealAdsCacheWriter(fileno(file), pathname, O_WRONLY | O_CREAT | O_TRUNC);
+    return file;
 }
 
 FILE *new_fopen64(const char *pathname, const char *mode) {
-    return orig_fopen64(redirect(pathname), mode);
+    FILE *file = orig_fopen64(redirect(pathname), mode);
+    if (file && mode && mode[0] == 'w') sealAdsCacheWriter(fileno(file), pathname, O_WRONLY | O_CREAT | O_TRUNC);
+    return file;
 }
 
 template<typename Function>

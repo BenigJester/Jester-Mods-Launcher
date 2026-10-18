@@ -15,6 +15,7 @@ public final class LaunchSessionRecorder {
     private static File guestSession;
     private static String guestPackage;
     private static volatile boolean activityResumed;
+    private static SessionResourceRecorder resources;
 
     public static File root() { return new File(BEnvironment.getSystemDir(), "launch-diagnostics"); }
 
@@ -66,8 +67,14 @@ public final class LaunchSessionRecorder {
         if (guestSession != null && pkg.equals(guestPackage)) return;
         guestPackage = pkg;
         guestSession = current(pkg); // Pin this process to its session; never contaminate a later launch.
-        event("guest_attached");
+        event("guest_attached main=" + pkg.equals(top.niunaijun.blackbox.app.BActivityThread.getAppProcessName()));
         final File session = guestSession;
+        if (session != null && resources == null) {
+            try {
+                resources = new SessionResourceRecorder();
+                resources.start(session);
+            } catch (Throwable ignored) { }
+        }
         if (session != null && pkg.equals(top.niunaijun.blackbox.app.BActivityThread.getAppProcessName())) {
             try {
                 Thread watchdog = new Thread(() -> {
@@ -99,6 +106,11 @@ public final class LaunchSessionRecorder {
     public static synchronized void event(String event) {
         try {
             if (event.startsWith("activity_resumed ") || event.startsWith("activity_direct-resumed ")) activityResumed = true;
+            if (resources != null) {
+                if (event.startsWith("activity_resumed ") || event.startsWith("activity_direct-resumed ")) resources.foreground(true);
+                if (event.startsWith("activity_paused ") || event.startsWith("activity_direct-paused ")
+                        || event.startsWith("activity_stopped ") || event.startsWith("activity_direct-stopped ")) resources.foreground(false);
+            }
             append(guestSession, "process-" + Process.myPid() + ".txt", event);
         } catch (Throwable ignored) { }
     }
@@ -108,6 +120,17 @@ public final class LaunchSessionRecorder {
     }
 
     public static void hostEvent(File session, String event) { append(session, "host.txt", event); }
+
+    public static synchronized void menuAttachment(String state) {
+        if (!java.util.Arrays.asList("checking", "attached", "not_attached", "unsupported", "probe_error").contains(state)) return;
+        event("menu_window " + state);
+        if (guestSession == null || !guestSession.isDirectory()) return;
+        try {
+            // No parent creation: clearing a running session must stay cleared.
+            Files.write(new File(guestSession, "menu-" + Process.myPid() + ".txt").toPath(),
+                    (System.currentTimeMillis() + " menu_window " + state + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (Throwable ignored) { }
+    }
 
     public static void processCreated(String pkg, int pid) {
         if (pid > 0) append(current(pkg), "process-" + pid + ".txt", "guest_process_created");
@@ -126,16 +149,51 @@ public final class LaunchSessionRecorder {
 
     /** Save types and frames, not exception messages (which can contain credentials or URLs). */
     public static String exceptionFrames(Throwable error) {
+        java.util.ArrayList<Throwable> causes = new java.util.ArrayList<>();
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        while (error != null && causes.size() < 32 && seen.add(error)) {
+            causes.add(error);
+            error = error.getCause();
+        }
         StringBuilder text = new StringBuilder();
-        for (int cause = 0; error != null && cause < 5; cause++, error = error.getCause()) {
-            text.append("cause ").append(error.getClass().getName()).append('\n');
-            StackTraceElement[] frames = error.getStackTrace();
-            for (int i = 0; i < Math.min(frames.length, 48); i++) {
+        // Deepest first so the actual failure survives shortened UI/GitHub excerpts.
+        if (error != null) text.append("Exception chain truncated or cyclic; deepest captured cause follows.\n");
+        text.append("Exception causes (deepest captured first):\n");
+        final int maxChars = MAX_EVENT_BYTES / 4; // At most 64 KiB even with four-byte UTF-8 characters.
+        for (int cause = causes.size() - 1; cause >= 0 && text.length() < maxChars; cause--) {
+            Throwable captured = causes.get(cause);
+            text.append("cause ").append(captured.getClass().getName()).append('\n');
+            String category = dynamicCodeRejection(captured);
+            if (category != null) text.append("dynamic_code_rejection: ").append(category).append('\n');
+            StackTraceElement[] frames = captured.getStackTrace();
+            for (int i = 0; i < Math.min(frames.length, 48) && text.length() < maxChars; i++) {
                 text.append("  at ").append(frames[i].getClassName()).append('.').append(frames[i].getMethodName())
                         .append(':').append(frames[i].getLineNumber()).append('\n');
             }
         }
+        if (text.length() >= maxChars) {
+            text.setLength(maxChars - 32);
+            text.append("\nException frames truncated.\n");
+        }
         return text.toString();
+    }
+
+    /** Fixed classifications only: never persist a DEX path or arbitrary exception message. */
+    public static String dynamicCodeRejection(Throwable error) {
+        if (!(error instanceof SecurityException)) return null;
+        boolean dexOpen = false;
+        for (StackTraceElement frame : error.getStackTrace()) {
+            if ("dalvik.system.DexFile".equals(frame.getClassName())
+                    && "openDexFileNative".equals(frame.getMethodName())) {
+                dexOpen = true;
+                break;
+            }
+        }
+        if (!dexOpen) return null;
+        String message = error.getMessage();
+        if (message != null && message.startsWith("Writable dex file '")
+                && message.endsWith("' is not allowed.")) return "writable_file_blocked";
+        return "unclassified_security_rejection";
     }
 
     public static synchronized void failure(String stage, Throwable error) {

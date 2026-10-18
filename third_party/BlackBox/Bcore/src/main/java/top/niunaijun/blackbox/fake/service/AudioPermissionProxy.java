@@ -5,12 +5,14 @@ import android.media.AudioManager;
 import android.os.IBinder;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 
 import black.android.os.BRServiceManager;
 import top.niunaijun.blackbox.fake.hook.BinderInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.utils.MethodParameterUtils;
 
 
 public class AudioPermissionProxy extends BinderInvocationStub {
@@ -55,6 +57,19 @@ public class AudioPermissionProxy extends BinderInvocationStub {
     @Override
     public boolean isBadEnv() {
         return false;
+    }
+
+    @Override
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        // AudioService validates callingPackage against the real Binder caller (the host).
+        // Match installed package strings, not argument positions: OEM/API signatures vary.
+        MethodParameterUtils.replaceAllAppPkg(args);
+        try {
+            return super.invoke(proxy, method, args);
+        } catch (InvocationTargetException error) {
+            // Preserve real service rejection; never fabricate a successful audio-focus grant.
+            throw error.getTargetException();
+        }
     }
 
     

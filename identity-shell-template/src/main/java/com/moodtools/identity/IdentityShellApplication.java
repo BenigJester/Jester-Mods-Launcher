@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import org.json.JSONObject;
+import com.moodtools.diagnostics.DiagnosticRuntime;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +32,8 @@ public final class IdentityShellApplication extends Application {
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
+        if (DiagnosticRuntime.isDiagnosticProcess()) return;
+        DiagnosticRuntime.start(base.getApplicationInfo());
         BlackBoxCore.get().doAttachBaseContext(base, new ClientConfiguration() {
             @Override
             public String getHostPackageName() {
@@ -41,6 +44,8 @@ public final class IdentityShellApplication extends Application {
             public boolean isEnableDaemonService() {
                 return false;
             }
+
+            @Override public boolean isEnableLauncherActivity() { return false; }
 
             @Override
             public boolean isHostPackageVirtualizationEnabled() {
@@ -57,6 +62,7 @@ public final class IdentityShellApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (DiagnosticRuntime.isDiagnosticProcess()) return;
         registerModuleLifecycle();
         BlackBoxCore.get().doCreate();
     }
@@ -66,13 +72,17 @@ public final class IdentityShellApplication extends Application {
             @Override
             public void beforeCreateApplication(String packageName, String processName,
                                                 Context context, int userId) {
-                if (isTarget(packageName, userId)) ensureModuleLoaded(packageName, userId);
+                if (isTarget(packageName, userId)) {
+                    DiagnosticRuntime.event("guest_attached main=" + packageName.equals(processName));
+                    ensureModuleLoaded(packageName, userId);
+                }
             }
 
             @Override
             public void beforeApplicationOnCreate(String packageName, String processName,
                                                   Application application, int userId) {
                 if (!isTarget(packageName, userId) || application == null) return;
+                DiagnosticRuntime.attach(application);
                 ensureModuleLoaded(packageName, userId);
                 application.registerActivityLifecycleCallbacks(
                         new ActivityLifecycleCallbacks() {
@@ -119,6 +129,7 @@ public final class IdentityShellApplication extends Application {
         }
         if (loader == null) return;
         try {
+            DiagnosticRuntime.event("module_attach_started");
             Class<?> main = Class.forName(entryPoint(packageName), true, loader);
             try {
                 main.getMethod("StartRoot", Activity.class).invoke(null, activity);
@@ -126,7 +137,9 @@ public final class IdentityShellApplication extends Application {
                 main.getMethod("Start", Context.class).invoke(null, activity);
             }
             Log.i(TAG, "Module attached to " + activity.getClass().getName());
+            DiagnosticRuntime.event("module_entry_returned");
         } catch (Throwable error) {
+            DiagnosticRuntime.failure("module_attach", error);
             Log.e(TAG, "Could not attach module", error);
         }
     }
@@ -177,9 +190,11 @@ public final class IdentityShellApplication extends Application {
                 }
             }
             moduleLoaders.put(packageName, loader);
+            DiagnosticRuntime.event("module_native_load_completed");
             Log.i(TAG, "Module loaded for " + packageName);
             return true;
         } catch (Throwable error) {
+            DiagnosticRuntime.failure("module_load", error);
             Log.e(TAG, "Could not load module", error);
             return false;
         }

@@ -43,7 +43,6 @@ import top.niunaijun.blackbox.fake.service.ILocaleManagerProxy;
 import top.niunaijun.blackbox.fake.service.ILocationManagerProxy;
 import top.niunaijun.blackbox.fake.service.IMediaRouterServiceProxy;
 import top.niunaijun.blackbox.fake.service.IMediaSessionManagerProxy;
-import top.niunaijun.blackbox.fake.service.IAudioServiceProxy;
 import top.niunaijun.blackbox.fake.service.ISensorPrivacyManagerProxy;
 import top.niunaijun.blackbox.fake.service.ContentResolverProxy;
 import top.niunaijun.blackbox.fake.service.IWebViewUpdateServiceProxy;
@@ -128,7 +127,6 @@ public class HookManager {
             addInjector(new IUserManagerProxy());
             addInjector(new RestrictionsManagerStub());
             addInjector(new IMediaSessionManagerProxy());
-            addInjector(new IAudioServiceProxy());
             addInjector(new ISensorPrivacyManagerProxy());
             addInjector(new ContentResolverProxy());
             addInjector(new IWebViewUpdateServiceProxy());
@@ -149,6 +147,7 @@ public class HookManager {
             addInjector(new LevelDbProxy());
             addInjector(new DeviceIdProxy());
             addInjector(new AndroidIdProxy());
+            // One audio-service proxy only; stacking proxies hides service failures behind reflection wrappers.
             addInjector(new AudioPermissionProxy());
             addInjector(new ILocationManagerProxy());
             addInjector(new IStorageManagerProxy());

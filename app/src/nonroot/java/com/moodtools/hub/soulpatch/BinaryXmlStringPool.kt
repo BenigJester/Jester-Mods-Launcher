@@ -21,6 +21,101 @@ internal object BinaryXmlStringPool {
 
     data class ManifestPackageVersion(val versionName: String, val versionCode: Long)
 
+    /** Adds one isolated diagnostics provider; existing string indexes and resource IDs stay stable. */
+    fun withDiagnosticProvider(document: ByteArray, packageName: String): ByteArray {
+        val provider = "com.moodtools.diagnostics.DiagnosticProvider"
+        val strings = readStrings(document)
+        if (provider in strings) {
+            var factory: String? = null
+            forEachAttribute(document, strings) { element, namespace, name, offset ->
+                if (element == "application" && namespace == ANDROID_NAMESPACE && name == "appComponentFactory")
+                    factory = stringAt(strings, i32(document, offset + 16))
+            }
+            require(factory == "com.moodtools.diagnostics.DiagnosticFactory") { "Existing diagnostic provider has an unexpected application factory" }
+            return document
+        }
+        val namespace = strings.indexOf(ANDROID_NAMESPACE)
+        require(namespace >= 0)
+        val extras = listOf("provider", "name", "exported", "process", "authorities", provider,
+            "$packageName.jester-diagnostics", ":jester_diagnostics", "appComponentFactory",
+            "com.moodtools.diagnostics.DiagnosticFactory")
+        val poolOffset = findStringPool(document)
+        val oldPoolSize = i32(document, poolOffset + 4)
+        val pool = rebuildStringPool(document.copyOfRange(poolOffset, poolOffset + oldPoolSize), "", false, { it }, extras)
+        val count = strings.size
+        var cursor = u16(document, 2)
+        var resourceMap = ByteArray(0)
+        var applicationEnds = 0
+        val chunks = ByteArrayOutputStream()
+        while (cursor < document.size) {
+            val type = u16(document, cursor)
+            val size = i32(document, cursor + 4)
+            require(size >= 8 && cursor + size <= document.size)
+            when (type) {
+                STRING_POOL_TYPE -> Unit
+                0x0180 -> resourceMap = document.copyOfRange(cursor + 8, cursor + size)
+                else -> {
+                    if (type == START_ELEMENT_TYPE && stringAt(strings, i32(document, cursor + u16(document, cursor + 2) + 4)) == "application") {
+                        val ext = cursor + u16(document, cursor + 2)
+                        val attrCount = u16(document, ext + 12)
+                        val attrSize = u16(document, ext + 10)
+                        val attrStart = ext + u16(document, ext + 8)
+                        require(attrSize == 20 && attrStart + attrCount * attrSize == cursor + size)
+                        val factory = (0 until attrCount).map { attrStart + it * attrSize }.firstOrNull {
+                            stringAt(strings, i32(document, it + 4)) == "appComponentFactory"
+                        }
+                        val node = document.copyOfRange(cursor, cursor + size + if (factory == null) 20 else 0)
+                        if (factory != null) {
+                            putI32(node, factory - cursor + 8, count + 9)
+                            node[factory - cursor + 15] = 3
+                            putI32(node, factory - cursor + 16, count + 9)
+                        } else {
+                            putI32(node, 4, size + 20)
+                            ByteBuffer.wrap(node).order(ByteOrder.LITTLE_ENDIAN).putShort(ext - cursor + 12, (attrCount + 1).toShort())
+                            ByteBuffer.wrap(node, size, 20).order(ByteOrder.LITTLE_ENDIAN)
+                                .putInt(namespace).putInt(count + 8).putInt(count + 9).putShort(8).put(0).put(3).putInt(count + 9)
+                        }
+                        chunks.write(node)
+                        cursor += size
+                        continue
+                    }
+                    if (type == 0x0103 && stringAt(strings, i32(document, cursor + u16(document, cursor + 2) + 4)) == "application") {
+                        applicationEnds++
+                        val node = ByteBuffer.allocate(116).order(ByteOrder.LITTLE_ENDIAN)
+                        node.putShort(0x0102.toShort()).putShort(16).putInt(116).putInt(0).putInt(-1)
+                        node.putInt(-1).putInt(count).putShort(20).putShort(20).putShort(4).putShort(0).putShort(0).putShort(0)
+                        fun attribute(name: Int, value: Int, boolean: Boolean = false) {
+                            node.putInt(namespace).putInt(name).putInt(if (boolean) -1 else value)
+                            node.putShort(8).put(0).put(if (boolean) 0x12.toByte() else 3.toByte()).putInt(value)
+                        }
+                        attribute(count + 1, count + 5)
+                        attribute(count + 2, -1, true)
+                        attribute(count + 3, count + 7)
+                        attribute(count + 4, count + 6)
+                        chunks.write(node.array())
+                        chunks.write(ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+                            .putShort(0x0103.toShort()).putShort(16).putInt(24).putInt(0).putInt(-1).putInt(-1).putInt(count).array())
+                    }
+                    chunks.write(document, cursor, size)
+                }
+            }
+            cursor += size
+        }
+        require(applicationEnds == 1)
+        val map = ByteBuffer.allocate(8 + (count + extras.size) * 4).order(ByteOrder.LITTLE_ENDIAN)
+        map.putShort(0x0180.toShort()).putShort(8).putInt(map.capacity())
+        require(resourceMap.size <= count * 4)
+        map.put(resourceMap)
+        map.putInt(8 + (count + 1) * 4, 0x01010003)
+        map.putInt(8 + (count + 2) * 4, 0x01010010)
+        map.putInt(8 + (count + 3) * 4, 0x01010011)
+        map.putInt(8 + (count + 4) * 4, 0x01010018)
+        map.putInt(8 + (count + 8) * 4, 0x0101057a)
+        return ByteArrayOutputStream().apply {
+            write(document, 0, u16(document, 2)); write(pool); write(map.array()); write(chunks.toByteArray())
+        }.toByteArray().also { putI32(it, 4, it.size) }
+    }
+
     fun replaceExact(document: ByteArray, expected: String, replacement: String): ByteArray {
         return replaceStrings(document, expected, requireExactlyOne = true) { value ->
             if (value == expected) replacement else value
@@ -133,7 +228,8 @@ internal object BinaryXmlStringPool {
         chunk: ByteArray,
         expected: String,
         requireExactlyOne: Boolean,
-        transform: (String) -> String
+        transform: (String) -> String,
+        extras: List<String> = emptyList()
     ): ByteArray {
         require(chunk.size >= 28 && u16(chunk, 0) == STRING_POOL_TYPE) {
             "AndroidManifest.xml string pool is invalid"
@@ -173,7 +269,7 @@ internal object BinaryXmlStringPool {
             strings += rewritten
             if (rewritten != value) replacements++
         }
-        require(if (requireExactlyOne) replacements == 1 else replacements > 0) {
+        require(extras.isNotEmpty() || if (requireExactlyOne) replacements == 1 else replacements > 0) {
             if (requireExactlyOne) {
                 "Expected one $expected declaration in AndroidManifest.xml; found $replacements"
             } else {
@@ -181,8 +277,11 @@ internal object BinaryXmlStringPool {
             }
         }
 
+        strings.addAll(extras)
+        val newStringCount = strings.size
+        val newOffsetsEnd = headerSize + (newStringCount + styleCount) * 4
         val encodedStrings = ByteArrayOutputStream()
-        val newOffsets = IntArray(stringCount)
+        val newOffsets = IntArray(newStringCount)
         strings.forEachIndexed { index, value ->
             newOffsets[index] = encodedStrings.size()
             encodedStrings.write(if (utf8) encodeUtf8(value) else encodeUtf16(value))
@@ -190,13 +289,14 @@ internal object BinaryXmlStringPool {
         while (encodedStrings.size() % 4 != 0) encodedStrings.write(0)
         val stringBytes = encodedStrings.toByteArray()
         val styleBytes = if (stylesStart == 0) ByteArray(0) else chunk.copyOfRange(stylesStart, chunk.size)
-        val newStringsStart = offsetsEnd
+        val newStringsStart = newOffsetsEnd
         val newStylesStart = if (styleCount == 0) 0 else newStringsStart + stringBytes.size
         val newSize = newStringsStart + stringBytes.size + styleBytes.size
         val output = ByteArray(newSize)
 
         chunk.copyInto(output, 0, 0, headerSize)
         putI32(output, 4, newSize)
+        putI32(output, 8, newStringCount)
         putI32(output, 16, originalFlags and SORTED_FLAG.inv())
         putI32(output, 20, newStringsStart)
         putI32(output, 24, newStylesStart)
@@ -204,7 +304,7 @@ internal object BinaryXmlStringPool {
         repeat(styleCount) { index ->
             putI32(
                 output,
-                headerSize + stringCount * 4 + index * 4,
+                headerSize + newStringCount * 4 + index * 4,
                 i32(chunk, headerSize + stringCount * 4 + index * 4)
             )
         }

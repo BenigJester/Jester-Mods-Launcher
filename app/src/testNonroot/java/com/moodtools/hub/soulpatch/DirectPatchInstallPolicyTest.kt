@@ -48,6 +48,8 @@ class DirectPatchInstallPolicyTest {
     fun moduleOrPatchFormatChangeNeedsReapply() {
         assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(moduleBuild = 41), CURRENT_REVISION))
         assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(markerSchema = 1), CURRENT_REVISION))
+        assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(markerSchema = 2), CURRENT_REVISION))
+        assertFalse(directPatchRevisionIsCurrent(CURRENT_REVISION.copy(markerSchema = 3), CURRENT_REVISION))
         assertFalse(directPatchRevisionIsCurrent(
             CURRENT_REVISION.copy(nativeSha256 = "old-native"),
             CURRENT_REVISION
@@ -61,7 +63,7 @@ class DirectPatchInstallPolicyTest {
     private companion object {
         const val PATCH_SIGNER = "jester-patch-signer"
         val CURRENT_REVISION = DirectPatchRevision(
-            markerSchema = 2,
+            markerSchema = 4,
             gameVersionCode = 80512,
             moduleBuild = 42,
             moduleVersion = "8.5.1-r2",

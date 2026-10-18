@@ -1,0 +1,15 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.moodtools.diagnostics'
+    compileSdk 35
+    defaultConfig { applicationId 'com.moodtools.diagnostics.template'; minSdk 28; targetSdk 35; versionCode 1; versionName '1' }
+    buildTypes { release { minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    sourceSets.main.java.srcDir("$buildDir/generated/resourceSampler")
+}
+tasks.register('prepareResourceSampler', Copy) {
+    from('../third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/utils/SessionResourceRecorder.java')
+    into("$buildDir/generated/resourceSampler/top/niunaijun/blackbox/utils")
+}
+tasks.named('preBuild').configure { dependsOn('prepareResourceSampler') }
+dependencies { testImplementation 'junit:junit:4.13.2' }

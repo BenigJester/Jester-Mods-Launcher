@@ -129,6 +129,8 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
                     Text(report.status, color = palette.muted)
                     Spacer(Modifier.height(8.dp))
                     Text(if (backend.crashOnly) "View or share a game crash report." else "A report was saved. A slow launch is not always a freeze.", color = palette.muted)
+                    Spacer(Modifier.height(8.dp))
+                    DiagnosticTutorialButton(palette)
                 }
             },
             confirmButton = {
@@ -153,6 +155,7 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
                     Spacer(Modifier.height(8.dp))
                     Text("Reports stay on your device until you choose to share them.", color = palette.muted,
                         style = MaterialTheme.typography.bodySmall)
+                    DiagnosticTutorialButton(palette)
                     Spacer(Modifier.height(18.dp))
                     val report = selected
                     if (report == null) {
@@ -193,7 +196,7 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
                         }, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, palette.hairline)) {
                             Text("Share full report", color = palette.accentSecondary)
                         }
-                        Text("Save the report, then attach it to your GitHub issue.", color = palette.muted,
+                        Text("Key details are filled in on GitHub. Attaching the saved file is optional.", color = palette.muted,
                             style = MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick = {
                             scope.launch {
@@ -254,14 +257,19 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
         AlertDialog(onDismissRequest = { githubReport = null },
             shape = RoundedCornerShape(28.dp), containerColor = palette.surfaceRaised,
             title = { Text("Share full report", color = Color.White) },
-            text = { Text("GitHub issues are public. Review your report before sharing. Save the file, then attach it on GitHub and submit the issue. A GitHub account is required.", color = palette.muted) },
+            text = { Text("GitHub issues are public. Key details will be filled in for you. Tell us what happened, then submit. A GitHub account is required. You can optionally save and attach the full report for more detail.", color = palette.muted) },
             confirmButton = {
+                TextButton(onClick = {
+                    githubReport = null
+                    error = runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(diagnosticIssueLink(report)))) }.isFailure
+                }) { Text("Open GitHub report", color = palette.accentSecondary) }
+            },
+            dismissButton = {
                 TextButton(onClick = {
                     githubReport = null
                     exportReportId = report.id
                     error = runCatching { saveReport.launch("Jester-diagnostics-${report.id}.txt") }.isFailure
                 }) { Text("Save and open GitHub", color = palette.accentSecondary) }
-            },
-            dismissButton = { TextButton(onClick = { githubReport = null }) { Text("Dismiss", color = palette.muted) } })
+            })
     }
 }

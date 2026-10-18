@@ -50,16 +50,22 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Per-game diagnostics with copy, export, sharing, and clear controls
 - [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
 
-### 4.3.1 source update
+### 4.4.0 source update
 
-Extends prefilled GitHub issue sharing to download, update, repair, and setup diagnostics.
-Game-session history now remains until manually cleared with Clear diagnostics; starting
-a game no longer prunes old reports. Diagnostic storage grows until cleared.
+- Adds diagnostics for supported direct-patch games and identity shells alongside BlackBox
+  session reports and Root crash reports. Existing patches must be reapplied and shells updated.
+- Adds a themed, localized [Diagnostic Tutorial](https://youtube.com/shorts/Isl_ffWYpa4)
+  button to diagnostic history, review notices, and installer diagnostics.
+- Adds OBB expansion-file support for supported downloads and BlackBox launches.
+- Improves BlackBox startup compatibility, Facebook callback routing, resume reliability,
+  and module lifetime handling; avoids automatically replaying an unconfirmed resume.
+- Expands startup, process-exit, ANR, resource, and menu-window evidence without treating
+  an activity resume or window attachment as proof that gameplay is ready.
+- Prefills GitHub reports with key details; saving and attaching the full report is optional.
 
-Adds themed, localized diagnostics and report sharing, fixes BlackBox resume/session tracking,
-improves WebView permission compatibility, bounds access checks, and safely handles unexpected
-HTML or malformed service responses. Diagnostics do not prove that a game reached its menu.
-Reports stay on the device unless shared; review them before attaching them to a public issue.
+Reports stay on the device unless shared. Review them before submitting a public issue.
+Game-session history remains until manually cleared; diagnostic storage grows until cleared.
+Diagnostics do not automatically identify a faulty hook or prove that a game reached its menu.
 
 ### Integrity and access
 

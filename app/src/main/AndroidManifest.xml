@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Android still shows its own confirmation before replacing the launcher. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 11 and older additionally require legacy storage permission for installer OBB access. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="30" />
     <!-- Soul Knight's non-root patch replaces the Play-signed package after explicit confirmation. -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
@@ -55,6 +58,11 @@
         <receiver
             android:name=".networking.GameInstallReceiver"
             android:exported="false" />
+
+        <activity
+            android:name=".networking.GameObbPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
 
         <receiver
             android:name=".PackageReplacementInstallReceiver"

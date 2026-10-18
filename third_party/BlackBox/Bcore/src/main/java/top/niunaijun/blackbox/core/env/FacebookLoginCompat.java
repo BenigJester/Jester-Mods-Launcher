@@ -19,6 +19,8 @@ public final class FacebookLoginCompat {
 
     private static final String CUSTOM_TAB_CALLBACK_SCHEME = "fbconnect";
     private static final String CUSTOM_TAB_CALLBACK_HOST_PREFIX = "cct.";
+    public static final String CUSTOM_TAB_ACTIVITY = "com.facebook.CustomTabActivity";
+    private static final Pattern APP_ID_CALLBACK_SCHEME = Pattern.compile("fb[0-9]+");
     private static final Pattern ANDROID_PACKAGE_NAME = Pattern.compile(
             "[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+");
     private static final String FACEBOOK_PLATFORM_WRAPPER_ACTIVITY =
@@ -32,6 +34,19 @@ public final class FacebookLoginCompat {
             "com.facebook.katana.gdp.ProxyAuthDialog";
 
     private FacebookLoginCompat() {
+    }
+
+    /** SDK probe for its app-ID redirect, not arbitrary deep links or received callbacks. */
+    public static boolean isAppIdCustomTabCallback(String scheme, String authority) {
+        return scheme != null && APP_ID_CALLBACK_SCHEME.matcher(scheme).matches()
+                && "authorize".equals(authority);
+    }
+
+    public static boolean isGuestCustomTabActivity(ResolveInfo info, String guestPackage) {
+        ActivityInfo activity = info == null ? null : info.activityInfo;
+        return guestPackage != null && activity != null
+                && guestPackage.equals(activity.packageName)
+                && CUSTOM_TAB_ACTIVITY.equals(activity.name);
     }
 
     public static boolean shouldHideNativeLogin(String callerPackage, Intent intent) {

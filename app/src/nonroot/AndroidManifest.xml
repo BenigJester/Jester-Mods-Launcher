@@ -93,7 +93,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
-                <data android:scheme="fbconnect" />
+                <!-- Match authority specificity too; the relay strictly validates cct.<guest>. -->
+                <data android:scheme="fbconnect" android:host="*" />
             </intent-filter>
         </activity>
     </application>

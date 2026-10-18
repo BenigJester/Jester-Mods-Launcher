@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A report query must never instantiate this deliberately failing gameplay Application. -->
+    <application android:name="com.moodtools.diagnostics.FailingGameApplication"
+        android:appComponentFactory="com.moodtools.diagnostics.DiagnosticFactory">
+        <activity android:name="android.app.Activity" android:exported="true" />
+    </application>
+</manifest>

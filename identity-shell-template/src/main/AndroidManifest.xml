@@ -25,7 +25,7 @@
 
         <meta-data
             android:name="com.moodtools.identity_shell_version"
-            android:value="37" />
+            android:value="38" />
 
         <meta-data
             android:name="com.moodtools.identity_payload_authority"
@@ -47,5 +47,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <provider android:name="com.moodtools.diagnostics.DiagnosticProvider"
+            android:authorities="${applicationId}.jester-diagnostics"
+            android:exported="true" android:process=":jester_diagnostics" />
     </application>
 </manifest>

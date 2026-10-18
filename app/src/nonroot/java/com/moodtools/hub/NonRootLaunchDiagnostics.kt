@@ -81,21 +81,27 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
         file.name.matches(Regex("[0-9]+-[a-f0-9-]+")) && file.canonicalFile.parentFile == file.parentFile?.canonicalFile
 
     @Synchronized override fun reports(context: Context): List<LaunchDiagnosticReport> {
-        val sessions = runCatching { LaunchSessionRecorder.root().listFiles().orEmpty()
+        fun sessions() = runCatching { LaunchSessionRecorder.root().listFiles().orEmpty()
             .filter(File::isDirectory).flatMap { it.listFiles().orEmpty().filter(::isSessionDirectory) }
             .filter { !File(it, "superseded").exists() } }
             .getOrDefault(emptyList())
         // Calls run outside the UI and have a deadline. Never wait for a wedged guest process.
-        if (Build.VERSION.SDK_INT >= 30 && readingExits.compareAndSet(false, true)) {
+        if (readingExits.compareAndSet(false, true)) {
             val future = exitReader.submit {
-                try { collectExitReasons(context.applicationContext, sessions) }
+                try {
+                    RemoteLaunchDiagnostics.sync(context.applicationContext)
+                    // Remote packages collect their own UID's exits; the host only reads its own.
+                    if (Build.VERSION.SDK_INT >= 30) collectExitReasons(context.applicationContext, sessions().filter {
+                        runCatching { !JSONObject(File(it, "metadata.txt").readText()).has("runtime") }.getOrDefault(false)
+                    })
+                }
                 finally { readingExits.set(false) }
             }
             runCatching { future.get(1500, TimeUnit.MILLISECONDS) }
             // Do not queue another reader while a device's system service is unresponsive.
         }
-        return sessions.filter { !File(it, "superseded").exists() }
-            .mapNotNull { session -> runCatching { report(session) }.getOrNull() }
+        return sessions().filter { !File(it, "superseded").exists() }
+            .flatMap { session -> runCatching { reportsForSession(session) }.getOrDefault(emptyList()) }
             .sortedByDescending { it.startedAt }
     }
 
@@ -111,12 +117,25 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             val nextStart = sessions.filter { it.parentFile == session.parentFile && it != session }
                 .mapNotNull { it.name.substringBefore('-').toLongOrNull() }.filter { it > started }.minOrNull() ?: Long.MAX_VALUE
             for (exit in exits.filter { it.pid in pids && it.timestamp in started until nextStart }) {
-                if (exit.reason !in setOf(ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE,
-                        ApplicationExitInfo.REASON_ANR, ApplicationExitInfo.REASON_INITIALIZATION_FAILURE)) continue
                 val target = File(session, "exit-${exit.pid}-${exit.timestamp}.txt")
-                if (target.exists()) continue
+                if (target.exists() && target.readText().contains("Exit evidence schema: 2")) continue
                 val text = buildString {
                     appendLine("Exit reason: ${exit.reason}; status: ${exit.status}; PID: ${exit.pid}; timestamp: ${exit.timestamp}")
+                    appendLine("Exit category: ${diagnosticExitCategory(exit.reason)}")
+                    appendLine("Exit evidence schema: 2")
+                    appendLine("System last-sampled memory: pssKb=${exit.pss}; rssKb=${exit.rss}; importance=${exit.importance}")
+                    appendLine("System description hint: ${diagnosticExitHint(exit.description)}")
+                    appendLine("Memory values are historical samples; zero means unavailable, not zero usage.")
+                    if (exit.reason == ApplicationExitInfo.REASON_ANR) {
+                        val process = File(session, "process-${exit.pid}.txt")
+                        val attempts = diagnosticProcessAttempts(mapOf(exit.pid to
+                            if (process.isFile) process.readText() else ""), File(session, "host.txt").takeIf(File::isFile)?.readText().orEmpty())
+                        val attempt = attempts.lastOrNull { it.startedAt <= exit.timestamp }
+                        // Only retain a fixed category, never Android's raw description (it can contain intent extras).
+                        val context = if (attempt == null && !exit.description.orEmpty().startsWith("bg anr:")) "unknown" else
+                            diagnosticAnrContext(exit.description.orEmpty().startsWith("bg anr:"), attempt?.resumedBefore(exit.timestamp) == true)
+                        appendLine("ANR context: $context")
+                    }
                     if (exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE && Build.VERSION.SDK_INT >= 31) {
                         val trace = runCatching { exit.traceInputStream?.use { input ->
                             val output = java.io.ByteArrayOutputStream()
@@ -137,26 +156,79 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
         }
     }
 
-    private fun report(session: File): LaunchDiagnosticReport {
+    private fun reportsForSession(session: File): List<LaunchDiagnosticReport> {
+        val files = session.listFiles().orEmpty()
+        val processes = files.mapNotNull { file ->
+            Regex("process-([0-9]+)\\.txt").matchEntire(file.name)?.groupValues?.get(1)?.toIntOrNull()?.let { it to file.readText() }
+        }.toMap()
+        val host = File(session, "host.txt").takeIf(File::isFile)?.readText().orEmpty()
+        val attempts = diagnosticProcessAttempts(processes, host)
+        return if (attempts.isEmpty()) listOf(report(session, null, null)) else
+            attempts.mapIndexed { index, attempt -> report(session, attempt, attempts.getOrNull(index + 1)?.startedAt) }
+    }
+
+    private fun report(session: File, attempt: DiagnosticProcessAttempt?, nextAttempt: Long?): LaunchDiagnosticReport {
         val meta = JSONObject(File(session, "metadata.txt").readText())
+        val runtime = when (meta.optString("runtime")) {
+            "direct_patch" -> "Patch"
+            "identity_shell" -> "Identity shell"
+            else -> "BlackBox"
+        }
         val files = session.listFiles().orEmpty().filter { it.extension == "txt" && it.name != "metadata.txt" }
-            .sortedBy(File::getName).take(64)
+            .sortedWith(compareBy<File> { file ->
+                if (attempt != null && (file.name.startsWith("exit-${attempt.pid}-") ||
+                            file.name == "failure-${attempt.pid}.txt" || file.name == "process-${attempt.pid}.txt")) 0 else 1
+            }.thenBy(File::getName)).take(64)
         val events = files.filter { it.name == "host.txt" || it.name.startsWith("process-") }
             .flatMap { file -> file.readText().lineSequence().filter(String::isNotBlank).map { "${file.name}: $it" }.toList() }
         val failures = files.filter { it.name.startsWith("failure-") || it.name.startsWith("exit-") || it.name == "launch-error.txt" }
         val text = events.joinToString("\n")
-        val resumed = Regex("activity_(?:direct-)?resumed ").containsMatchIn(text)
+        val resumed = attempt?.resumed ?: Regex("activity_(?:direct-)?resumed ").containsMatchIn(text)
         val stopped = File(session, "stopped").exists()
-        val started = meta.getLong("started")
-        val status = launchDiagnosticStatus(failures.isNotEmpty(), resumed, stopped, System.currentTimeMillis() - started,
-            text.contains("main_process_died"))
-        if (status == "Possible startup stall") File(session, "possible-stall").apply { if (!exists()) writeText("suspected") }
+        val started = attempt?.startedAt ?: meta.getLong("started")
+        val resources = files.filter { it.name.startsWith("resources-") &&
+            (attempt == null || it.name == "resources-${attempt.pid}.txt") }.flatMap { file ->
+            runCatching {
+                file.readText().lineSequence()
+                    .filter { (it.substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE) }
+                    .map { "${file.name}: $it" }.toList()
+            }.getOrDefault(emptyList())
+        }.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }
+        val attemptFailures = if (attempt == null) failures else failures.filter { file ->
+            when {
+                file.name == "failure-${attempt.pid}.txt" -> attempt.events.contains("failure ") || nextAttempt == null
+                file.name == "launch-error.txt" -> file.lastModified() >= started && file.lastModified() < (nextAttempt ?: Long.MAX_VALUE)
+                file.name.startsWith("exit-${attempt.pid}-") -> file.name.substringAfterLast('-').removeSuffix(".txt").toLongOrNull()
+                    ?.let { it >= started && it < (nextAttempt ?: Long.MAX_VALUE) } == true
+                else -> false
+            }
+        }
+        val died = attempt?.let { Regex("(?m)^([0-9]+) main_process_died pid=${it.pid}$").findAll(
+            File(session, "host.txt").takeIf(File::isFile)?.readText().orEmpty()).any { death ->
+                death.groupValues[1].toLong() >= started && death.groupValues[1].toLong() < (nextAttempt ?: Long.MAX_VALUE)
+            } } ?: text.contains("main_process_died")
+        val menuEvents = files.filter { it.name.startsWith("menu-") &&
+            (attempt == null || it.name == "menu-${attempt.pid}.txt") }.mapNotNull {
+            runCatching { it.readText().take(1024) }.getOrNull()
+        }.joinToString("\n").lineSequence().filter {
+            (it.substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)
+        }.joinToString("\n")
+        val menuState = diagnosticMenuState((attempt?.events ?: events.joinToString("\n") { it.substringAfter(": ") }) + "\n" + menuEvents)
+        val baseStatus = if (attempt == null) diagnosticFailureStatus(failures.map { it.readText() }, resumed) ?: launchDiagnosticStatus(false, resumed, stopped,
+            System.currentTimeMillis() - started, died) else diagnosticAttemptStatus(attempt,
+            attemptFailures.map { it.readText() }, stopped || nextAttempt != null, died, System.currentTimeMillis())
+        val status = diagnosticStatusWithMenu(baseStatus, menuState)
+        val suffix = attempt?.let { "@${it.pid}-$started" }.orEmpty()
+        if (status == "Possible startup stall") File(session, "possible-stall$suffix").apply { if (!exists()) writeText("suspected") }
         // A late successful resume supersedes a suspected stall.
-        if (resumed) File(session, "possible-stall").delete()
+        if (resumed) File(session, "possible-stall$suffix").delete()
         val reportText = buildString {
-            appendLine("Jester Mods BlackBox session diagnostics")
+            appendLine("Jester Mods $runtime session diagnostics")
             appendLine("Session: ${session.name}")
             appendLine("Status: $status")
+            if (attempt != null) appendLine("Selected process attempt: PID ${attempt.pid}; started: $started")
+            appendLine("Menu window verification: ${menuState ?: "unavailable"}")
+            appendLine("attached confirms a window attachment, not that its button is visible or unobscured. unsupported/probe_error are not attachment failures.")
             meta.keys().asSequence().sorted().forEach { key -> appendLine("$key: ${meta.get(key).toString().replace('\n', ' ')}") }
             appendLine("\n--- STARTUP TIMELINE (epoch milliseconds) ---")
             events.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }.forEach(::appendLine)
@@ -164,32 +236,52 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             files.filter { it.name.startsWith("stacks-") }.forEach {
                 appendLine("\n--- STARTUP JAVA THREAD SNAPSHOT ---"); appendLine(it.readText().take(64 * 1024))
             }
+            appendLine("\n--- ROLLING SESSION RESOURCES (15-second target interval; latest 24 per process) ---")
+            resources.forEach(::appendLine)
+            appendLine("CPU is cumulative process CPU milliseconds; divide its delta by elapsedMs delta for core usage (may exceed one core).")
+            appendLine("mainPendingMs measures an outstanding main-thread probe, not game rendering or a confirmed freeze; -1 means unavailable.")
+            appendLine("activityResumed is the last observed activity lifecycle state, not proof of Android foreground importance.")
             appendLine("\nActivity resumed does not prove the game reached its menu.")
             appendLine("Hook addresses require matching module/game symbols; no automatic blame assignment.")
             appendLine("No account text, exception messages, raw logcat or native memory dumps collected.")
         }.take(512 * 1024)
         val summary = buildString {
-            appendLine("Jester Mods BlackBox diagnostics / ${session.name}")
+            appendLine("Jester Mods $runtime diagnostics / ${session.name}")
             appendLine("Status: $status")
+            if (attempt != null) appendLine("Process attempt: PID ${attempt.pid}; started: $started")
+            appendLine("Menu window verification: ${menuState ?: "unavailable"}")
             for (key in listOf("package", "launcher", "device", "android", "game", "abis", "pageSize", "moduleNativeSha256")) {
                 appendLine("$key: ${meta.opt(key)}")
             }
-            failures.take(2).forEach { appendLine(it.readText().take(3500)) }
+            events.filter { line ->
+                (line.contains(" window_add_rejected ") || line.contains(" window_add_exception ")) &&
+                    (attempt == null || line.startsWith("process-${attempt.pid}.txt:")) &&
+                    (line.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)
+            }.takeLast(3).forEach(::appendLine)
+            attemptFailures.take(2).forEach { appendLine(compactDiagnosticExcerpt(it.readText()).take(3500)) }
+            appendLine("--- LAST RESOURCE SAMPLES ---")
+            resources.takeLast(3).forEach(::appendLine)
             appendLine("--- LAST STARTUP EVENTS ---")
-            events.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }
+            events.filter { line -> attempt == null || (
+                (line.startsWith("process-${attempt.pid}.txt:") || line.startsWith("host.txt:")) &&
+                (line.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)) }
+                .sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }
                 .takeLast(12).forEach(::appendLine)
             appendLine("Share the full report for complete details; a stalled launch is not a confirmed freeze.")
         }.take(12_000)
-        return LaunchDiagnosticReport(session.name, meta.getString("package"), meta.getString("title"), started,
-            status, status in setOf("Crash or startup error recorded", "Possible startup stall", "Guest process exited during startup"),
-            File(session, "acknowledged").exists(), reportText, summary)
+        return LaunchDiagnosticReport(session.name + suffix, meta.getString("package"), meta.getString("title"), started,
+            status, status in setOf("Crash or startup error recorded", "Possible startup stall", "Guest process exited during startup",
+                "Background ANR recorded", "Game ANR recorded", "Startup ANR recorded", "ANR recorded", "Menu window not attached"),
+            File(session, "acknowledged$suffix").exists() || File(session, "acknowledged").lastModified() >= started, reportText, summary)
     }
 
     override fun acknowledge(report: LaunchDiagnosticReport) {
-        runCatching { reportDirectory(report)?.let { File(it, "acknowledged").writeText("seen") } }
+        val suffix = report.id.substringAfter('@', "").let { if (it.isEmpty()) "" else "@$it" }
+        runCatching { reportDirectory(report)?.let { File(it, "acknowledged$suffix").writeText("seen") } }
     }
 
     @Synchronized override fun clear(context: Context, packageName: String) {
+        RemoteLaunchDiagnostics.clear(context, packageName)
         synchronized(LaunchSessionRecorder::class.java) {
             val parent = LaunchSessionRecorder.packageDirectory(packageName)
             require(!java.nio.file.Files.isSymbolicLink(parent.toPath()) &&
@@ -202,8 +294,8 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
     }
 
     private fun reportDirectory(report: LaunchDiagnosticReport): File? {
-        if (!report.id.matches(Regex("[0-9]+-[a-f0-9-]+"))) return null
-        return File(LaunchSessionRecorder.packageDirectory(report.packageName), report.id).takeIf(File::isDirectory)
+        if (!report.id.matches(Regex("[0-9]+-[a-f0-9-]+(?:@[0-9]+-[0-9]+)?"))) return null
+        return File(LaunchSessionRecorder.packageDirectory(report.packageName), report.id.substringBefore('@')).takeIf(File::isDirectory)
     }
 
     override fun share(context: Context, report: LaunchDiagnosticReport) {

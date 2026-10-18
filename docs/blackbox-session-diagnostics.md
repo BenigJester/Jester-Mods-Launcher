@@ -1,5 +1,13 @@
 # BlackBox session diagnostics
 
+## 4.4.0 scope
+
+The shared diagnostics UI also handles supported direct-patch and identity-shell reports.
+See [the bootstrap documentation](../diagnostic-bootstrap/README.md) for isolation, authorization,
+collection limits, and the required patch/shell migration. Root remains crash-only.
+History, report views, review notices, and installer diagnostics expose a themed, localized
+[Diagnostic Tutorial](https://youtube.com/shorts/Isl_ffWYpa4) button, including empty history.
+
 ## User flow
 
 Every fresh BlackBox game launch starts a structured, device-local session. Reopening an already
@@ -8,10 +16,13 @@ review prompt; dismissing it does not delete the report. Slow startup is labeled
 not a confirmed freeze. The game's details page always exposes Diagnostics, with a localized
 explanation when no reports exist yet.
 
-Users can copy a compact summary. Share full report shows a public-sharing warning, saves the
-complete text file using Android's document picker, then opens a prefilled issue in
-BenigJester/Jester-Mods-Launcher. The browser URL contains only a bounded excerpt, not the full
-report. Users sign in to GitHub, manually attach the saved file, review and submit the issue.
+Users can copy a compact summary. Share full report shows a localized public-sharing warning.
+Open GitHub report opens a prefilled issue directly, without requiring a file save first.
+Save and open GitHub remains available for optionally saving and manually attaching the complete
+file. Both paths target BenigJester/Jester-Mods-Launcher. The browser URL contains only bounded
+diagnostics, not the full report. Repetitive Java stack frames are shortened before cause types
+and startup events. The issue asks users to describe what happened and explicitly makes attachment
+optional; further evidence may still be needed. Users sign in, review and submit the issue.
 Nothing is posted automatically and no GitHub credentials are embedded in the launcher.
 Share with another app preserves Android's share-sheet export as an alternative.
 Clear diagnostics is available in history and report views. Confirmation deletes only that game's
@@ -57,6 +68,36 @@ English for support; all new UI labels support the launcher's nine non-English l
 ## Crash coverage and limitations
 
 Java handlers save exception types, causes, and frames before invoking their existing behavior.
+DEX-open SecurityExceptions additionally carry a fixed `dynamic_code_rejection` category:
+`writable_file_blocked` only for Android's explicit writable-DEX rejection, otherwise
+`unclassified_security_rejection`. Paths and raw exception messages are never persisted.
+This is evidence collection, not a permission workaround; the Android 16 ART hook remains disabled.
+
+For issue #19, device logcat reproduced Google Mobile Ads 21.1.0 opening a writable
+numeric-named JAR directly in Mini Militia's virtual cache. On API 34+, libc writer
+opens with `O_TRUNC` now seal only empty numeric JARs in that exact non-root guest cache before
+returning the descriptor to the SDK. The open descriptor can still write; already
+populated files, other packages and other paths are not modified. Descriptor-path
+resolution recognizes both `/data/user/<id>/` and `/data/data/` host roots and prevents
+relative paths or symlinks from extending the scope. Preliminary `createNewFile`
+opens are not sealed, so the subsequent SDK writer can still open the file. The Android
+16 ART hook stays disabled. `scripts/test_ads_cache_dex.cpp` checks the scope and
+on-device file-permission/write semantics (compile with the Android NDK).
+
+Device verification: Infinix X6873 / Android 16, Mini Militia 5.6.0 (327), launcher
+4.3.3 with this change. Both a launch and a fresh launcher/game process relaunch
+logged the sealed ads-cache writer, reached the visible game menu, and remained
+alive beyond 30 seconds without a new Mini Militia crash or diagnostic failure.
+Non-root history separates each main-process startup attempt within a session, including Android
+restarts that did not originate from a new Play request. Resume evidence and the 60-second timer
+belong to that attempt only; explicit helper-process identities do not create startup notices.
+Older logs infer main-process identity from activity events or a recorded main-process death.
+Each attempt has its own acknowledgement, while Clear still removes the game's complete history.
+ANRs are labelled separately as background, startup, after-activity-resume, or unknown context.
+Only the fixed context category is saved, not Android's potentially sensitive description.
+Cause chains are identity-cycle guarded and limited to 32 causes, with the deepest captured cause
+first so reflection wrappers cannot bury it in shortened issue excerpts. Truncated/cyclic chains
+and frame-size truncation are marked explicitly; messages remain excluded and output stays bounded.
 Module loading/attachment failures are also recorded. The existing crash policy is not changed;
 Play Store policy arming is a separate informational checkpoint.
 

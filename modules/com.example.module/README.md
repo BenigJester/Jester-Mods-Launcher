@@ -134,8 +134,8 @@ Keep both identity-shell Java entry points in `com.android.support.ModuleRuntime
 uses a package-specific entry-point namespace, its `ModuleRuntime` wrapper must delegate those
 entry points to the shared runtime as this template does.
 
-Root launch behavior does not use `nonroot_method`; root always injects the
-verified module into the original game package.
+Root launch behavior does not use `nonroot_method`. This template declares
+`"root_method": "injection"` to load the verified module into the original game package.
 
 This public template is injection-oriented. External-controller module
 implementations are not included in the public source snapshot.

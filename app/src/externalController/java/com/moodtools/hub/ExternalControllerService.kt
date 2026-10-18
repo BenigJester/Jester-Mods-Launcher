@@ -18,6 +18,9 @@ import com.moodtools.hub.modules.PluginContext
 import com.moodtools.hub.modules.PluginLoader
 import java.io.File
 
+internal fun acceptsExternalControllerStart(packageName: String?, flags: Int): Boolean =
+    !packageName.isNullOrBlank() && flags and (Service.START_FLAG_REDELIVERY or Service.START_FLAG_RETRY) == 0
+
 /** Hosts a module menu in Jester's process; no controller code enters the game process. */
 class ExternalControllerService : Service() {
     private val pluginLoader by lazy { PluginLoader(this) }
@@ -38,8 +41,7 @@ class ExternalControllerService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onCreate() {
-        super.onCreate()
+    private fun showControllerNotification() {
         val notifications = getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(NotificationChannel(
             CHANNEL_ID,
@@ -65,7 +67,14 @@ class ExternalControllerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val packageName = intent?.getStringExtra(EXTRA_PACKAGE)
-        if (packageName.isNullOrBlank()) return START_REDELIVER_INTENT
+        // A controller must be opened explicitly, never restored from a previous service start.
+        if (packageName.isNullOrBlank() || !acceptsExternalControllerStart(packageName, flags)) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        // Android may recreate the service before delivering a recovery request.
+        // Do not resurrect its foreground notification until that request is accepted.
+        showControllerNotification()
         val featureStatePath = intent.getStringExtra(EXTRA_FEATURE_STATE_PATH)
         val directPatch = intent.getBooleanExtra(EXTRA_DIRECT_PATCH, false)
         if (packageName == activePackage) {
@@ -80,7 +89,7 @@ class ExternalControllerService : Service() {
                 }.onFailure { error -> Log.e(TAG, "Direct-patch state resend failed", error) }
             }
             mainHandler.post(repairMenu)
-            return START_REDELIVER_INTENT
+            return START_NOT_STICKY
         }
         runCatching {
             val repository = ModuleRepository(this)
@@ -105,7 +114,7 @@ class ExternalControllerService : Service() {
             Log.e(TAG, "External controller failed", error)
             stopSelf(startId)
         }
-        return START_REDELIVER_INTENT
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {

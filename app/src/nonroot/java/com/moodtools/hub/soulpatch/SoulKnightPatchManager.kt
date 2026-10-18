@@ -19,6 +19,8 @@ import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.PluginLoader
 import com.moodtools.hub.modules.RootMethod
+import com.moodtools.hub.networking.GameObbManager
+import com.moodtools.hub.RemoteLaunchDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -281,6 +283,8 @@ internal class DirectPackagePatchManager(
                 "Allow Jester Mods to install unknown apps first"
             }
         }
+        // The first signer-changing replacement uninstalls the original, which can delete its OBBs.
+        GameObbManager(context).install(targetPackage, request.versionCode)
         val signingMaterial = signingMaterial()
         validateCluster(request.apks, request.versionCode, signingMaterial.certificate, true)
         if (request.inheritExistingInstallation) {
@@ -329,6 +333,8 @@ internal class DirectPackagePatchManager(
     }
 
     fun authorizeLaunch(intent: Intent): Intent {
+        GameObbManager(context).install(targetPackage, installedPackageInfo().longVersionCodeCompat())
+        RemoteLaunchDiagnostics.begin(context, targetPackage, "direct_patch")
         val issuedAt = System.currentTimeMillis()
         val nonceBytes = ByteArray(LAUNCH_NONCE_BYTES).also(SecureRandom()::nextBytes)
         val nonce = nonceBytes.joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
@@ -378,17 +384,25 @@ internal class DirectPackagePatchManager(
                 ?.takeIf { NATIVE_ENTRY_PATTERN.matches(it) }
                 ?: LEGACY_NATIVE_ENTRY
             val embeddedDex = previousDex ?: "classes${(dexNumbers.maxOrNull() ?: 1) + 1}.dex"
+            val diagnosticDex = previousMarker?.optString("diagnosticDex")?.takeIf { DEX_NAME.matches(it) }
+                ?: "classes${(dexNumbers.maxOrNull() ?: 1) + if (externalControllerOnly) 1 else 2}.dex"
             val manifestEntry = archive.getEntry(MANIFEST_ENTRY)
                 ?: error("The base APK has no AndroidManifest.xml")
             val manifest = archive.getInputStream(manifestEntry).use { it.readBytes() }
-            val patchedManifest = if (externalControllerOnly || alreadyPatched) manifest
-                else BinaryXmlStringPool.replaceExact(manifest, ORIGINAL_FACTORY, PATCH_FACTORY)
+            val patchedManifest = BinaryXmlStringPool.withDiagnosticProvider(manifest, targetPackage)
+            val delegateFactory = if (!externalControllerOnly) MODULE_FACTORY else {
+                val factory = archiveFactory(source).orEmpty()
+                if (factory == PATCH_FACTORY) archive.getEntry(RemoteLaunchDiagnostics.CONFIG)?.let {
+                    archive.getInputStream(it).use { stream -> JSONObject(String(stream.readBytes())).optString("factory") }
+                }.orEmpty() else factory
+            }
 
             val counting = CountingOutputStream(FileOutputStream(output))
             ZipOutputStream(counting).use { destination ->
                 destination.setLevel(6)
                 entries.forEach { entry ->
                     if (entry.isDirectory || entry.name == MANIFEST_ENTRY || entry.name == MARKER_ENTRY ||
+                        entry.name == RemoteLaunchDiagnostics.CONFIG || entry.name == diagnosticDex ||
                         isJarSignature(entry.name) || (!externalControllerOnly &&
                             (entry.name == embeddedDex || entry.name == previousNativeEntry ||
                                 entry.name == nativeEntry))) return@forEach
@@ -399,9 +413,21 @@ internal class DirectPackagePatchManager(
                     }
                 }
                 putBytes(destination, MANIFEST_ENTRY, patchedManifest, ZipEntry.STORED, counting)
+                val bootstrapDex = java.util.zip.ZipInputStream(context.assets.open("diagnostic-bootstrap/template.apk")).use { template ->
+                    var result: ByteArray? = null
+                    while (true) {
+                        val entry = template.nextEntry ?: break
+                        if (entry.name == "classes.dex") { result = template.readBytes(); break }
+                    }
+                    requireNotNull(result).also { require(it.size in 1..(1024 * 1024)) }
+                }
+                putBytes(destination, diagnosticDex, bootstrapDex, ZipEntry.DEFLATED, counting)
+                putBytes(destination, RemoteLaunchDiagnostics.CONFIG,
+                    RemoteLaunchDiagnostics.configuration(context, "direct_patch", delegateFactory), ZipEntry.DEFLATED, counting)
                 if (!externalControllerOnly) {
                     putFile(destination, embeddedDex, moduleDex, ZipEntry.DEFLATED, counting)
-                    putFile(destination, nativeEntry, moduleNative, ZipEntry.DEFLATED, counting)
+                    // Games with extractNativeLibs=false must mmap an uncompressed, page-aligned library.
+                    putStoredFile(destination, nativeEntry, moduleNative, counting)
                 }
                 val marker = JSONObject()
                     .put("schema", PATCH_MARKER_SCHEMA)
@@ -411,6 +437,7 @@ internal class DirectPackagePatchManager(
                     .put("moduleVersion", moduleVersion)
                     .put("patchKind", if (externalControllerOnly) EXTERNAL_CONTROLLER_PATCH else LOADER_PATCH)
                     .put("dex", if (externalControllerOnly) "" else embeddedDex)
+                    .put("diagnosticDex", diagnosticDex)
                     .put("nativeEntry", if (externalControllerOnly) "" else nativeEntry)
                     .put("dexSha256", sha256(moduleDex))
                     .put("nativeSha256", sha256(moduleNative))
@@ -593,6 +620,10 @@ internal class DirectPackagePatchManager(
                 require(marker.optInt("launchGuardSchema") == LAUNCH_GUARD_SCHEMA)
                 require(marker.optString("launchGuardPublicKey") ==
                     Base64.encodeToString(certificate.publicKey.encoded, Base64.NO_WRAP))
+                val diagnosticDex = marker.optString("diagnosticDex")
+                require(DEX_NAME.matches(diagnosticDex) && archive.getEntry(diagnosticDex)?.size?.let { it > 0 } == true)
+                require(archive.getEntry(RemoteLaunchDiagnostics.CONFIG) != null)
+                require(archiveFactory(base) == PATCH_FACTORY)
                 marker
             }
             when (marker.optString("patchKind")) {
@@ -896,7 +927,8 @@ internal class DirectPackagePatchManager(
     }
 
     companion object {
-        const val PATCH_FACTORY = "com.android.support.ModComponentFactory"
+        const val PATCH_FACTORY = "com.moodtools.diagnostics.DiagnosticFactory"
+        private const val MODULE_FACTORY = "com.android.support.ModComponentFactory"
         private const val ORIGINAL_FACTORY = "androidx.core.app.CoreComponentFactory"
         private const val MANIFEST_ENTRY = "AndroidManifest.xml"
         private const val LEGACY_NATIVE_ENTRY = "lib/arm64-v8a/libYourSaviour.so"
@@ -905,7 +937,7 @@ internal class DirectPackagePatchManager(
         private const val MARKER_ENTRY = "assets/moodtools/soul-patch.json"
         private const val PATCH_DIRECTORY = "soul-knight-patches"
         private const val KEY_ALIAS = "jester_moods_soul_knight_patch_v1"
-        private const val PATCH_MARKER_SCHEMA = 2
+        private const val PATCH_MARKER_SCHEMA = 4
         private const val LAUNCH_GUARD_SCHEMA = 1
         private const val LAUNCH_NONCE_BYTES = 16
         private const val LAUNCH_MESSAGE_PREFIX = "jester-direct-patch-launch-v1"

@@ -159,18 +159,18 @@ object NonRootBlackBoxRuntime {
                 val confirmed = dispatched && awaitActivityResume(previousDiagnosticSession, requestedAt, 3000) {
                     BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId, requestedAt) == resumePid
                 }
-                if (confirmed) {
-                    top.niunaijun.blackbox.utils.LaunchSessionRecorder.resume(previousDiagnosticSession, diagnosticSession)
-                    diagnosticSession = previousDiagnosticSession
-                    NonRootLaunchDiagnostics.event(diagnosticSession, "resume_confirmed pid=$resumePid")
-                    launchedPackages += game.packageName
-                    rememberActivePackage(context, game.packageName)
-                    return@runCatching true
+                if (!confirmed) {
+                    // This request was already dispatched. Missing/delayed lifecycle confirmation
+                    // is not permission to kill a live guest and send another start automatically.
+                    NonRootLaunchDiagnostics.event(diagnosticSession, "resume_unconfirmed_no_restart")
+                    error("BlackBox did not confirm game resume within the launch deadline. The game was not restarted automatically.")
                 }
-                // Never fold a replacement PID into the old physical session. Retry fresh in this press.
-                NonRootLaunchDiagnostics.event(diagnosticSession, "resume_unconfirmed_fresh_retry")
-                NonRootLaunchDiagnostics.stopSession(diagnosticSession)
-                diagnosticSession = NonRootLaunchDiagnostics.begin(context, game, verifiedModule)
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.resume(previousDiagnosticSession, diagnosticSession)
+                diagnosticSession = previousDiagnosticSession
+                NonRootLaunchDiagnostics.event(diagnosticSession, "resume_confirmed pid=$resumePid")
+                launchedPackages += game.packageName
+                rememberActivePackage(context, game.packageName)
+                return@runCatching true
             }
 
             if (running) NonRootLaunchDiagnostics.stopSession(previousDiagnosticSession)
@@ -197,6 +197,10 @@ object NonRootBlackBoxRuntime {
             }
 
             NonRootLaunchDiagnostics.event(diagnosticSession, "guest_package_installed")
+            com.moodtools.hub.networking.GameObbManager(context).install(
+                game.packageName, game.versionCode,
+                BEnvironment.getExternalObbDir(game.packageName, userId)
+            )
             clearModulePayload(game.packageName, userId)
             if (externalController) {
                 installBlackBoxExternalLibrary(
@@ -225,7 +229,8 @@ object NonRootBlackBoxRuntime {
             NonRootLaunchDiagnostics.failure(diagnosticSession, error)
             lastFailureDetail = error.message ?: error.javaClass.simpleName
             Log.e(TAG, "Virtual launch failed for ${game.packageName}: $lastFailureDetail", error)
-            runCatching { clearModulePayload(game.packageName, DEFAULT_USER_ID) }
+            // A confirmation timeout does not stop the guest. It may still resume or lazily
+            // load module classes; keep its payload until the next stopped, fresh launch.
         }.getOrDefault(false)
     }
 
