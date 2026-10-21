@@ -138,7 +138,7 @@ public final class DiagnosticProvider extends ContentProvider {
                             if (!new File(session, "process-" + exit.getPid() + ".txt").isFile() || exit.getTimestamp() < started || exit.getTimestamp() >= nextStart) continue;
                             if (++exits > 8) break;
                             String name = "exit-" + exit.getPid() + "-" + exit.getTimestamp();
-                            String text = "Exit reason: " + exit.getReason() + "; status: " + exit.getStatus() + "; PID: " + exit.getPid() + "; timestamp: " + exit.getTimestamp() + "\nExit evidence schema: 2\nSystem last-sampled memory: pssKb=" + exit.getPss() + "; rssKb=" + exit.getRss() + "; importance=" + exit.getImportance() + "\n";
+                            String text = "Exit reason: " + exit.getReason() + "; status: " + exit.getStatus() + "; PID: " + exit.getPid() + "; timestamp: " + exit.getTimestamp() + "\nExit evidence schema: 2\nSystem last-sampled memory: pssKb=" + exit.getPss() + "; rssKb=" + exit.getRss() + "; importance=" + exit.getImportance() + "\nSystem description hint: " + DiagnosticRuntime.exitHint(exit.getDescription()) + "\n";
                             put(zip, name + ".txt", text.getBytes(StandardCharsets.UTF_8));
                             if (!traceWritten && Build.VERSION.SDK_INT >= 31 && exit.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE) {
                                 try (InputStream trace = exit.getTraceInputStream()) { if (trace != null) put(zip, name + ".pb", DiagnosticRuntime.readBounded(trace, 2 * 1024 * 1024)); }

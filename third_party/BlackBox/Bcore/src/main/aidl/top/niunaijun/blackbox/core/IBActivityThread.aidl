@@ -25,4 +25,5 @@ interface IBActivityThread {
     int handleNewIntentForActivity(in ComponentName componentName, in Intent intent);
 
     void scheduleReceiver(in ReceiverData data);
+    oneway void startSupportDiagnostics(String packageName, String sessionId);
 }

@@ -10,6 +10,16 @@ per process: startup/lifecycle events, exception classes/frames and the existing
 available Android 12+ native tombstones are reduced by the launcher to its existing safe summary.
 No raw native trace is retained in launcher storage. Activity resume does not prove gameplay
 readiness, and a SIGKILL or missing exit trace is not proof of a module crash.
+Resource samples include process-local Binder counters; -1 means unavailable. These do not
+measure system_server's per-UID proxy count or prove a Binder leak. System descriptions are
+converted to fixed hints (including recognized Binder-limit messages), never exported verbatim.
+Samples also carry bounded `bbConnectionCalls` counters (calls/failures) for selected BlackBox
+Java connection operations and service-cache notifications. These are process-lifetime totals,
+sampled every 15 seconds and retained with the latest 24 resource samples. No per-call disk I/O,
+arguments, Binder contents or exception messages are recorded. `not_observed` is not proof of
+no connections: direct patches have no BlackBox hooks, and native/bypassed calls and other UID
+processes are outside this instrumentation. Updated shells/patches are needed for new sampler
+fields; this does not identify the system's exact Binder limit or automatically assign blame.
 
 The exported provider is isolated in `:jester_diagnostics`. Patch factories return a plain
 Application there; shell Applications skip BlackBox initialization. Requests require BOTH

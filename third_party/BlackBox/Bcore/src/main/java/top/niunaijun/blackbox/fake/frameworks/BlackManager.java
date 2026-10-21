@@ -10,12 +10,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.utils.Reflector;
+import top.niunaijun.blackbox.utils.ConnectionDiagnostics;
 
 
 public abstract class BlackManager<Service extends IInterface> {
     public static final String TAG = "BlackManager";
 
     private Service mService;
+    private IBinder mServiceBinder;
+    private IBinder.DeathRecipient mServiceDeathRecipient;
     private final AtomicBoolean mServiceCreationFailed = new AtomicBoolean(false);
     private long mLastRetryTime = 0;
     private long mLastServiceCreationTime = 0;
@@ -29,7 +32,7 @@ public abstract class BlackManager<Service extends IInterface> {
 
     protected abstract String getServiceName();
 
-    public Service getService() {
+    public synchronized Service getService() {
         
         if (mServiceCreationFailed.get()) {
             long currentTime = System.currentTimeMillis();
@@ -44,6 +47,9 @@ public abstract class BlackManager<Service extends IInterface> {
         if (mService != null && mService.asBinder().pingBinder() && mService.asBinder().isBinderAlive()) {
             return mService;
         }
+
+        // Replacing a stale cache must also remove its old death notification.
+        clearServiceCache();
 
         
         long currentTime = System.currentTimeMillis();
@@ -89,26 +95,7 @@ public abstract class BlackManager<Service extends IInterface> {
                     return null;
                 }
                 
-                final Service serviceRef = mService; 
-                try {
-                    serviceRef.asBinder().linkToDeath(new IBinder.DeathRecipient() {
-                        @Override
-                        public void binderDied() {
-                            try {
-                                if (serviceRef != null && serviceRef.asBinder() != null) {
-                                    serviceRef.asBinder().unlinkToDeath(this, 0);
-                                }
-                            } catch (Exception e) {
-                                Log.w(TAG, "Error unlinking death recipient for " + getServiceName(), e);
-                            }
-                            mService = null;
-                            Log.w(TAG, "Service died: " + getServiceName());
-                        }
-                    }, 0);
-                } catch (Exception e) {
-                    Log.w(TAG, "Error linking death recipient for " + getServiceName(), e);
-                    
-                }
+                cacheService(mService);
                 
                 Log.d(TAG, "Successfully created service: " + getServiceName());
                 mServiceCreationFailed.set(false); 
@@ -120,6 +107,7 @@ public abstract class BlackManager<Service extends IInterface> {
             
             return mService;
         } catch (Throwable e) {
+            clearServiceCache();
             Log.e(TAG, "Error creating service for " + getServiceName(), e);
             markServiceCreationFailed();
             return null;
@@ -132,13 +120,50 @@ public abstract class BlackManager<Service extends IInterface> {
     }
     
     
-    public void clearServiceCache() {
+    private synchronized void cacheService(Service service) {
+        clearServiceCache();
+        final IBinder binder = service.asBinder();
+        mService = service;
+        mServiceBinder = binder;
+        mServiceDeathRecipient = new IBinder.DeathRecipient() {
+            @Override public void binderDied() {
+                synchronized (BlackManager.this) {
+                    // A queued callback from an old connection must not erase its replacement.
+                    if (mServiceBinder == binder && mServiceDeathRecipient == this) {
+                        clearServiceCache();
+                    }
+                }
+            }
+        };
+        try {
+            ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.cache_add);
+            binder.linkToDeath(mServiceDeathRecipient, 0);
+        } catch (Exception error) {
+            ConnectionDiagnostics.failed(ConnectionDiagnostics.Operation.cache_add, error);
+            clearServiceCache();
+            throw new IllegalStateException("Unable to watch service connection", error);
+        }
+    }
+
+    public synchronized void clearServiceCache() {
+        IBinder binder = mServiceBinder;
+        IBinder.DeathRecipient recipient = mServiceDeathRecipient;
         mService = null;
+        mServiceBinder = null;
+        mServiceDeathRecipient = null;
+        if (binder != null && recipient != null) {
+            try {
+                ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.cache_remove);
+                binder.unlinkToDeath(recipient, 0);
+            } catch (java.util.NoSuchElementException ignored) {
+                // A dead Binder may already have removed the notification.
+            }
+        }
         Log.d(TAG, "Cleared service cache for " + getServiceName());
     }
     
     
-    public boolean isServiceHealthy() {
+    public synchronized boolean isServiceHealthy() {
         if (mService == null) {
             return false;
         }

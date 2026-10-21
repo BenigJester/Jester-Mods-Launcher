@@ -1,11 +1,11 @@
-package com.moodtools.hub.soulpatch
+package com.moodtools.hub.directpatch
 
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
 
-/** Minimal Android binary-XML string-pool editor used for the Soul Knight factory bridge. */
+/** Minimal Android binary-XML string-pool editor used for direct-patch manifest integration. */
 internal object BinaryXmlStringPool {
     private const val XML_TYPE = 0x0003
     private const val STRING_POOL_TYPE = 0x0001
@@ -20,6 +20,103 @@ internal object BinaryXmlStringPool {
     private const val VERSION_NAME_ATTRIBUTE = "versionName"
 
     data class ManifestPackageVersion(val versionName: String, val versionCode: Long)
+
+    /** Manifest-only PairIP cleanup from Standalone-ModMenu-Repacker.ps1. No DEX/native edits. */
+    fun withoutPairIpManifestEntries(document: ByteArray): ByteArray {
+        val strings = readStrings(document)
+        require(i32(document, 4) == document.size) { "Invalid binary XML document size" }
+        data class Node(val name: String, val start: Int, val remove: Boolean)
+        val chunks = ArrayList<ByteArray>()
+        val names = ArrayList<String?>()
+        val removed = ArrayList<Boolean>()
+        val stack = ArrayList<Node>()
+        var cursor = u16(document, 2)
+        var changed = false
+        while (cursor < document.size) {
+            require(cursor + 8 <= document.size)
+            val type = u16(document, cursor)
+            val header = u16(document, cursor + 2)
+            val size = i32(document, cursor + 4)
+            require(header >= 8 && size >= header && size <= document.size - cursor)
+            var chunk = document.copyOfRange(cursor, cursor + size)
+            var name: String? = null
+            var drop = stack.lastOrNull()?.remove == true
+            if (type == START_ELEMENT_TYPE) {
+                val ext = header
+                require(header >= 16 && ext + 20 <= size)
+                name = stringAt(strings, i32(chunk, ext + 4))
+                val attrStart = ext + u16(chunk, ext + 8)
+                val attrSize = u16(chunk, ext + 10)
+                val count = u16(chunk, ext + 12)
+                require(attrSize == 20 && attrStart >= ext + 20 && attrStart <= size &&
+                    count <= (size - attrStart) / attrSize)
+                val matches = (0 until count).filter { index ->
+                    val attr = attrStart + index * attrSize
+                    val raw = i32(chunk, attr + 8)
+                    val typed = if ((chunk[attr + 15].toInt() and 0xff) == TYPE_STRING)
+                        i32(chunk, attr + 16) else -1
+                    listOf(raw, typed).filter { it != -1 }.any {
+                        stringAt(strings, it).contains("pairip", ignoreCase = true)
+                    }
+                }.toSet()
+                if (matches.isNotEmpty() && !drop) {
+                    require(name != "manifest") { "PairIP reference on manifest root cannot be removed" }
+                    changed = true
+                    if (name == "application") {
+                        val keep = (0 until count).filterNot { it in matches }
+                        chunk = ByteArrayOutputStream().apply {
+                            write(chunk, 0, attrStart)
+                            keep.forEach { write(chunk, attrStart + it * attrSize, attrSize) }
+                            write(chunk, attrStart + count * attrSize, size - attrStart - count * attrSize)
+                        }.toByteArray()
+                        putI32(chunk, 4, chunk.size)
+                        val buffer = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+                        buffer.putShort(ext + 12, keep.size.toShort())
+                        // ResXMLTree_attrExt's id/class/style indexes are 1-based attribute indexes.
+                        for (offset in listOf(14, 16, 18)) {
+                            val old = u16(chunk, ext + offset)
+                            val index = if (old == 0) -1 else keep.indexOf(old - 1)
+                            buffer.putShort(ext + offset, (index + 1).toShort())
+                        }
+                    } else drop = true
+                }
+                stack += Node(name, chunks.size, drop)
+            } else if (type == 0x0103) {
+                require(header >= 16 && header + 8 <= size && stack.isNotEmpty())
+                name = stringAt(strings, i32(chunk, header + 4))
+                val node = stack.removeAt(stack.lastIndex)
+                require(name == node.name) { "Unbalanced binary XML elements" }
+                drop = node.remove
+                if (name == "queries" && !drop &&
+                    (node.start + 1 until chunks.size).none { !removed[it] && names[it] != null &&
+                        u16(chunks[it], 0) == START_ELEMENT_TYPE }) {
+                    for (i in node.start until chunks.size) removed[i] = true
+                    drop = true
+                    changed = true
+                }
+            }
+            chunks += chunk
+            names += name
+            removed += drop
+            cursor += size
+        }
+        require(stack.isEmpty()) { "Unterminated binary XML element" }
+        if (!changed) return document
+        return ByteArrayOutputStream().apply {
+            write(document, 0, u16(document, 2))
+            chunks.forEachIndexed { index, bytes -> if (!removed[index]) write(bytes) }
+        }.toByteArray().also { output ->
+            putI32(output, 4, output.size)
+            forEachAttribute(output, strings) { _, _, _, offset ->
+                val raw = i32(output, offset + 8)
+                val typed = if ((output[offset + 15].toInt() and 0xff) == TYPE_STRING)
+                    i32(output, offset + 16) else -1
+                require(listOf(raw, typed).filter { it != -1 }.none {
+                    stringAt(strings, it).contains("pairip", ignoreCase = true)
+                }) { "PairIP manifest entry remained after cleanup" }
+            }
+        }
+    }
 
     /** Adds one isolated diagnostics provider; existing string indexes and resource IDs stay stable. */
     fun withDiagnosticProvider(document: ByteArray, packageName: String): ByteArray {
@@ -114,6 +211,106 @@ internal object BinaryXmlStringPool {
         return ByteArrayOutputStream().apply {
             write(document, 0, u16(document, 2)); write(pool); write(map.array()); write(chunks.toByteArray())
         }.toByteArray().also { putI32(it, 4, it.size) }
+    }
+
+    /** ReVanced's per-client metadata. No Android-level signature or account changes. */
+    fun withGmsCore(document: ByteArray, enabled: Boolean, packageName: String,
+        originalSignature: String): ByteArray {
+        require(!enabled || (packageName.matches(Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")) &&
+            originalSignature.matches(Regex("[0-9a-f]{40}"))))
+        val strings = readStrings(document)
+        val prefix = "app.revanced.android.gms"
+        val keys = setOf("$prefix.SPOOFED_PACKAGE_NAME", "$prefix.SPOOFED_PACKAGE_SIGNATURE")
+        val values = mapOf("$prefix.SPOOFED_PACKAGE_NAME" to packageName,
+            "$prefix.SPOOFED_PACKAGE_SIGNATURE" to originalSignature)
+        val existing = mutableMapOf<String, String>()
+        val removed = ByteArrayOutputStream()
+        val poolOffset = findStringPool(document)
+        var cursor = u16(document, 2)
+        var skip = 0
+        while (cursor < document.size) {
+            val type = u16(document, cursor)
+            val size = i32(document, cursor + 4)
+            require(size >= 8 && cursor + size <= document.size)
+            if (type == START_ELEMENT_TYPE && skip == 0) {
+                val ext = cursor + u16(document, cursor + 2)
+                if (stringAt(strings, i32(document, ext + 4)) == "meta-data") {
+                    var name = ""; var value = ""
+                    for (index in 0 until u16(document, ext + 12)) {
+                        val attr = ext + u16(document, ext + 8) + index * u16(document, ext + 10)
+                        if (i32(document, attr) == strings.indexOf(ANDROID_NAMESPACE) && document[attr + 15].toInt() == TYPE_STRING) {
+                            when (stringAt(strings, i32(document, attr + 4))) {
+                                "name" -> name = stringAt(strings, i32(document, attr + 16))
+                                "value" -> value = stringAt(strings, i32(document, attr + 16))
+                            }
+                        }
+                    }
+                    if (name in keys) { require(name !in existing); existing[name] = value; skip = 1; cursor += size; continue }
+                }
+            }
+            if (skip > 0) {
+                if (type == START_ELEMENT_TYPE) skip++
+                if (type == 0x0103) skip--
+            } else removed.write(document, cursor, size)
+            cursor += size
+        }
+        require(skip == 0)
+        if (enabled && existing == values) return document
+        if (!enabled) return if (existing.isEmpty()) document else ByteArrayOutputStream().apply {
+            write(document, 0, u16(document, 2)); write(removed.toByteArray())
+        }.toByteArray().also { putI32(it, 4, it.size) }
+        val extras = listOf("meta-data", "name", "value", keys.first(), values.getValue(keys.first()),
+            keys.last(), values.getValue(keys.last()), "queries", "package", prefix)
+        val count = strings.size
+        val oldPoolSize = i32(document, poolOffset + 4)
+        val pool = rebuildStringPool(document.copyOfRange(poolOffset, poolOffset + oldPoolSize), "", false, { it }, extras)
+        val ns = strings.indexOf(ANDROID_NAMESPACE).also { require(it >= 0) }
+        fun start(tag: Int, vararg attributes: Pair<Int, Int>): ByteArray =
+            ByteBuffer.allocate(36 + attributes.size * 20).order(ByteOrder.LITTLE_ENDIAN).apply {
+                putShort(0x0102).putShort(16).putInt(capacity()).putInt(0).putInt(-1)
+                putInt(-1).putInt(tag).putShort(20).putShort(20).putShort(attributes.size.toShort()).putShort(0).putShort(0).putShort(0)
+                attributes.forEach { (name, value) -> putInt(ns).putInt(name).putInt(value).putShort(8).put(0).put(3).putInt(value) }
+            }.array()
+        fun end(tag: Int) = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(0x0103).putShort(16).putInt(24).putInt(0).putInt(-1).putInt(-1).putInt(tag).array()
+        val clean = removed.toByteArray()
+        val out = ByteArrayOutputStream()
+        out.write(document, 0, u16(document, 2))
+        var position = 0; var maps = 0; var applications = 0; var manifests = 0
+        while (position < clean.size) {
+            val type = u16(clean, position); val size = i32(clean, position + 4)
+            when (type) {
+                STRING_POOL_TYPE -> out.write(pool)
+                0x0180 -> {
+                    maps++
+                    val map = ByteBuffer.allocate(8 + (count + extras.size) * 4).order(ByteOrder.LITTLE_ENDIAN)
+                    require(size - 8 <= count * 4)
+                    map.putShort(0x0180).putShort(8).putInt(map.capacity()).put(clean, position + 8, size - 8)
+                    map.putInt(8 + (count + 1) * 4, 0x01010003).putInt(8 + (count + 2) * 4, 0x01010024)
+                    out.write(map.array())
+                }
+                else -> {
+                    if (type == 0x0103) {
+                        when (stringAt(strings, i32(clean, position + u16(clean, position + 2) + 4))) {
+                            "application" -> {
+                                applications++
+                                out.write(start(count, count + 1 to count + 3, count + 2 to count + 4)); out.write(end(count))
+                                out.write(start(count, count + 1 to count + 5, count + 2 to count + 6)); out.write(end(count))
+                            }
+                            "manifest" -> {
+                                manifests++
+                                out.write(start(count + 7)); out.write(start(count + 8, count + 1 to count + 9))
+                                out.write(end(count + 8)); out.write(end(count + 7))
+                            }
+                        }
+                    }
+                    out.write(clean, position, size)
+                }
+            }
+            position += size
+        }
+        require(maps == 1 && applications == 1 && manifests == 1)
+        return out.toByteArray().also { putI32(it, 4, it.size) }
     }
 
     fun replaceExact(document: ByteArray, expected: String, replacement: String): ByteArray {

@@ -1,4 +1,4 @@
-package com.moodtools.hub.soulpatch
+package com.moodtools.hub.directpatch
 
 import java.io.File
 import java.util.Properties

@@ -8,7 +8,7 @@ import org.junit.Test
 class DiagnosticTutorialTest {
     @Test fun `tutorial label and failure message cover every local language`() {
         LauncherLanguage.entries.filter { it != LauncherLanguage.English }.forEach { language ->
-            listOf("Diagnostic Tutorial", "Could not open tutorial.").forEach { label ->
+            listOf("Diagnostic Tutorial", "Could not open tutorial.", "Launch confirmation timed out").forEach { label ->
                 val translated = LauncherLocalization.translate(label, language)
                 assertTrue("$language: $label", translated.isNotBlank())
                 assertNotEquals("$language: $label", label, translated)

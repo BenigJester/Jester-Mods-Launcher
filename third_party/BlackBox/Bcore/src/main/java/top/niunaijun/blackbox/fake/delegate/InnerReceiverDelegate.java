@@ -16,43 +16,51 @@ import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.proxy.record.ProxyBroadcastRecord;
 
 
-public class InnerReceiverDelegate extends IIntentReceiver.Stub {
+public class InnerReceiverDelegate extends IIntentReceiver.Stub implements IBinder.DeathRecipient {
     public static final String TAG = "InnerReceiverDelegate";
 
     private static final Map<IBinder, InnerReceiverDelegate> sInnerReceiverDelegate = new HashMap<>();
     private final WeakReference<IIntentReceiver> mIntentReceiver;
+    private final IBinder mOriginalBinder;
 
     private InnerReceiverDelegate(IIntentReceiver iIntentReceiver) {
         this.mIntentReceiver = new WeakReference<>(iIntentReceiver);
+        this.mOriginalBinder = iIntentReceiver.asBinder();
     }
 
-    public static InnerReceiverDelegate getDelegate(IBinder iBinder) {
+    public static synchronized InnerReceiverDelegate getDelegate(IBinder iBinder) {
+        if (iBinder instanceof InnerReceiverDelegate) return (InnerReceiverDelegate) iBinder;
         return sInnerReceiverDelegate.get(iBinder);
     }
 
-    public static IIntentReceiver createProxy(IIntentReceiver base) {
+    public static synchronized IIntentReceiver createProxy(IIntentReceiver base) {
         if (base instanceof InnerReceiverDelegate) {
             return base;
         }
         final IBinder iBinder = base.asBinder();
         InnerReceiverDelegate delegate = sInnerReceiverDelegate.get(iBinder);
         if (delegate == null) {
-            try {
-                iBinder.linkToDeath(new DeathRecipient() {
-                    @Override
-                    public void binderDied() {
-                        sInnerReceiverDelegate.remove(iBinder);
-                        iBinder.unlinkToDeath(this, 0);
-                    }
-                }, 0);
-            } catch (RemoteException e) {
-                e.printStackTrace();
-            }
             delegate = new InnerReceiverDelegate(base);
             sInnerReceiverDelegate.put(iBinder, delegate);
+            try {
+                iBinder.linkToDeath(delegate, 0);
+            } catch (RemoteException e) {
+                sInnerReceiverDelegate.remove(iBinder);
+            }
         }
         return delegate;
     }
+
+    public void release() {
+        synchronized (InnerReceiverDelegate.class) {
+            if (sInnerReceiverDelegate.get(mOriginalBinder) != this) return;
+            sInnerReceiverDelegate.remove(mOriginalBinder);
+            try { mOriginalBinder.unlinkToDeath(this, 0); }
+            catch (java.util.NoSuchElementException ignored) { }
+        }
+    }
+
+    @Override public void binderDied() { release(); }
 
     @Override
     public void performReceive(Intent intent, int resultCode, String data, Bundle extras, boolean ordered, boolean sticky, int sendingUser) throws RemoteException {

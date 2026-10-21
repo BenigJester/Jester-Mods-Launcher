@@ -15,7 +15,7 @@ import black.android.app.BRIServiceConnectionO;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
 
 
-public class ServiceConnectionDelegate extends IServiceConnection.Stub {
+public class ServiceConnectionDelegate extends IServiceConnection.Stub implements IBinder.DeathRecipient {
     private static final Map<IBinder, ServiceConnectionDelegate> sServiceConnectDelegate = new HashMap<>();
     private final IServiceConnection mConn;
     private final ComponentName mComponentName;
@@ -25,30 +25,41 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
         this.mComponentName = targetComponent;
     }
 
-    public static ServiceConnectionDelegate getDelegate(IBinder iBinder) {
+    public static synchronized ServiceConnectionDelegate getDelegate(IBinder iBinder) {
+        if (iBinder instanceof ServiceConnectionDelegate) return (ServiceConnectionDelegate) iBinder;
         return sServiceConnectDelegate.get(iBinder);
     }
 
-    public static IServiceConnection createProxy(IServiceConnection base, Intent intent) {
+    public static synchronized IServiceConnection createProxy(IServiceConnection base, Intent intent) {
+        if (base instanceof ServiceConnectionDelegate) return base;
         final IBinder iBinder = base.asBinder();
         ServiceConnectionDelegate delegate = sServiceConnectDelegate.get(iBinder);
         if (delegate == null) {
-            try {
-                iBinder.linkToDeath(new IBinder.DeathRecipient() {
-                    @Override
-                    public void binderDied() {
-                        sServiceConnectDelegate.remove(iBinder);
-                        iBinder.unlinkToDeath(this, 0);
-                    }
-                }, 0);
-            } catch (RemoteException e) {
-                e.printStackTrace();
-            }
             delegate = new ServiceConnectionDelegate(base, intent.getComponent());
             sServiceConnectDelegate.put(iBinder, delegate);
+            try {
+                iBinder.linkToDeath(delegate, 0);
+            } catch (RemoteException e) {
+                sServiceConnectDelegate.remove(iBinder);
+            }
         }
         return delegate;
     }
+
+    /** Successful unbind must release local binders too: they never deliver binderDied. */
+    public void release() {
+        synchronized (ServiceConnectionDelegate.class) {
+            IBinder binder = mConn.asBinder();
+            if (sServiceConnectDelegate.get(binder) != this) return;
+            sServiceConnectDelegate.remove(binder);
+            try { binder.unlinkToDeath(this, 0); }
+            catch (java.util.NoSuchElementException ignored) { }
+        }
+    }
+
+    @Override public void binderDied() { release(); }
+
+    public IBinder getOriginalBinder() { return mConn.asBinder(); }
 
     /**
      * Delivers a synthetic service connection through the framework signature used by the

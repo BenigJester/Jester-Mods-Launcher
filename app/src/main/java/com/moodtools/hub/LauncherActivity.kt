@@ -58,6 +58,7 @@ import com.moodtools.hub.modules.ModuleTransferIntent
 import com.moodtools.hub.modules.NonRootMethod
 import com.moodtools.hub.modules.resolveNonRootMethodChoice
 import com.moodtools.hub.modules.PlayStoreVersionStatus
+import com.moodtools.hub.modules.ModuleConfig
 import com.moodtools.hub.modules.SecureTransferStage
 import com.moodtools.hub.modules.installedModuleUpdates
 import com.moodtools.hub.modules.DirectPatchPromptUiState
@@ -154,6 +155,7 @@ internal fun newestPlayStoreStatus(
     cached == null -> received
     cached.latestVersion != null && cached.latestVersionCode != null &&
         (received.latestVersion == null || received.latestVersionCode == null) &&
+        received.listingUpdatedAtEpochSeconds == cached.listingUpdatedAtEpochSeconds &&
         received.checkedAtEpochSeconds >= cached.checkedAtEpochSeconds -> received.copy(
             latestVersion = cached.latestVersion,
             latestVersionCode = cached.latestVersionCode
@@ -193,6 +195,17 @@ internal fun stableDisplayedPlayStoreStatus(
 
 internal fun isPlayStoreCacheExpired(checkedAtEpochSeconds: Long, nowEpochSeconds: Long): Boolean =
     nowEpochSeconds - checkedAtEpochSeconds >= 60L * 60L
+
+internal fun playStoreCompatibilityFingerprint(module: ModuleConfig): String =
+    module.supportedVersions.sorted().joinToString(",") + "|" +
+        module.supportedVersionCodes.sorted().joinToString(",")
+
+internal fun shouldRefreshPlayStoreStatus(
+    cached: PlayStoreVersionStatus?,
+    cachedCompatibility: String?,
+    module: ModuleConfig
+): Boolean = cached == null || cached.stale ||
+    cachedCompatibility != playStoreCompatibilityFingerprint(module)
 
 private enum class InstallerPermissionTarget {
     LAUNCHER_UPDATE,
@@ -3126,10 +3139,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     fun restoreOriginalLibrary(entry: LibraryGame) {
         if (_launchState.value.inProgress || _updateState.value.inProgress ||
             _gameDataResetState.value.inProgress) return
+        val managedBundle = entry.packageName == "com.je.supersus"
         _launchState.value = LaunchUiState(
             inProgress = true,
-            headline = "Restoring original library",
-            detail = "Stopping the game and removing the temporary patched library."
+            headline = if (managedBundle) "Restoring original bundle" else "Restoring original library",
+            detail = if (managedBundle) "Stopping the game and restoring its backed-up managed bundle."
+                else "Stopping the game and removing the temporary patched library."
         )
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -3139,14 +3154,15 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 )
             }.onSuccess {
                 _launchState.value = LaunchUiState(
-                    headline = "Original library restored",
-                    detail = "The untouched Google Play library is active again."
+                    headline = if (managedBundle) "Original bundle restored" else "Original library restored",
+                    detail = if (managedBundle) "The verified original managed bundle is active again."
+                        else "The untouched Google Play library is active again."
                 )
                 refreshGames(forceGameScan = true)
             }.onFailure { error ->
                 android.util.Log.e("JesterMoodsLaunch", "Original library restore failed", error)
                 _launchState.value = LaunchUiState(
-                    headline = "Couldn't restore original library",
+                    headline = if (managedBundle) "Couldn't restore original bundle" else "Couldn't restore original library",
                     detail = if (error.message?.contains("not the original Google Play file") == true) {
                         "Reinstall the game from Google Play once, then try again."
                     } else {
@@ -4826,9 +4842,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             val packageName = module.config.packageName
             packageName to cachedPlayStoreStatus(packageName, now)
         }
-        val packagesToRefresh = cachedByPackage
-            .filterValues { cached -> cached == null || cached.stale }
-            .keys
+        val packagesToRefresh = modules.filter { module ->
+            val packageName = module.config.packageName
+            shouldRefreshPlayStoreStatus(
+                cachedByPackage[packageName],
+                playStorePreferences.getString("compatibility_$packageName", null),
+                module.config
+            )
+        }.mapTo(hashSetOf()) { it.config.packageName }
         val freshByPackage = if (packagesToRefresh.isEmpty()) {
             emptyMap()
         } else {
@@ -4895,6 +4916,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         )
                     } ?: editor.remove(playStoreDownloadKey(packageName))
                     editor.putInt(playStoreSchemaKey(packageName), PLAY_STORE_CACHE_SCHEMA)
+                    editor.putString(
+                        "compatibility_$packageName",
+                        playStoreCompatibilityFingerprint(module.config)
+                    )
                     changed = true
                 }
             }

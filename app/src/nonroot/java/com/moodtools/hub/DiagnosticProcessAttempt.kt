@@ -2,6 +2,10 @@ package com.moodtools.hub
 
 internal data class DiagnosticProcessAttempt(val pid: Int, val startedAt: Long, val events: String) {
     val resumed: Boolean get() = Regex("activity_(?:direct-)?resumed ").containsMatchIn(events)
+    val activityLaunchAt: Long? get() = events.lineSequence().mapNotNull { line ->
+        if (Regex("^[0-9]+ activity_(?:instantiate(?: |$)|(?:direct-)?(?:created|started|resumed) )")
+                .containsMatchIn(line)) line.substringBefore(' ').toLongOrNull() else null
+    }.minOrNull()
     fun resumedBefore(timestamp: Long): Boolean = events.lineSequence().any {
         (it.substringBefore(' ').toLongOrNull() ?: Long.MAX_VALUE) <= timestamp &&
             Regex("activity_(?:direct-)?resumed ").containsMatchIn(it)
@@ -26,6 +30,17 @@ internal fun diagnosticProcessAttempts(logs: Map<Int, String>, host: String): Li
         }
     }.sortedBy { it.startedAt }
 
+/** A session's initial request belongs to its first attempt, not every later OS restart. */
+internal fun diagnosticAttemptLaunchRequest(attempt: DiagnosticProcessAttempt, previousStartedAt: Long?,
+                                          sessionStartedAt: Long, remoteSession: Boolean, host: String): Long? {
+    val request = host.lineSequence().mapNotNull { line ->
+        if (Regex("^[0-9]+ (?:launch_requested|resuming_existing_session)$").matches(line))
+            line.substringBefore(' ').toLongOrNull() else null
+    }.filter { it <= attempt.startedAt && (previousStartedAt == null || it > previousStartedAt) }.maxOrNull()
+    // Remote metadata is created by the authorized launcher's begin request, unlike process attach.
+    return request ?: sessionStartedAt.takeIf { remoteSession && previousStartedAt == null && it <= attempt.startedAt }
+}
+
 internal fun diagnosticAnrContext(background: Boolean, resumed: Boolean): String = when {
     background -> "background"
     resumed -> "after activity resume"
@@ -40,16 +55,21 @@ internal fun diagnosticStatusWithMenu(status: String, state: String?): String =
     if (status == "Game activity opened" && state == "not_attached") "Menu window not attached" else status
 
 internal fun diagnosticAttemptStatus(attempt: DiagnosticProcessAttempt, failureTexts: List<String>,
-                                     stopped: Boolean, died: Boolean, now: Long): String {
+                                     stopped: Boolean, died: Boolean, now: Long,
+                                     launchRequestedAt: Long? = null): String {
     if (attempt.events.contains("failure ")) return "Crash or startup error recorded"
     diagnosticFailureStatus(failureTexts, attempt.resumed)?.let { return it }
-    return launchDiagnosticStatus(false, attempt.resumed, stopped, now - attempt.startedAt, died)
+    val launchAt = attempt.activityLaunchAt ?: launchRequestedAt
+    if (!stopped && launchAt == null) return "Background process observed"
+    return launchDiagnosticStatus(false, attempt.resumed, stopped, now - (launchAt ?: attempt.startedAt), died)
 }
 
 internal fun diagnosticFailureStatus(failureTexts: List<String>, resumed: Boolean): String? {
-    val anrs = failureTexts.filter { it.startsWith("Exit reason: 6;") }
+    val timeouts = failureTexts.filter { it.startsWith("Launch confirmation timeout\n") }
+    val failures = failureTexts - timeouts.toSet()
+    val anrs = failures.filter { it.startsWith("Exit reason: 6;") }
     // Android exit records also describe normal exits and system kills, not just crashes.
-    val reasons = failureTexts.map { Regex("^Exit reason: ([0-9]+);").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+    val reasons = failures.map { Regex("^Exit reason: ([0-9]+);").find(it)?.groupValues?.get(1)?.toIntOrNull() }
     if (reasons.any { it == null || it in setOf(4, 5, 7) }) return "Crash or startup error recorded"
     if (anrs.isNotEmpty()) return when {
         anrs.any { it.contains("ANR context: background") } -> "Background ANR recorded"
@@ -58,7 +78,11 @@ internal fun diagnosticFailureStatus(failureTexts: List<String>, resumed: Boolea
         anrs.any { it.contains("ANR context: startup") } -> "Startup ANR recorded"
         else -> "ANR recorded" // Legacy exits without enough lifecycle/context evidence remain unclassified.
     }
-    return if (failureTexts.isNotEmpty()) "Process exit recorded" else null
+    return when {
+        failures.isNotEmpty() -> "Process exit recorded"
+        timeouts.isNotEmpty() && !resumed -> "Launch confirmation timed out"
+        else -> null
+    }
 }
 
 /** Stable ApplicationExitInfo reason values; fixed labels avoid collecting private system descriptions. */

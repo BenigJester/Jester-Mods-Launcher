@@ -235,6 +235,8 @@ class ModuleCatalogClient(
                             nativeFile = "libmenu_native.so",
                             iconFile = null,
                             nonRootMethod = nonRootMethod,
+                            gmsCoreSupport = com.moodtools.hub.modules.moduleGmsCoreSupport(item, "gmsCoreSupport"),
+                            gmsCorePatch = com.moodtools.hub.modules.GmsCorePatchRules.fromJson(item, "gmsCorePatch"),
                             nonRootMethods = nonRootMethods,
                             rootMethod = com.moodtools.hub.modules.RootMethod.fromJson(
                                 item.optString("rootMethod").takeIf { it.isNotBlank() }

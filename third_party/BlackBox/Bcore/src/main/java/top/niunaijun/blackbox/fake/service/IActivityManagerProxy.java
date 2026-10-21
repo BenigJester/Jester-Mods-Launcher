@@ -18,6 +18,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Objects;
@@ -537,7 +538,8 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             }
             if (resolveInfo != null || AppSystemEnv.isOpenPackage(intent.getComponent())) {
                 Intent proxyIntent = BlackBoxCore.getBActivityManager().bindService(intent,
-                        connection == null ? null : connection.asBinder(),
+                        connection instanceof ServiceConnectionDelegate ? ((ServiceConnectionDelegate) connection).getOriginalBinder()
+                                : connection == null ? null : connection.asBinder(),
                         resolvedType,
                         userId);
                 if (connection != null) {
@@ -571,6 +573,10 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 }
             }
             return method.invoke(who, args);
+        } catch (InvocationTargetException failure) {
+            // The real bind already ran. Replaying it can register a second connection
+            // after a partial failure; preserve its original rejection instead.
+            throw failure.getCause();
         } catch (Exception e) {
             Slog.e(TAG, "BindServiceCommon: Unexpected error", e);
             return method.invoke(who, args);
@@ -673,12 +679,17 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             if (FakeBillingCompat.unbind(iServiceConnection)) {
                 return null;
             }
-            BlackBoxCore.getBActivityManager().unbindService(iServiceConnection.asBinder(), BActivityThread.getUserId());
             ServiceConnectionDelegate delegate = ServiceConnectionDelegate.getDelegate(iServiceConnection.asBinder());
             if (delegate != null) {
                 args[0] = delegate;
             }
-            return method.invoke(who, args);
+            Object result = method.invoke(who, args);
+            if (Boolean.TRUE.equals(result)) {
+                BlackBoxCore.getBActivityManager().unbindService(
+                        delegate != null ? delegate.getOriginalBinder() : iServiceConnection.asBinder(), BActivityThread.getUserId());
+                if (delegate != null) delegate.release();
+            }
+            return result;
         }
     }
 
@@ -840,7 +851,12 @@ public class IActivityManagerProxy extends ClassInvocationStub {
 
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return method.invoke(who, args);
+            IIntentReceiver receiver = (IIntentReceiver) args[0];
+            InnerReceiverDelegate delegate = receiver == null ? null : InnerReceiverDelegate.getDelegate(receiver.asBinder());
+            if (delegate != null) args[0] = delegate;
+            Object result = method.invoke(who, args);
+            if (delegate != null) delegate.release();
+            return result;
         }
     }
 

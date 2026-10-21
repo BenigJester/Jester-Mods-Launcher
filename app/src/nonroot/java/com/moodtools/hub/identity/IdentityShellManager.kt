@@ -26,7 +26,7 @@ import com.moodtools.hub.modules.InstalledGame
 import com.moodtools.hub.modules.ModuleIntegrityVerifier
 import com.moodtools.hub.modules.PluginLoader
 import com.moodtools.hub.modules.RootMethod
-import com.moodtools.hub.soulpatch.BinaryXmlStringPool
+import com.moodtools.hub.directpatch.BinaryXmlStringPool
 import com.moodtools.hub.RemoteLaunchDiagnostics
 import java.io.ByteArrayOutputStream
 import java.io.File

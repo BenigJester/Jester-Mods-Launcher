@@ -83,6 +83,8 @@ class ModuleRepository(private val context: Context) {
                 nativeFile = json.optString("native_file", "libmenu_native.so"),
                 iconFile = json.optString("icon_file").takeIf { it.isNotBlank() },
                 nonRootMethod = nonRootMethod,
+                gmsCoreSupport = moduleGmsCoreSupport(json, "gmscore_support"),
+                gmsCorePatch = GmsCorePatchRules.fromJson(json, "gmscore_patch"),
                 rootMethod = RootMethod.fromJson(json.optString("root_method").takeIf { it.isNotBlank() }),
                 nonRootMethods = nonRootMethods,
                 supportedVersionCodes = supportedVersionCodes,

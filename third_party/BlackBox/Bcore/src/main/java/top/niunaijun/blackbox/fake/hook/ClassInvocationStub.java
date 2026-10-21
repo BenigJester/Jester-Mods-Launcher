@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.ConnectionDiagnostics;
 
 
 public abstract class ClassInvocationStub implements InvocationHandler, IInjectHook {
@@ -47,7 +48,8 @@ public abstract class ClassInvocationStub implements InvocationHandler, IInjectH
         if (mBase == null) {
             return;
         }
-        mProxyInvocation = Proxy.newProxyInstance(mBase.getClass().getClassLoader(), MethodParameterUtils.getAllInterface(mBase.getClass()), this);
+        mProxyInvocation = Proxy.newProxyInstance(mBase.getClass().getClassLoader(),
+                MethodParameterUtils.getAllInterface(mBase.getClass()), this::invokeTracked);
         if (!onlyProxy) {
             inject(mBase, mProxyInvocation);
         }
@@ -89,6 +91,24 @@ public abstract class ClassInvocationStub implements InvocationHandler, IInjectH
                     t.printStackTrace();
                 }
             }
+        }
+    }
+
+    private Object invokeTracked(Object proxy, Method method, Object[] args) throws Throwable {
+        ConnectionDiagnostics.Operation operation = ConnectionDiagnostics.operation(method.getName(), method.getDeclaringClass().getName());
+        if (operation == null) return invoke(proxy, method, args);
+        ConnectionDiagnostics.begin(operation);
+        try {
+            Object result = invoke(proxy, method, args);
+            if ((operation == ConnectionDiagnostics.Operation.bind && result instanceof Number
+                    && ((Number) result).longValue() <= 0)
+                    || (operation == ConnectionDiagnostics.Operation.unbind && Boolean.FALSE.equals(result))) {
+                ConnectionDiagnostics.failed(operation, null);
+            }
+            return result;
+        } catch (Throwable error) {
+            ConnectionDiagnostics.failed(operation, error);
+            throw error;
         }
     }
 

@@ -24,6 +24,7 @@ import java.util.zip.ZipFile;
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.core.env.BEnvironment;
 import top.niunaijun.blackbox.entity.pm.InstallResult;
+import top.niunaijun.blackbox.utils.InstallFailureDiagnostics;
 import com.moodtools.diagnostics.DiagnosticRuntime;
 
 /** Direct launcher entry for a generated exact-package shell. */
@@ -162,26 +163,46 @@ public final class IdentityShellActivity extends Activity {
     private void importOriginalGame(BlackBoxCore core, String targetPackage,
                                     String payloadAuthority) throws Exception {
         File stagedPayload = new File(getCacheDir(), "identity-game-import.apks");
-        if (stagedPayload.exists() && !stagedPayload.delete()) {
-            throw new IllegalStateException("Could not replace the staged original game");
-        }
+        String phase = "staging";
         try {
+            DiagnosticRuntime.event("identity_import_storage usableBytes=" + getCacheDir().getUsableSpace());
+            if (stagedPayload.exists() && !stagedPayload.delete()) {
+                throw new IllegalStateException("Could not replace the staged original game");
+            }
+            phase = "payload_open";
             try (InputStream input = getContentResolver().openInputStream(
                     payloadUri(payloadAuthority, targetPackage, "game.apks"))) {
                 if (input == null) {
                     throw new IllegalStateException("The preserved original game is unavailable");
                 }
+                phase = "payload_copy";
                 copyToFile(input, stagedPayload);
             }
 
             InstallResult lastResult = null;
+            phase = "bundle_check";
             final int expectedSplitCount = countPayloadSplits(stagedPayload);
+            DiagnosticRuntime.event("identity_import_payload bytes=" + stagedPayload.length()
+                    + " expectedSplits=" + expectedSplitCount);
             for (int attempt = 0; attempt < 2; attempt++) {
+                phase = "service_ready";
                 core.ensureBlackProcessReady(SERVICE_READY_TIMEOUT_MS);
+                phase = "install";
+                DiagnosticRuntime.event("identity_import_install_started attempt=" + (attempt + 1));
                 lastResult = core.installPackageAsUser(stagedPayload, USER_ID);
+                if (lastResult == null) {
+                    DiagnosticRuntime.event("identity_import_install_result category=missing_result");
+                    throw new IllegalStateException("The game installer returned no result");
+                }
+                DiagnosticRuntime.event("identity_import_install_result success=" + lastResult.success
+                        + " category=" + (lastResult.success ? "none" : InstallFailureDiagnostics.resultCategory(lastResult.msg)));
                 boolean recoverable = isRecoverableInstallFailure(lastResult.msg);
+                phase = "installed_check";
                 if ((lastResult.success || recoverable)
-                        && waitForImportedGame(core, targetPackage, expectedSplitCount)) return;
+                        && waitForImportedGame(core, targetPackage, expectedSplitCount)) {
+                    DiagnosticRuntime.event("identity_import_verified");
+                    return;
+                }
                 if (attempt == 0 && (lastResult.success || recoverable)) {
                     updateStatus("Recovering game setup…");
                     Thread.sleep(750L);
@@ -192,11 +213,19 @@ public final class IdentityShellActivity extends Activity {
 
             String detail = lastResult == null ? null : lastResult.msg;
             if (lastResult != null && lastResult.success) {
+                DiagnosticRuntime.event("identity_import_failed category=installed_split_set_unverified");
                 detail = "The original game's installed split set could not be preserved";
+            } else {
+                DiagnosticRuntime.event("identity_import_failed category="
+                        + InstallFailureDiagnostics.resultCategory(detail));
             }
             throw new IllegalStateException(detail == null || detail.trim().isEmpty()
                     ? "The original game payload could not be imported"
                     : detail.trim());
+        } catch (Exception error) {
+            DiagnosticRuntime.event("identity_import_exception phase=" + phase
+                    + " category=" + InstallFailureDiagnostics.exceptionKind(error));
+            throw error;
         } finally {
             if (stagedPayload.exists() && !stagedPayload.delete()) {
                 Log.w(TAG, "Could not clear staged original-game import");
@@ -208,15 +237,18 @@ public final class IdentityShellActivity extends Activity {
                                         int expectedSplitCount)
             throws InterruptedException {
         for (int check = 0; check < 8; check++) {
-            if (core.isInstalled(targetPackage, USER_ID)) {
+            boolean installed = core.isInstalled(targetPackage, USER_ID);
+            if (installed) {
                 ApplicationInfo info = core.getBPackageManager()
                         .getApplicationInfo(targetPackage, 0, USER_ID);
-                int importedSplitCount = info == null || info.splitSourceDirs == null
+                int importedSplitCount = info == null ? -1 : info.splitSourceDirs == null
                         ? 0 : info.splitSourceDirs.length;
-                if (importedSplitCount == expectedSplitCount) return true;
+                DiagnosticRuntime.event("identity_import_installed_check installed=true expectedSplits="
+                        + expectedSplitCount + " actualSplits=" + importedSplitCount);
+                if (info != null && importedSplitCount == expectedSplitCount) return true;
                 Log.w(TAG, "Imported split-set incomplete: expected=" + expectedSplitCount
                         + " actual=" + importedSplitCount);
-            }
+            } else DiagnosticRuntime.event("identity_import_installed_check installed=false");
             Thread.sleep(250L);
         }
         return false;

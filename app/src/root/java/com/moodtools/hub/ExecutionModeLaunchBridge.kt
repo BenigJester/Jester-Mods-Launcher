@@ -13,7 +13,6 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 
 /** Public Root bridge: production-only methods fail closed; injection remains reviewable. */
@@ -230,7 +229,7 @@ object ExecutionModeLaunchBridge {
         // target-owned memfds, and passes only those descriptors to the game.
         // No payload is installed in /data/adb or copied into another app's data.
         report("Opening game", "Starting ${game.module.title} now.")
-        RootLaunchDiagnostics.begin(context, game, runCatching { sha256(nativePayload) }.getOrNull())
+        val diagnosticSession = RootLaunchDiagnostics.begin(context, game, runCatching { sha256(nativePayload) }.getOrNull())
         val injection = RootShell.run(
             "${quote(remoteInjector)} " +
                 "--package ${quote(game.packageName)} " +
@@ -241,7 +240,10 @@ object ExecutionModeLaunchBridge {
                 "--launch --bp-ld --memfd --timeout 8000"
         )
         if (!injection.success) {
-            return fail(context, "The game couldn't be opened. Please try again.", "Root launch failed: ${injection.output.takeLast(300)}", onProgress)
+            val evidence = rootInjectionSummary(injection, runRootCommand(listOf("su", "-v"), 5).output)
+            RootLaunchDiagnostics.injectionFailed(diagnosticSession, evidence)
+            return fail(context, "The add-on could not start. The game may have closed during setup. Check Diagnostics for details.",
+                evidence, onProgress)
         }
 
         report("Opening game", "${game.module.title} is starting now.")
@@ -302,6 +304,19 @@ object ExecutionModeLaunchBridge {
         }
     }
 
+    private fun sha256(file: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(32768)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private fun quote(value: String): String = "'${value.replace("'", "'\\''")}'"
 }
 
@@ -326,8 +341,8 @@ object ExecutionModeStartupGate {
     }
 }
 
-private object RootShell {
-    data class Result(val success: Boolean, val output: String)
+internal object RootShell {
+    data class Result(val success: Boolean, val output: String, val exitCode: Int? = null, val timedOut: Boolean = false)
 
     fun run(command: String): Result {
         return run(listOf("su", "-c", command))
@@ -335,16 +350,6 @@ private object RootShell {
 
 
     private fun run(arguments: List<String>): Result {
-        return runCatching {
-            val process = ProcessBuilder(arguments)
-                .redirectErrorStream(true)
-                .start()
-            val completed = process.waitFor(60, TimeUnit.SECONDS)
-            if (!completed) {
-                process.destroyForcibly()
-                return@runCatching Result(false, "Root command timed out")
-            }
-            Result(process.exitValue() == 0, process.inputStream.bufferedReader().use { it.readText() })
-        }.getOrElse { Result(false, it.message ?: it.javaClass.simpleName) }
+        return runRootCommand(arguments)
     }
 }

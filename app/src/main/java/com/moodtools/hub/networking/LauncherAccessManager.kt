@@ -466,7 +466,7 @@ class LauncherAccessManager(context: Context) {
         packageName: String,
         slug: String,
         abi: String,
-        bootstrap: Int = 1
+        bootstrap: Int = com.moodtools.hub.modules.LAUNCHER_MODULE_BOOTSTRAP
     ): LauncherModuleAuthorization {
         require(packageName.matches(Regex("[A-Za-z0-9_.]{3,200}")))
         require(slug.matches(Regex("[a-z0-9][a-z0-9-]{0,63}")))

@@ -121,14 +121,11 @@ public class ActiveServices {
                     isBound = true;
                 } else {
                     connectedService = new ConnectedServiceRecord();
+                    connectedService.mDeathRecipient = new IBinder.DeathRecipient() {
+                        @Override public void binderDied() { unbindService(binder, userId); }
+                    };
                     try {
-                        binder.linkToDeath(new IBinder.DeathRecipient() {
-                            @Override
-                            public void binderDied() {
-                                binder.unlinkToDeath(this, 0);
-                                mConnectedServices.remove(binder);
-                            }
-                        }, 0);
+                        binder.linkToDeath(connectedService.mDeathRecipient, 0);
                     } catch (RemoteException e) {
                         e.printStackTrace();
                     }
@@ -147,14 +144,17 @@ public class ActiveServices {
     }
 
     public void unbindService(IBinder binder, int userId) {
-        ConnectedServiceRecord connectedService = mConnectedServices.get(binder);
-        if (connectedService == null) {
-            return;
+        synchronized (mRunningServiceRecords) {
+            ConnectedServiceRecord connectedService = mConnectedServices.remove(binder);
+            if (connectedService == null) return;
+            RunningServiceRecord runningServiceRecord = findRunningServiceRecord(connectedService.mIntent);
+            if (runningServiceRecord != null) {
+                if (runningServiceRecord.mConnectedServiceRecord == connectedService) runningServiceRecord.mConnectedServiceRecord = null;
+                runningServiceRecord.mBindCount.decrementAndGet();
+            }
+            try { binder.unlinkToDeath(connectedService.mDeathRecipient, 0); }
+            catch (java.util.NoSuchElementException ignored) { }
         }
-        RunningServiceRecord runningServiceRecord = getOrCreateRunningServiceRecord(connectedService.mIntent);
-        runningServiceRecord.mConnectedServiceRecord = null;
-        runningServiceRecord.mBindCount.decrementAndGet();
-        mConnectedServices.remove(binder);
     }
 
     public void stopServiceToken(ComponentName className, IBinder token, int userId) {
@@ -295,5 +295,6 @@ public class ActiveServices {
     public static class ConnectedServiceRecord {
         private IBinder mIBinder;
         private Intent mIntent;
+        private IBinder.DeathRecipient mDeathRecipient;
     }
 }

@@ -113,7 +113,7 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
             Text("Diagnostics", color = palette.accentSecondary, fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(5.dp))
-            Text(if (backend.crashOnly) "View or share a game crash report." else "View the last game session or share a startup report.", color = palette.muted,
+            Text(if (backend.crashOnly) "View or share a Root launch or crash report." else "View the last game session or share a startup report.", color = palette.muted,
                 style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -121,14 +121,14 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
         AlertDialog(
             onDismissRequest = { acknowledge(report); prompt = null },
             shape = RoundedCornerShape(28.dp), containerColor = palette.surfaceRaised,
-            title = { Text(if (backend.crashOnly) "Game crash recorded" else "A game launch needs review", color = Color.White) },
+            title = { Text(if (backend.crashOnly) report.status else "A game launch needs review", color = Color.White) },
             text = {
                 Column {
                     RawText(report.title, color = palette.accentSecondary, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(report.status, color = palette.muted)
                     Spacer(Modifier.height(8.dp))
-                    Text(if (backend.crashOnly) "View or share a game crash report." else "A report was saved. A slow launch is not always a freeze.", color = palette.muted)
+                    Text(if (backend.crashOnly) "View or share a Root launch or crash report." else "A report was saved. A slow launch is not always a freeze.", color = palette.muted)
                     Spacer(Modifier.height(8.dp))
                     DiagnosticTutorialButton(palette)
                 }
@@ -163,7 +163,7 @@ internal fun LaunchDiagnosticsPortal(palette: LauncherPalette, packageName: Stri
                             Text("No reports yet", color = palette.accentSecondary, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(8.dp))
                             Text(if (backend.crashOnly)
-                                "Root mode records game crashes when Android provides crash details. No loading checks are recorded."
+                                "Root mode records add-on setup failures and available game crash details. No loading checks are recorded."
                             else "Launch a game to record its latest BlackBox session, startup checkpoints and available crash details.",
                                 color = palette.muted, style = MaterialTheme.typography.bodySmall)
                             Spacer(Modifier.height(12.dp))

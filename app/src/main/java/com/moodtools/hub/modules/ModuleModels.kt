@@ -21,7 +21,10 @@ data class ModuleConfig(
     /** Android versionCode values explicitly supported by this add-on. Empty for legacy metadata. */
     val supportedVersionCodes: Set<Long> = emptySet(),
     /** Stable catalog identity. Null only for legacy/local modules that predate slug storage. */
-    val catalogSlug: String? = null
+    val catalogSlug: String? = null,
+    /** Signed module capability; user consent is stored separately on the device. */
+    val gmsCoreSupport: Boolean = false,
+    val gmsCorePatch: GmsCorePatchRules? = null
 ) {
     val effectiveNonRootMethod: NonRootMethod
         get() = selectedNonRootMethod?.takeIf(nonRootMethods::contains) ?: nonRootMethod
@@ -30,6 +33,10 @@ data class ModuleConfig(
         get() = nonRootMethods.size > 1
 
     init {
+        require(gmsCorePatch == null || gmsCoreSupport) { "GmsCore patch rules require GmsCore support" }
+        require(!gmsCoreSupport || NonRootMethod.DIRECT_PATCH in nonRootMethods) {
+            "GmsCore support requires a direct-patch method"
+        }
         require(nonRootMethods.isNotEmpty()) { "At least one non-root method is required" }
         require(nonRootMethods.distinct().size == nonRootMethods.size) {
             "Non-root methods must be unique"
@@ -51,6 +58,10 @@ data class ModuleConfig(
         }
     }
 }
+
+internal fun moduleGmsCoreSupport(json: org.json.JSONObject, key: String): Boolean =
+    if (!json.has(key)) false else json.get(key) as? Boolean
+        ?: throw IllegalArgumentException("$key must be a boolean")
 
 enum class NonRootMethod(val jsonValue: String, val displayName: String) {
     NONE("none", "Root only"),
@@ -332,7 +343,6 @@ data class PlayStoreVersionStatus(
     // The server hint is based on the published catalog, which can lag a locally staged module.
     // Re-evaluate an exact Google Play version against the module the launcher actually resolved.
     fun isSupportedBy(module: ModuleConfig): Boolean? {
-        if (updateAvailable == true && latestVersionCode != null) return false
         if (latestVersion != null && latestVersion !in module.supportedVersions) return false
         if (module.supportedVersionCodes.isEmpty()) {
             return latestVersion?.let { true } ?: updateAvailable?.not()

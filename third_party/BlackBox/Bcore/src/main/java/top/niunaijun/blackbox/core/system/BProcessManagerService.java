@@ -65,6 +65,7 @@ public class BProcessManagerService implements ISystemService {
                         app.initLock.block();
                     }
                     if (app.bActivityThread != null && app.bActivityThread.asBinder().isBinderAlive()) {
+                        observeDiagnosticProcesses(app, callingPid);
                         return app;
                     }
                     onProcessDie(app);
@@ -96,9 +97,27 @@ public class BProcessManagerService implements ISystemService {
             } else {
                 app.pid = getPid(BlackBoxCore.getContext(), ProxyManifest.getProcessName(app.bpid));
                 top.niunaijun.blackbox.utils.LaunchSessionRecorder.processCreated(packageName, app.pid);
+                observeDiagnosticProcesses(app, callingPid);
             }
         }
         return app;
+    }
+
+    private void observeDiagnosticProcesses(ProcessRecord app, int callingPid) {
+        try {
+            ProcessRecord source = findProcessByPid(callingPid);
+            File session = source == null ? null : source.diagnosticSession;
+            if (session == null || !session.isDirectory() || new File(session, "stopped").exists())
+                session = top.niunaijun.blackbox.utils.LaunchSessionRecorder.current(app.getPackageName());
+            if (session == null) return;
+            app.diagnosticSession = session;
+            top.niunaijun.blackbox.utils.SupportProcessRecorder.observeSession(session,
+                    top.niunaijun.blackbox.utils.SupportProcessRecorder.Role.compatibility_service);
+            // Use the existing client Binder only: diagnostics never acquire a provider or start a process.
+            if (!app.getPackageName().equals(session.getParentFile().getName()) && app.bActivityThread != null) {
+                app.bActivityThread.startSupportDiagnostics(session.getParentFile().getName(), session.getName());
+            }
+        } catch (Throwable ignored) { }
     }
 
     private int getUsingBPidL() {

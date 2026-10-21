@@ -4,6 +4,7 @@ package com.moodtools.hub
 internal fun diagnosticExitHint(description: String?): String {
     val text = description.orEmpty().take(4096).lowercase(java.util.Locale.ROOT)
     return when {
+        text.contains("too many binders") || text.contains("excessive binder") || text.contains("binder proxy limit") -> "binder_limit_reported"
         text.contains("excessive cpu") || text.contains("excessive background cpu") -> "excessive_cpu_reported"
         text.startsWith("bg anr:") -> "background_anr_reported"
         text.contains("low memory") -> "low_memory_mentioned"

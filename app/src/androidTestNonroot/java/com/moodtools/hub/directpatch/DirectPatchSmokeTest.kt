@@ -1,4 +1,4 @@
-package com.moodtools.hub.soulpatch
+package com.moodtools.hub.directpatch
 
 import android.content.Context
 import android.content.Intent
@@ -26,7 +26,7 @@ private const val SOUL_KNIGHT_PACKAGE = "com.ChillyRoom.DungeonShooter"
 
 /** Non-destructive device smoke test: prepares and verifies APKs but never uninstalls the game. */
 @RunWith(AndroidJUnit4::class)
-class SoulKnightPatchSmokeTest {
+class DirectPatchSmokeTest {
     @Test
     fun preparesVerifiedSplitClusterWithoutChangingInstalledGame() {
         val context = ApplicationProvider.getApplicationContext<Context>()

@@ -16,11 +16,11 @@ internal object RemoteLaunchDiagnostics {
     const val CONFIG = "assets/moodtools/diagnostics.json"
     private val beginWorker = java.util.concurrent.Executors.newSingleThreadExecutor { task -> Thread(task, "DiagnosticBegin").apply { isDaemon = true } }
     private val beginning = java.util.concurrent.atomic.AtomicBoolean()
-    fun configuration(context: Context, method: String, factory: String = ""): ByteArray {
+    fun configuration(context: Context, method: String, factory: String = "", gmsProfile: String = ""): ByteArray {
         val info = context.packageManager.getPackageInfo(context.packageName,
             if (android.os.Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
         val signer = (if (android.os.Build.VERSION.SDK_INT >= 28) info.signingInfo!!.apkContentsSigners else info.signatures!!).first().toByteArray()
-        return JSONObject().put("launcher", context.packageName).put("factory", factory).put("method", method)
+        return JSONObject().put("launcher", context.packageName).put("factory", factory).put("method", method).put("gmsProfile", gmsProfile)
             .put("signer", MessageDigest.getInstance("SHA-256").digest(signer).joinToString("") { "%02x".format(it) })
             .toString().toByteArray()
     }
@@ -40,6 +40,16 @@ internal object RemoteLaunchDiagnostics {
                 .put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                 .put("android", "${android.os.Build.VERSION.RELEASE} / API ${android.os.Build.VERSION.SDK_INT}")
                 .put("abis", android.os.Build.SUPPORTED_ABIS.joinToString())
+            if (method == "direct_patch") {
+                meta.put("gmscoreState", GmsCoreSupport.state(context).name)
+                val applied = java.util.zip.ZipFile(app.applicationInfo!!.sourceDir).use { archive ->
+                    archive.getEntry(CONFIG)?.takeIf { it.size in 1..16000 }?.let { entry ->
+                        archive.getInputStream(entry).use { JSONObject(String(it.readBytes(), Charsets.UTF_8)).optString("gmsProfile") }
+                    }.orEmpty()
+                }
+                meta.put("gmscoreProfile", applied.ifEmpty { "off" })
+                    .put("gmscoreEnabled", applied.isNotEmpty())
+            }
             call(context, pkg, "begin", Bundle().apply { putString("metadata", meta.toString()) })
             } } finally { beginning.set(false) }
         }

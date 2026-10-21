@@ -131,5 +131,15 @@ public final class DiagnosticRuntime {
         }
         return output.toByteArray();
     }
+    /** Fixed categories only; never export the system description itself. */
+    public static String exitHint(String description) {
+        String text = description == null ? "" : description.substring(0, Math.min(description.length(), 4096)).toLowerCase(java.util.Locale.ROOT);
+        if (text.contains("too many binders") || text.contains("excessive binder") || text.contains("binder proxy limit")) return "binder_limit_reported";
+        if (text.contains("excessive cpu") || text.contains("excessive background cpu")) return "excessive_cpu_reported";
+        if (text.startsWith("bg anr:")) return "background_anr_reported";
+        if (text.contains("low memory")) return "low_memory_mentioned";
+        if (text.contains("stop idle")) return "idle_stop_mentioned";
+        return "unclassified_or_unavailable";
+    }
     private DiagnosticRuntime() { }
 }

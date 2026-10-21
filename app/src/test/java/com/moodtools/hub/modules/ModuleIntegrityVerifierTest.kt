@@ -126,10 +126,45 @@ class ModuleIntegrityVerifierTest {
         assertFailure(fixture, "missing")
     }
 
+    @Test fun acceptsSignedGmsCapabilityAndRejectsDeviceLocalTampering() {
+        val fixture = fixture(nonRootMethod = NonRootMethod.DIRECT_PATCH, gmsCoreSupport = true)
+        fixture.verifier.verify(fixture.directory, fixture.module, ABI)
+        val forged = fixture.copy(module = fixture.module.copy(gmsCoreSupport = false))
+        assertFailure(forged, "GmsCore support")
+        val config = File(fixture.directory, "config.json")
+        config.writeText(JSONObject(config.readText()).put("gmscore_support", false).toString())
+        assertFailure(fixture, "configuration")
+    }
+
+    @Test fun signedCustomRulesCannotBeChangedInCatalogOrInstalledConfig() {
+        val rules = GmsCorePatchRules("test-v1", mapOf("classes.dex" to "a".repeat(64)), "app.revanced")
+        val fixture = fixture(nonRootMethod = NonRootMethod.DIRECT_PATCH, gmsCoreSupport = true, gmsCorePatch = rules)
+        fixture.verifier.verify(fixture.directory, fixture.module, ABI)
+        val oldLauncher = runCatching { fixture.verifier.verify(fixture.directory, fixture.module, ABI, bootstrap = 1) }
+        assertTrue(oldLauncher.exceptionOrNull()?.message.orEmpty().contains("newer launcher"))
+        assertFailure(fixture.copy(module = fixture.module.copy(gmsCorePatch = rules.copy(revision = "tampered-v2"))), "patch rules")
+        val config = File(fixture.directory, "config.json")
+        config.writeText(JSONObject(config.readText()).put("gmscore_patch", rules.copy(revision = "tampered-v2").toJson()).toString())
+        assertFailure(fixture, "configuration")
+    }
+
+    @Test fun renamedSdkSymbolsAreSignedAndRequireBootstrapThree() {
+        val symbols = GmsCoreSdkSymbols("LU0/f;", "c", false, "LU0/j;", "f", setOf("LU0/f;", "LU0/j;"))
+        val rules = GmsCorePatchRules("renamed-sdk-v1", mapOf("classes.dex" to "a".repeat(64)), "app.revanced", symbols)
+        val fixture = fixture(nonRootMethod = NonRootMethod.DIRECT_PATCH, gmsCoreSupport = true, gmsCorePatch = rules)
+        fixture.verifier.verify(fixture.directory, fixture.module, ABI)
+        val old = runCatching { fixture.verifier.verify(fixture.directory, fixture.module, ABI, bootstrap = 2) }
+        assertTrue(old.exceptionOrNull()?.message.orEmpty().contains("newer launcher"))
+        assertFailure(fixture.copy(module = fixture.module.copy(gmsCorePatch = rules.copy(
+            sdkSymbols = symbols.copy(availabilityMethod = "different")))), "patch rules")
+    }
+
     private fun fixture(
         nonRootMethod: NonRootMethod? = null,
         nonRootMethods: List<NonRootMethod>? = null,
-        privateScope: String? = null
+        privateScope: String? = null,
+        gmsCoreSupport: Boolean? = null,
+        gmsCorePatch: GmsCorePatchRules? = null
     ): Fixture {
         val directory = temporary.newFolder(PACKAGE_NAME)
         val dexBytes = "signed-dex-1".toByteArray()
@@ -152,6 +187,8 @@ class ModuleIntegrityVerifierTest {
                 nonRootMethods?.let {
                     json.put("nonroot_methods", JSONArray(it.map(NonRootMethod::jsonValue)))
                 }
+                gmsCoreSupport?.let { json.put("gmscore_support", it) }
+                gmsCorePatch?.let { json.put("gmscore_patch", it.toJson()) }
             }
         File(directory, "config.json").writeText(config.toString())
 
@@ -168,6 +205,8 @@ class ModuleIntegrityVerifierTest {
                 nonRootMethods?.let {
                     json.put("nonrootMethods", JSONArray(it.map(NonRootMethod::jsonValue)))
                 }
+                gmsCoreSupport?.let { json.put("gmsCoreSupport", it) }
+                gmsCorePatch?.let { json.put("gmsCorePatch", it.toJson()) }
             }
 
         val payload = JSONObject()
@@ -177,7 +216,7 @@ class ModuleIntegrityVerifierTest {
             .put("packageName", PACKAGE_NAME)
             .put("build", 41L)
             .put("version", "4.1.0")
-            .put("minimumBootstrap", 1)
+            .put("minimumBootstrap", if (gmsCorePatch?.sdkSymbols != null) 3 else if (gmsCorePatch != null) 2 else 1)
             .put("notes", "Signed fixture")
             .put("moduleConfig", signedModuleConfig)
             .put("files", JSONObject()
@@ -223,7 +262,9 @@ class ModuleIntegrityVerifierTest {
                 nativeFile = "libmenu_native.so",
                 iconFile = null,
                 nonRootMethod = nonRootMethod ?: NonRootMethod.INJECTION,
-                nonRootMethods = nonRootMethods ?: listOf(nonRootMethod ?: NonRootMethod.INJECTION)
+                nonRootMethods = nonRootMethods ?: listOf(nonRootMethod ?: NonRootMethod.INJECTION),
+                gmsCoreSupport = gmsCoreSupport ?: false,
+                gmsCorePatch = gmsCorePatch
             ),
             verifier = ModuleIntegrityVerifier(Base64.getEncoder().encodeToString(keys.public.encoded))
         )

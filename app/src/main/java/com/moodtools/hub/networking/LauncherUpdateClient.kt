@@ -299,15 +299,20 @@ class LauncherUpdateClient(private val context: Context) {
         val archiveBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else @Suppress("DEPRECATION") archive.versionCode.toLong()
         require(archiveBuild == release.build) { "The update build does not match its signed release" }
         val current = context.packageManager.getPackageInfo(context.packageName, flags)
-        require(signingDigests(archive) == signingDigests(current)) {
+        val downloadedSigners = verifiedLauncherSigningDigests(apk, Build.VERSION.SDK_INT, "Downloaded launcher")
+        val installedSigners = signingDigests(current).ifEmpty {
+            verifiedLauncherSigningDigests(File(context.applicationInfo.sourceDir), Build.VERSION.SDK_INT, "Installed launcher")
+        }
+        require(downloadedSigners == installedSigners) {
             "The update is not signed by this launcher"
         }
     }
 
     private fun signingDigests(info: android.content.pm.PackageInfo): Set<String> {
         val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = info.signingInfo ?: error("App signing information is unavailable")
-            if (signingInfo.hasMultipleSigners()) signingInfo.apkContentsSigners else signingInfo.signingCertificateHistory
+            // Compare current signer sets, not certificate history. APK verification is the
+            // fallback when an OEM omits this optional PackageManager result.
+            info.signingInfo?.apkContentsSigners
         } else {
             @Suppress("DEPRECATION") info.signatures
         }

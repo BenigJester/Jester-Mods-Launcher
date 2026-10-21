@@ -89,6 +89,8 @@ import top.niunaijun.blackbox.core.system.JarManager;
 
 
 public class BActivityThread extends IBActivityThread.Stub {
+    // Retained until process death; closing it after bind would permit another live owner.
+    private top.niunaijun.blackbox.utils.WebViewDirectoryLease webViewDirectoryLease;
     public static final String TAG = "BActivityThread";
 
     private static BActivityThread sBActivityThread;
@@ -170,6 +172,11 @@ public class BActivityThread extends IBActivityThread.Stub {
 
     public static int getUserId() {
         return getAppConfig() == null ? 0 : getAppConfig().userId;
+    }
+
+    @Override public void startSupportDiagnostics(String packageName, String sessionId) {
+        top.niunaijun.blackbox.utils.SupportProcessRecorder.observe(packageName, sessionId,
+                top.niunaijun.blackbox.utils.SupportProcessRecorder.Role.shared_helper);
     }
 
     public void initProcess(AppConfig appConfig) {
@@ -481,7 +488,21 @@ public class BActivityThread extends IBActivityThread.Stub {
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            WebView.setDataDirectorySuffix(getUserId() + ":" + packageName + ":" + processName);
+            try {
+                webViewDirectoryLease = top.niunaijun.blackbox.utils.WebViewDirectoryLease.acquire(
+                        new File(top.niunaijun.blackbox.core.env.BEnvironment.getSystemDir(), "webview-owners"),
+                        getUserId() + ":" + packageName + ":" + processName);
+                WebView.setDataDirectorySuffix(webViewDirectoryLease.suffix);
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.event("webview_directory "
+                        + (webViewDirectoryLease.alternate ? "alternate_owner_busy" : "primary"));
+            } catch (Exception error) {
+                if (webViewDirectoryLease != null) {
+                    try { webViewDirectoryLease.close(); } catch (java.io.IOException ignored) { }
+                    webViewDirectoryLease = null;
+                }
+                top.niunaijun.blackbox.utils.LaunchSessionRecorder.failure("webview_directory_setup", error);
+                throw new IllegalStateException("Cannot configure an exclusive WebView directory", error);
+            }
         }
 
         VirtualRuntime.setupRuntime(processName, applicationInfo);

@@ -54,6 +54,14 @@ external app or browser; it does not send diagnostic reports to YouTube.
 Clearing diagnostics removes that game's saved reports, not game data,
 previously exported files, or Android's system crash logs.
 
+## Optional Google account support
+
+Supported Non-root direct-patch games can use the separately installed ReVanced
+GmsCore companion. Account setup and sign-in happen in that companion, not in
+the launcher. The launcher checks the companion's identity, version and signing
+certificate; it does not read account names, passwords or authentication tokens.
+The device's official Google Play Services and system accounts are unchanged.
+
 ## Public reports
 
 Remove digital keys, identifiers, certificate chains, complete request bodies,

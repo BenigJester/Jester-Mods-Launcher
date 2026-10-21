@@ -8469,6 +8469,7 @@ private fun ModuleScreen(
     var confirmRemoval by remember(game.packageName) { mutableStateOf(false) }
     var confirmDataReset by remember(game.packageName) { mutableStateOf(false) }
     var confirmLibraryRestore by remember(game.packageName) { mutableStateOf(false) }
+    val usesManagedBundle = game.packageName == "com.je.supersus"
 
     RefreshableScreen(
         refreshing = refreshing,
@@ -8647,7 +8648,10 @@ private fun ModuleScreen(
                 Text(
                     if (BuildConfig.FLAVOR == "root" &&
                         game.module.rootMethod == RootMethod.EXTERNAL_CONTROLLER) {
-                        "This external-controller add-on temporarily mounts its verified game library. " +
+                        if (usesManagedBundle) {
+                            "This add-on replaces a verified managed bundle and keeps its original backup. " +
+                                "Restore original bundle stops the game and restores that resource file."
+                        } else "This external-controller add-on temporarily mounts its verified game library. " +
                             "Restore original lib stops the game and returns to the untouched Google Play library."
                     } else {
                         "Download a fresh, verified copy of this add-on whenever its files need attention."
@@ -8678,7 +8682,7 @@ private fun ModuleScreen(
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 14.dp)
                     ) {
-                        Text("Restore original lib", fontWeight = FontWeight.Bold)
+                        Text(if (usesManagedBundle) "Restore original bundle" else "Restore original lib", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -8843,6 +8847,10 @@ private fun ModuleScreen(
                 }
             }
         }
+        if (com.moodtools.hub.GmsCoreSupport.supports(game.module) &&
+            game.module.effectiveNonRootMethod == NonRootMethod.DIRECT_PATCH) {
+            item { GmsCoreSetupPortal(ActivePalette) }
+        }
         item { LaunchDiagnosticsPortal(palette = ActivePalette, packageName = game.packageName) }
         item { Spacer(Modifier.height(12.dp)) }
         }
@@ -8855,10 +8863,12 @@ private fun ModuleScreen(
             containerColor = SurfaceRaised,
             titleContentColor = Color.White,
             textContentColor = Muted,
-            title = { Text("Restore original library?") },
+            title = { Text(if (usesManagedBundle) "Restore original bundle?" else "Restore original library?") },
             text = {
                 Text(
-                    "This stops the game and removes the temporary patched-library mount. " +
+                    if (usesManagedBundle) {
+                        "This stops the game and restores its verified original managed bundle from backup. Game data is kept."
+                    } else "This stops the game and removes the temporary patched-library mount. " +
                         "Your untouched Google Play library becomes active again; game data is kept."
                 )
             },
@@ -8869,7 +8879,7 @@ private fun ModuleScreen(
                         onRestoreOriginalLibrary()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = PrivateViolet, contentColor = Ink)
-                ) { Text("Restore original lib") }
+                ) { Text(if (usesManagedBundle) "Restore original bundle" else "Restore original lib") }
             },
             dismissButton = {
                 OutlinedButton(

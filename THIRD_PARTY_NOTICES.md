@@ -11,6 +11,12 @@ terms take precedence for those components:
   Apache License 2.0; see `THIRD_PARTY_LICENSES/Dobby-LICENSE`.
 - Keystone Engine: GNU General Public License v2; see
   `THIRD_PARTY_LICENSES/Keystone-COPYING`.
+- dexlib2 2.5.2: BSD 3-Clause License; see
+  `app/src/nonroot/assets/licenses/dexlib2-NOTICE.txt`.
+
+ReVanced GmsCore is a separate companion installed by the user; its APK is not
+bundled in the launcher. Its source and licensing are available at
+https://github.com/ReVanced/GmsCore.
 
 The snapshot export includes these license texts even where the original
 vendored nested repository metadata made them untracked by the private parent

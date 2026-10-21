@@ -33,6 +33,8 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             put("launcher", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("android", "${Build.VERSION.RELEASE} / API ${Build.VERSION.SDK_INT}")
+            put("androidSecurityPatch", Build.VERSION.SECURITY_PATCH)
+            put("androidBuild", Build.ID)
             put("abis", Build.SUPPORTED_ABIS.joinToString())
             put("game", "${game.versionName} (${game.versionCode}) / ${game.abi}")
             put("moduleNativeSha256", hash(File(directory, game.module.nativeFile)))
@@ -66,8 +68,10 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
     fun failure(session: File?, error: Throwable) {
         if (session == null) return
         runCatching {
-            File(session, "launch-error.txt").writeText(LaunchSessionRecorder.exceptionFrames(error))
-            event(session, "launch_failed ${error.javaClass.name}")
+            val timeout = error is LaunchConfirmationTimeoutException
+            File(session, "launch-error.txt").writeText(
+                (if (timeout) "Launch confirmation timeout\n" else "") + LaunchSessionRecorder.exceptionFrames(error))
+            event(session, if (timeout) "launch_confirmation_timeout" else "launch_failed ${error.javaClass.name}")
         }
     }
 
@@ -112,7 +116,7 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
         for (session in sessions) {
             val started = session.name.substringBefore('-').toLongOrNull() ?: continue
             val pids = session.listFiles().orEmpty().mapNotNull {
-                Regex("process-([0-9]+)\\.txt").matchEntire(it.name)?.groupValues?.get(1)?.toIntOrNull()
+                Regex("(?:process|support-resources)-([0-9]+)\\.txt").matchEntire(it.name)?.groupValues?.get(1)?.toIntOrNull()
             }.toSet()
             val nextStart = sessions.filter { it.parentFile == session.parentFile && it != session }
                 .mapNotNull { it.name.substringBefore('-').toLongOrNull() }.filter { it > started }.minOrNull() ?: Long.MAX_VALUE
@@ -163,11 +167,14 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
         }.toMap()
         val host = File(session, "host.txt").takeIf(File::isFile)?.readText().orEmpty()
         val attempts = diagnosticProcessAttempts(processes, host)
+        val metadata = JSONObject(File(session, "metadata.txt").readText())
         return if (attempts.isEmpty()) listOf(report(session, null, null)) else
-            attempts.mapIndexed { index, attempt -> report(session, attempt, attempts.getOrNull(index + 1)?.startedAt) }
+            attempts.mapIndexed { index, attempt -> report(session, attempt, attempts.getOrNull(index + 1)?.startedAt,
+                diagnosticAttemptLaunchRequest(attempt, attempts.getOrNull(index - 1)?.startedAt,
+                    metadata.getLong("started"), metadata.optString("runtime") in setOf("direct_patch", "identity_shell"), host)) }
     }
 
-    private fun report(session: File, attempt: DiagnosticProcessAttempt?, nextAttempt: Long?): LaunchDiagnosticReport {
+    private fun report(session: File, attempt: DiagnosticProcessAttempt?, nextAttempt: Long?, launchRequestedAt: Long? = null): LaunchDiagnosticReport {
         val meta = JSONObject(File(session, "metadata.txt").readText())
         val runtime = when (meta.optString("runtime")) {
             "direct_patch" -> "Patch"
@@ -194,7 +201,15 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
                     .map { "${file.name}: $it" }.toList()
             }.getOrDefault(emptyList())
         }.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }
-        val attemptFailures = if (attempt == null) failures else failures.filter { file ->
+        val supportingResources = files.filter { it.name.matches(Regex("support-resources-[0-9]+\\.txt")) }
+            .take(8).flatMap { file ->
+                runCatching { file.readText().lineSequence().filter {
+                    (it.substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)
+                }.map { "${file.name}: $it" }.toList() }.getOrDefault(emptyList())
+            }
+        val attemptFailures = if (attempt == null) failures.filterNot {
+            it.name.startsWith("exit-") && File(session, "support-resources-${it.name.removePrefix("exit-").substringBefore('-')}.txt").exists()
+        } else failures.filter { file ->
             when {
                 file.name == "failure-${attempt.pid}.txt" -> attempt.events.contains("failure ") || nextAttempt == null
                 file.name == "launch-error.txt" -> file.lastModified() >= started && file.lastModified() < (nextAttempt ?: Long.MAX_VALUE)
@@ -214,14 +229,14 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             (it.substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)
         }.joinToString("\n")
         val menuState = diagnosticMenuState((attempt?.events ?: events.joinToString("\n") { it.substringAfter(": ") }) + "\n" + menuEvents)
-        val baseStatus = if (attempt == null) diagnosticFailureStatus(failures.map { it.readText() }, resumed) ?: launchDiagnosticStatus(false, resumed, stopped,
+        val baseStatus = if (attempt == null) diagnosticFailureStatus(attemptFailures.map { it.readText() }, resumed) ?: launchDiagnosticStatus(false, resumed, stopped,
             System.currentTimeMillis() - started, died) else diagnosticAttemptStatus(attempt,
-            attemptFailures.map { it.readText() }, stopped || nextAttempt != null, died, System.currentTimeMillis())
+            attemptFailures.map { it.readText() }, stopped || nextAttempt != null, died, System.currentTimeMillis(), launchRequestedAt)
         val status = diagnosticStatusWithMenu(baseStatus, menuState)
         val suffix = attempt?.let { "@${it.pid}-$started" }.orEmpty()
         if (status == "Possible startup stall") File(session, "possible-stall$suffix").apply { if (!exists()) writeText("suspected") }
-        // A late successful resume supersedes a suspected stall.
-        if (resumed) File(session, "possible-stall$suffix").delete()
+        // Reclassification also clears old background-only false alarms without clearing evidence.
+        if (status != "Possible startup stall") File(session, "possible-stall$suffix").delete()
         val reportText = buildString {
             appendLine("Jester Mods $runtime session diagnostics")
             appendLine("Session: ${session.name}")
@@ -238,9 +253,18 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             }
             appendLine("\n--- ROLLING SESSION RESOURCES (15-second target interval; latest 24 per process) ---")
             resources.forEach(::appendLine)
+            appendLine("\n--- SUPPORTING PROCESS SAMPLES (context only; not separate game attempts) ---")
+            if (supportingResources.isEmpty()) appendLine("Unavailable; missing samples do not mean zero usage.")
+            supportingResources.forEach(::appendLine)
+            appendLine("Supporting capture runs for up to 10 minutes per observation, at most four sessions per process. Shared helpers may serve other games; these samples do not identify the cause.")
+            appendLine("Supporting activityResumed is unavailable because its activity lifecycle is not tracked.")
             appendLine("CPU is cumulative process CPU milliseconds; divide its delta by elapsedMs delta for core usage (may exceed one core).")
             appendLine("mainPendingMs measures an outstanding main-thread probe, not game rendering or a confirmed freeze; -1 means unavailable.")
             appendLine("activityResumed is the last observed activity lifecycle state, not proof of Android foreground importance.")
+            appendLine("Binder counters describe this process only: local objects, remote proxies, death links and cumulative sent/received transactions; -1 means unavailable.")
+            appendLine("These counters are not system_server's per-UID proxy count or an OEM kill threshold. Reason 9 alone does not identify CPU, memory or Binder exhaustion.")
+            appendLine("bbConnectionCalls are process-lifetime calls/failures observed at selected BlackBox Java hook boundaries, not live connection counts. lastFailure uses fixed categories only.")
+            appendLine("Native Binder calls, bypassed hooks and unsampled UID processes are not covered; not_observed means no tracked operation was seen. Counts are not proof of a leak or its cause.")
             appendLine("\nActivity resumed does not prove the game reached its menu.")
             appendLine("Hook addresses require matching module/game symbols; no automatic blame assignment.")
             appendLine("No account text, exception messages, raw logcat or native memory dumps collected.")
@@ -250,7 +274,7 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             appendLine("Status: $status")
             if (attempt != null) appendLine("Process attempt: PID ${attempt.pid}; started: $started")
             appendLine("Menu window verification: ${menuState ?: "unavailable"}")
-            for (key in listOf("package", "launcher", "device", "android", "game", "abis", "pageSize", "moduleNativeSha256")) {
+            for (key in listOf("package", "launcher", "device", "android", "game", "abis", "pageSize", "moduleNativeSha256", "gmscoreEnabled", "gmscoreSelected", "gmscoreState", "gmscoreProfile")) {
                 appendLine("$key: ${meta.opt(key)}")
             }
             events.filter { line ->
@@ -261,6 +285,8 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             attemptFailures.take(2).forEach { appendLine(compactDiagnosticExcerpt(it.readText()).take(3500)) }
             appendLine("--- LAST RESOURCE SAMPLES ---")
             resources.takeLast(3).forEach(::appendLine)
+            appendLine("--- SUPPORTING PROCESSES (shared context, not proof of cause) ---")
+            supportingResources.groupBy { it.substringBefore(": ") }.values.forEach { it.takeLast(1).forEach(::appendLine) }
             appendLine("--- LAST STARTUP EVENTS ---")
             events.filter { line -> attempt == null || (
                 (line.startsWith("process-${attempt.pid}.txt:") || line.startsWith("host.txt:")) &&
@@ -270,7 +296,7 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             appendLine("Share the full report for complete details; a stalled launch is not a confirmed freeze.")
         }.take(12_000)
         return LaunchDiagnosticReport(session.name + suffix, meta.getString("package"), meta.getString("title"), started,
-            status, status in setOf("Crash or startup error recorded", "Possible startup stall", "Guest process exited during startup",
+            status, status in setOf("Crash or startup error recorded", "Launch confirmation timed out", "Possible startup stall", "Guest process exited during startup",
                 "Background ANR recorded", "Game ANR recorded", "Startup ANR recorded", "ANR recorded", "Menu window not attached"),
             File(session, "acknowledged$suffix").exists() || File(session, "acknowledged").lastModified() >= started, reportText, summary)
     }

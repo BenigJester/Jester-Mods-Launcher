@@ -24,4 +24,20 @@ class SessionResumeConfirmationTest {
         assertFalse(sessionResumedSince(absent, 0))
         assertFalse(absent.exists())
     }
+
+    @Test fun `fresh guest resume confirms even when OEM task state is absent`() {
+        val session = temporary.newFolder("resumed")
+        File(session, "process-11476.txt").writeText("100 guest_attached main=true\n200 activity_direct-resumed game.Screen\n")
+        assertTrue(launchResumeConfirmed(session, 150) { error("Fresh callback must not be vetoed by task lookup") })
+        assertTrue(launchResumeConfirmed(session, 150, 11476) { false })
+        assertFalse(launchResumeConfirmed(session, 150, 999) { false })
+        assertFalse(launchResumeConfirmed(session, 201) { false })
+    }
+
+    @Test fun `fresh live task can confirm when report storage is unavailable`() {
+        val missing = File(temporary.root, "missing")
+        assertTrue(launchResumeConfirmed(missing, 150) { true })
+        assertTrue(launchResumeConfirmed(null, 150) { true })
+        assertFalse(launchResumeConfirmed(null, 150) { false })
+    }
 }

@@ -147,7 +147,7 @@ class UpdateClient(private val moduleRoot: File) {
         slug: String,
         abi: String,
         authorization: LauncherModuleAuthorization,
-        bootstrap: Int = 1,
+        bootstrap: Int = com.moodtools.hub.modules.LAUNCHER_MODULE_BOOTSTRAP,
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null,
         onStage: (StandaloneUpdateStage) -> Unit = {},
         onDiagnostic: (String) -> Unit = {},
@@ -196,6 +196,13 @@ class UpdateClient(private val moduleRoot: File) {
             moduleConfig.optString("nonrootMethod").takeIf { it.isNotBlank() },
             packageName
         )
+        val gmsCoreSupport = com.moodtools.hub.modules.moduleGmsCoreSupport(moduleConfig, "gmsCoreSupport")
+        val gmsCorePatch = com.moodtools.hub.modules.GmsCorePatchRules.fromJson(moduleConfig, "gmsCorePatch")
+        require(gmsCorePatch == null || gmsCoreSupport) { "GmsCore patch rules require GmsCore support" }
+        require(!gmsCoreSupport || moduleConfig.optString("nonrootMethod") == "direct_patch" ||
+            moduleConfig.optJSONArray("nonrootMethods")?.let { methods ->
+                (0 until methods.length()).any { methods.getString(it) == "direct_patch" }
+            } == true) { "GmsCore support requires a direct-patch method" }
         val nonRootMethods = com.moodtools.hub.modules.NonRootMethod.choicesFromJson(
             moduleConfig.optJSONArray("nonrootMethods")?.let { values ->
                 List(values.length()) { index -> values.getString(index) }
@@ -284,6 +291,8 @@ class UpdateClient(private val moduleRoot: File) {
                     if (moduleConfig.has("rootMethod")) {
                         it.put("root_method", rootMethod.jsonValue)
                     }
+                    if (moduleConfig.has("gmsCoreSupport")) it.put("gmscore_support", gmsCoreSupport)
+                    if (moduleConfig.has("gmsCorePatch")) it.put("gmscore_patch", moduleConfig.getJSONObject("gmsCorePatch"))
                 }
             nextConfig.writeText(config.toString())
             nextSignedManifest.writeText(envelope.toString())

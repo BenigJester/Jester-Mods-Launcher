@@ -10,6 +10,14 @@ import java.io.File
 class LaunchSessionRecorderTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun `Binder resource samples retain only bounded numeric counters`() {
+        val recorder = top.niunaijun.blackbox.utils.SessionResourceRecorder()
+        val sample = recorder.record(1, 2, 3, 4, 5, 6, 0, 10, 20, 30, 40, -1)
+        assertTrue(sample.contains("binderLocal=10 binderProxy=20 binderDeath=30 binderSentTotal=40 binderReceivedTotal=-1"))
+        val legacy = recorder.record(2, 3, 4, 5, 6, 7, 0)
+        assertTrue(legacy.lines().last { it.isNotBlank() }.contains("binderLocal=-1 binderProxy=-1 binderDeath=-1"))
+    }
+
     @Test fun `resource history keeps latest samples in order with fixed numeric fields`() {
         val recorder = top.niunaijun.blackbox.utils.SessionResourceRecorder()
         var history = ""

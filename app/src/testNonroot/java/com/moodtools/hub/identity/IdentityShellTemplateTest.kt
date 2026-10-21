@@ -1,6 +1,6 @@
 package com.moodtools.hub.identity
 
-import com.moodtools.hub.soulpatch.BinaryXmlStringPool
+import com.moodtools.hub.directpatch.BinaryXmlStringPool
 import java.io.File
 import java.util.zip.ZipFile
 import org.junit.Assert.assertEquals

@@ -50,6 +50,20 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Per-game diagnostics with copy, export, sharing, and clear controls
 - [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
 
+### 4.5.0 source update
+
+- Adds Google account support through the separately installed ReVanced GmsCore
+  companion for supported Non-root direct-patch games. Set up the account in the
+  companion, then update the game's patch from Library. Support is controlled by
+  the game's signed add-on; it is not available for every game or Google feature.
+- Reduces false stalled-launch notices from background process restarts and fixes
+  patch preparation after uninstalling the original game.
+- Adds a bounded WebView profile-ownership safeguard for overlapping BlackBox
+  processes without clearing existing browser data. Confirmation on the affected
+  Samsung device is still pending.
+- Improves Root launch reports and identifies failed download checks more clearly.
+  Better reporting does not mean every reported failure is fixed.
+
 ### 4.4.0 source update
 
 - Adds diagnostics for supported direct-patch games and identity shells alongside BlackBox

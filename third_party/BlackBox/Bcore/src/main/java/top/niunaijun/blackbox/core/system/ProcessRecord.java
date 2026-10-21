@@ -23,6 +23,7 @@ public class ProcessRecord extends Binder {
     public int bpid;
     public int callingBUid;
     public int userId;
+    public java.io.File diagnosticSession;
 
     public ConditionVariable initLock = new ConditionVariable();
 

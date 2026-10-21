@@ -1,12 +1,19 @@
 # BlackBox session diagnostics
 
-## 4.4.0 scope
+## Background process starts versus game launches
 
-The shared diagnostics UI also handles supported direct-patch and identity-shell reports.
-See [the bootstrap documentation](../diagnostic-bootstrap/README.md) for isolation, authorization,
-collection limits, and the required patch/shell migration. Root remains crash-only.
-History, report views, review notices, and installer diagnostics expose a themed, localized
-[Diagnostic Tutorial](https://youtube.com/shorts/Isl_ffWYpa4) button, including empty history.
+Main-process attachment alone is not evidence of an Activity launch. An old
+session can receive background-only process restarts long after a game opened
+and exited normally. The launcher keeps those attempts in diagnostics as
+`Background process observed`, without a stalled-launch pop-up. Actual crash
+and ANR evidence still takes priority, including background failures.
+
+The initial authorized request belongs only to its first process attempt;
+BlackBox launch/resume requests are attributed to the corresponding attempt.
+Activity creation/instantiation provides independent launch evidence and starts
+the timeout clock after any background warmup. Previously imported reports are
+reclassified when read; this fix does not require clearing history, changing a
+game module or assuming that Activity resume proves a game menu was reached.
 
 ## User flow
 
@@ -34,14 +41,33 @@ session; no launcher restart is required. Clearing itself never stops the game.
 
 Resume eligibility uses a live virtual activity/token/binder in an existing host AppTask, not
 process presence or Recents visibility. Task reconciliation includes hidden guest AppTasks.
-A resume retains the previous session only after a new guest resume callback with the same PID.
-An unconfirmed resume gets one fresh-launch fallback in the same press. Fresh launches wait up
-to 12 seconds for a real activity callback before reporting startup failure; a slow guest may
-still open later, and no optimistic host event is treated as proof that the activity resumed.
+A resume retains the previous session after a fresh guest resume callback or fresh live-task
+resume confirmation with the expected PID. Fresh guest callbacks are not vetoed by missing OEM
+task state, and fresh task confirmation is not vetoed by unavailable diagnostic storage.
+An unconfirmed resume never automatically kills/restarts the guest or dispatches a second launch.
+Fresh launches wait up to 12 seconds for confirmation; a slow guest may still open later.
+New confirmation timeouts are labeled separately from crashes, and a later recorded resume
+supersedes the timeout status. Actual crash/ANR evidence retains priority. No optimistic host
+event is treated as proof that the activity resumed or reached gameplay.
 If BlackBox's loading screen is stuck, press Home and reopen the launcher. No in-game button or
 ADB connection is required. The launcher does not terminate the guest to obtain a report.
 
 ## Recording and retention
+
+Resource samples also retain process-local Binder object/proxy/death-link counts and cumulative
+sent/received transaction counts, using public `Debug` counters at the existing 15-second interval.
+Unavailable values are -1; no Binder interfaces, payloads or transaction contents are recorded.
+These are not system_server's per-UID proxy counts and do not establish an OEM's kill threshold.
+Exit descriptions are reduced to fixed hints, including `binder_limit_reported` for recognized
+Binder-limit messages. Exit reason 9 alone must not be classified as a memory or CPU kill.
+
+The Binder lifecycle audit found static receiver/service delegate caches retaining wrappers until
+Binder death even after unregister/unbind. Cleanup now follows a successful system operation,
+handles original and already-wrapped Binder identities, unlinks death notifications, and serializes
+cache access. Audio callbacks are forwarded without replacement Binder allocation. No confirmed
+link between these cache defects and issue #35's Samsung termination has been established.
+Validate repeated register/unregister and bind/unbind on an affected device before claiming a fix
+for that issue; collect a new report with Binder trends and the exit-description hint.
 
 - Recording starts before waiting for the BlackBox service. Each guest process pins its session
   during process initialization; a late old process cannot write into a new session.

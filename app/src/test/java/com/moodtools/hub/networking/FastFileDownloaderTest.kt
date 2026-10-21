@@ -16,6 +16,50 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class FastFileDownloaderTest {
     @Test
+    fun validationFailuresExposeFixedChecksWithoutLeakingServerTextOrUrls() {
+        val payload = deterministicBytes(19)
+        val destination = temporaryFile()
+        val diagnostics = mutableListOf<String>()
+        var requests = 0
+        try {
+            val error = assertThrows(IOException::class.java) {
+                FastFileDownloader.download(destination, 20, openConnection = {
+                    requests++
+                    FakeDownloadConnection(payload, null)
+                }, onDiagnostic = diagnostics::add)
+            }
+            assertEquals(1, requests) // Never retry or weaken a mismatched package-size guard.
+            assertTrue(error.message.orEmpty().contains("check=content_length; expected=20; actual=19"))
+            assertTrue(diagnostics.single().contains("check=content_length"))
+            assertEquals(0, destination.length())
+            for (check in DownloadCheck.entries) {
+                diagnostics.clear()
+                assertThrows(IOException::class.java) {
+                    FastFileDownloader.download(destination, 20, openConnection = {
+                        throw DownloadValidationException(check, 20, 19)
+                    }, onDiagnostic = diagnostics::add)
+                }
+                assertTrue(diagnostics.single().contains("check=${check.name.lowercase()}"))
+                assertTrue(diagnostics.none { "https://" in it || "token" in it })
+            }
+            diagnostics.clear()
+            val secret = "https://example.com/private?token=never-export-this"
+            assertThrows(IOException::class.java) {
+                FastFileDownloader.download(destination, 20, openConnection = {
+                    throw IllegalArgumentException(secret)
+                }, onDiagnostic = diagnostics::add)
+            }
+            assertTrue(diagnostics.none { secret in it || "never-export-this" in it })
+            diagnostics.clear()
+            assertThrows(IOException::class.java) {
+                FastFileDownloader.download(destination, 20, openConnection = { HttpStatusConnection(403) },
+                    onDiagnostic = diagnostics::add)
+            }
+            assertTrue(diagnostics.single().contains("http_status=403"))
+        } finally { destination.delete() }
+    }
+
+    @Test
     fun downloadsLargeFilesInExactlyOneStream() {
         val payload = deterministicBytes(17 * 1024 * 1024 + 37)
         val destination = temporaryFile()

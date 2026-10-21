@@ -14,7 +14,7 @@ import com.moodtools.hub.modules.identityShellLaunchAction
 import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
-import com.moodtools.hub.soulpatch.DirectPackagePatchManager
+import com.moodtools.hub.directpatch.DirectPackagePatchManager
 import com.moodtools.hub.identity.IdentityShellManager
 import java.io.File
 

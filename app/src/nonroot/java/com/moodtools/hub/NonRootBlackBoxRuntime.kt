@@ -156,14 +156,14 @@ object NonRootBlackBoxRuntime {
                 val requestedAt = System.currentTimeMillis()
                 Log.i(TAG, "Resuming existing virtual session for ${game.packageName} user=$userId")
                 val dispatched = launchApk(context, core, game.packageName, userId)
-                val confirmed = dispatched && awaitActivityResume(previousDiagnosticSession, requestedAt, 3000) {
+                val confirmed = dispatched && awaitActivityResume(previousDiagnosticSession, requestedAt, 3000, resumePid) {
                     BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId, requestedAt) == resumePid
                 }
                 if (!confirmed) {
                     // This request was already dispatched. Missing/delayed lifecycle confirmation
                     // is not permission to kill a live guest and send another start automatically.
                     NonRootLaunchDiagnostics.event(diagnosticSession, "resume_unconfirmed_no_restart")
-                    error("BlackBox did not confirm game resume within the launch deadline. The game was not restarted automatically.")
+                    throw LaunchConfirmationTimeoutException("BlackBox did not confirm game resume within the launch deadline. The game was not restarted automatically.")
                 }
                 top.niunaijun.blackbox.utils.LaunchSessionRecorder.resume(previousDiagnosticSession, diagnosticSession)
                 diagnosticSession = previousDiagnosticSession
@@ -219,9 +219,9 @@ object NonRootBlackBoxRuntime {
             check(launchApk(context, core, game.packageName, userId)) {
                 "BlackBox launchApk returned false for ${game.packageName} on user $userId"
             }
-            check(awaitActivityResume(diagnosticSession, requestedAt, SERVICE_READY_TIMEOUT_MS) {
+            if (!awaitActivityResume(diagnosticSession, requestedAt, SERVICE_READY_TIMEOUT_MS) {
                 BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId, requestedAt) > 0
-            }) { "BlackBox game activity did not confirm startup within the launch deadline" }
+            }) throw LaunchConfirmationTimeoutException("BlackBox game activity did not confirm startup within the launch deadline")
             launchedPackages += game.packageName
             rememberActivePackage(context, game.packageName)
             true
@@ -241,14 +241,15 @@ object NonRootBlackBoxRuntime {
         return true
     }
 
-    private fun awaitActivityResume(session: File?, requestedAt: Long, timeout: Long, live: () -> Boolean): Boolean {
+    private fun awaitActivityResume(session: File?, requestedAt: Long, timeout: Long, expectedPid: Int? = null, live: () -> Boolean): Boolean {
         val deadline = android.os.SystemClock.elapsedRealtime() + timeout
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
-            // A storage failure must not prevent an otherwise confirmed game launch.
-            if ((session == null || sessionResumedSince(session, requestedAt)) && live()) return true
+            // OEM task synchronization may omit a live task even after its guest callback.
+            // Conversely, report storage failure must not veto fresh live task confirmation.
+            if (launchResumeConfirmed(session, requestedAt, expectedPid, live)) return true
             Thread.sleep(100)
         }
-        return false
+        return launchResumeConfirmed(session, requestedAt, expectedPid, live)
     }
 
     fun externalControllerFeatureStateFile(packageName: String): File {

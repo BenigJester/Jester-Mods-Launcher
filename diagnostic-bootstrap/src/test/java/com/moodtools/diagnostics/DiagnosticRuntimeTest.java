@@ -5,6 +5,14 @@ import static org.junit.Assert.*;
 import java.io.ByteArrayInputStream;
 
 public class DiagnosticRuntimeTest {
+    @org.junit.Test public void exitHintsNeverExportSystemDescriptions() {
+        org.junit.Assert.assertEquals("binder_limit_reported", DiagnosticRuntime.exitHint("Too many Binders sent to SYSTEM secret@example.com"));
+        org.junit.Assert.assertEquals("binder_limit_reported", DiagnosticRuntime.exitHint("EXCESSIVE BINDER OBJECTS /private/path"));
+        org.junit.Assert.assertEquals("binder_limit_reported", DiagnosticRuntime.exitHint("Binder proxy limit"));
+        org.junit.Assert.assertEquals("excessive_cpu_reported", DiagnosticRuntime.exitHint("Excessive background CPU token=secret"));
+        org.junit.Assert.assertEquals("unclassified_or_unavailable", DiagnosticRuntime.exitHint(null));
+        org.junit.Assert.assertEquals("unclassified_or_unavailable", DiagnosticRuntime.exitHint("token=secret"));
+    }
     @Test public void framesNeverIncludeExceptionMessagesOrFilePaths() {
         Throwable error = new IllegalStateException("private-account-token", new ClassNotFoundException("secret-url"));
         error.setStackTrace(new StackTraceElement[] {new StackTraceElement("game.Loader", "start", "/private/path", 42)});

@@ -25,6 +25,7 @@ import top.niunaijun.blackbox.fake.service.ISensitiveContentProtectionManagerPro
 import top.niunaijun.blackbox.fake.service.ISettingsSystemProxy;
 import top.niunaijun.blackbox.fake.service.IConnectivityManagerProxy;
 import top.niunaijun.blackbox.fake.service.IClipboardManagerProxy;
+import top.niunaijun.blackbox.fake.service.ISemClipboardManagerProxy;
 import top.niunaijun.blackbox.fake.service.ISystemSensorManagerProxy;
 import top.niunaijun.blackbox.fake.service.IContentProviderProxy;
 import top.niunaijun.blackbox.fake.service.IXiaomiAttributionSourceProxy;
@@ -160,6 +161,7 @@ public class HookManager {
             addInjector(new IAccountManagerProxy());
             addInjector(new IConnectivityManagerProxy());
             addInjector(new IClipboardManagerProxy());
+            addInjector(new ISemClipboardManagerProxy());
             addInjector(new IDnsResolverProxy());
                     addInjector(new IAttributionSourceProxy());
         addInjector(new IContentProviderProxy());

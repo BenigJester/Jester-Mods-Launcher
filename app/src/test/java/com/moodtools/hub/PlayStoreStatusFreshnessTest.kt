@@ -51,7 +51,7 @@ class PlayStoreStatusFreshnessTest {
     }
 
     @Test
-    fun incompleteNewReleaseCannotReplaceAConfirmedCachedVersionAndBuild() {
+    fun newerListingDoesNotBorrowAnOlderReleasesConfirmedBuild() {
         val cached = status(version = "2.0", checkedAt = 100).copy(latestVersionCode = 20_001L)
         val incomplete = status(version = "2.1", checkedAt = 200).copy(
             listingUpdatedAtEpochSeconds = 1_800_000_000,
@@ -59,7 +59,7 @@ class PlayStoreStatusFreshnessTest {
         )
 
         assertEquals(
-            incomplete.copy(latestVersion = "2.0", latestVersionCode = 20_001L),
+            incomplete,
             newestPlayStoreStatus(cached, incomplete)
         )
     }
@@ -167,7 +167,7 @@ class PlayStoreStatusFreshnessTest {
     }
 
     @Test
-    fun newerPlayStoreListingIsOutdatedWhenVersionNameAndCachedBuildStayTheSame() {
+    fun exactSupportedReleaseOverridesAnObsoleteUpdateHint() {
         val module = ModuleConfig(
             packageName = "com.example.game",
             title = "Game",
@@ -181,12 +181,43 @@ class PlayStoreStatusFreshnessTest {
         )
 
         assertEquals(
-            false,
+            true,
             status("2.0", 200).copy(
                 latestVersionCode = 20_001L,
                 updateAvailable = true
             ).isSupportedBy(module)
         )
+        assertEquals(
+            false,
+            status("2.0", 200).copy(
+                latestVersionCode = 20_002L,
+                updateAvailable = true
+            ).isSupportedBy(module)
+        )
+    }
+
+    @Test
+    fun compatibilityChangesRefreshEvenAnUnexpiredStoreCheck() {
+        val module = ModuleConfig(
+            packageName = "com.asanteegames.magicrampage",
+            title = "Magic Rampage",
+            supportedVersions = setOf("7.8.9"),
+            supportedAbis = setOf("arm64-v8a"),
+            entryPoint = null,
+            dexFile = "classes.dex",
+            nativeFile = "libmenu_native.so",
+            iconFile = null,
+            supportedVersionCodes = setOf(1216L)
+        )
+        val cached = status("7.8.9", 200).copy(latestVersionCode = 1216L, updateAvailable = true)
+        val fingerprint = playStoreCompatibilityFingerprint(module)
+        assertEquals(true, cached.isSupportedBy(module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(cached, "7.8.7|1214", module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(cached, "7.8.9|1215", module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(cached, null, module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(null, fingerprint, module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(cached.copy(stale = true), fingerprint, module))
+        assertEquals(false, shouldRefreshPlayStoreStatus(cached, fingerprint, module))
     }
 
     @Test

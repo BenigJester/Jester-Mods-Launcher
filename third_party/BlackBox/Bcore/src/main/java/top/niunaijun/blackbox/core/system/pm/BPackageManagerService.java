@@ -688,6 +688,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
     private InstallResult installPackageAsUserLocked(String file, InstallOption option, int userId) {
         long l = System.currentTimeMillis();
         InstallResult result = new InstallResult();
+        result.success = false;
+        String installStage = "source";
         File apkFile = null;
         File stagedFile = null;
         File extractedDir = null;
@@ -722,6 +724,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             }
 
             if (isApksBundle(stagedFile)) {
+                installStage = "bundle";
                 extractedDir = new File(BEnvironment.getCacheDir(), "apks_" + UUID.randomUUID());
                 BzFileUtils.mkdirs(extractedDir);
 
@@ -754,6 +757,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             }
 
 
+            installStage = "archive";
             PackageInfo packageArchiveInfo = BlackBoxCore.getPackageManager().getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
             if (packageArchiveInfo == null) {
                 return result.installError("getPackageArchiveInfo error.Please check whether APK is normal.");
@@ -780,6 +784,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             // and other App Bundle installs. Storage/import installs still require the normal ABI
             // validation because BlackBox has no host installation proving compatibility.
             if (!option.isFlag(InstallOption.FLAG_SYSTEM)) {
+                installStage = "abi";
                 boolean support = AbiUtils.isSupport(apkFile);
                 if (!support) {
                     String msg = packageArchiveInfo.applicationInfo.loadLabel(BlackBoxCore.getPackageManager()) + "[" + packageArchiveInfo.packageName + "]";
@@ -789,6 +794,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             } else {
                 Slog.i(TAG, "FLAG_SYSTEM clone: trusting host-installed ABI/splits for " + packageArchiveInfo.packageName);
             }
+            installStage = "parse";
             PackageParser.Package aPackage = option.isFlag(InstallOption.FLAG_SYSTEM)
                     ? parserHostInstalledPackage(packageName, apkFile)
                     : parserApk(apkFile.getAbsolutePath());
@@ -822,10 +828,12 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             
             BProcessManagerService.get().killPackageAsUser(aPackage.packageName, userId);
 
+            installStage = "copy";
             int i = BPackageInstallerService.get().installPackageAsUser(bPackageSettings, userId);
             if (i < 0) {
                 return result.installError("install apk error.");
             }
+            installStage = "commit";
             synchronized (mPackages) {
                 bPackageSettings.setInstalled(true, userId);
                 bPackageSettings.save();
@@ -834,9 +842,12 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             mComponentResolver.addAllComponents(bPackageSettings.pkg);
             mSettings.scanPackage(aPackage.packageName);
             onPackageInstalled(bPackageSettings.pkg.packageName, userId);
+            result.success = true;
             return result;
         } catch (Throwable t) {
             t.printStackTrace();
+            result.installError("install_exception:" + installStage + ":"
+                    + top.niunaijun.blackbox.utils.InstallFailureDiagnostics.exceptionKind(t));
         } finally {
             if (stagedFile != null && option.isFlag(InstallOption.FLAG_URI_FILE)) {
                 BzFileUtils.deleteDir(stagedFile);

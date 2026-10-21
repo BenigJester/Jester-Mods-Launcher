@@ -22,7 +22,7 @@ class ModuleIntegrityVerifier(
         moduleDirectory: File,
         module: ModuleConfig,
         abi: String,
-        bootstrap: Int = 1
+        bootstrap: Int = LAUNCHER_MODULE_BOOTSTRAP
     ): VerifiedModuleInstall {
         require(module.packageName.matches(PACKAGE_PATTERN)) { "Invalid module package name" }
         require(moduleDirectory.name == module.packageName) { "Module directory does not match its package" }
@@ -102,6 +102,12 @@ class ModuleIntegrityVerifier(
         require(module.supportedVersions == supportedVersions &&
             module.supportedVersionCodes == supportedVersionCodes && module.supportedAbis == supportedAbis)
         require(module.nonRootMethod == nonRootMethod)
+        require(module.gmsCorePatch == GmsCorePatchRules.fromJson(signedConfig, "gmsCorePatch")) {
+            "GmsCore patch rules do not match the signed manifest"
+        }
+        require(module.gmsCoreSupport == moduleGmsCoreSupport(signedConfig, "gmsCoreSupport")) {
+            "GmsCore support does not match the signed manifest"
+        }
         require(module.nonRootMethods == nonRootMethods)
         require(module.rootMethod == rootMethod)
         require(module.dexFile == DEX_FILE && module.nativeFile == NATIVE_FILE && module.iconFile == null)
@@ -131,6 +137,10 @@ class ModuleIntegrityVerifier(
                 if (signedConfig.has("rootMethod")) {
                     it.put("root_method", rootMethod.jsonValue)
                 }
+                if (signedConfig.has("gmsCoreSupport")) {
+                    it.put("gmscore_support", moduleGmsCoreSupport(signedConfig, "gmsCoreSupport"))
+                }
+                if (signedConfig.has("gmsCorePatch")) it.put("gmscore_patch", signedConfig.getJSONObject("gmsCorePatch"))
             }
             .toString()
         val configFile = regularFile(moduleDirectory, CONFIG_FILE)
@@ -197,6 +207,12 @@ class ModuleIntegrityVerifier(
             "Local test module configuration size is invalid"
         }
         val config = JSONObject(configFile.readText(Charsets.UTF_8))
+        require(module.gmsCorePatch == GmsCorePatchRules.fromJson(config, "gmscore_patch")) {
+            "GmsCore patch rules do not match the local module configuration"
+        }
+        require(module.gmsCoreSupport == moduleGmsCoreSupport(config, "gmscore_support")) {
+            "GmsCore support does not match the local module configuration"
+        }
         val configuredMethod = NonRootMethod.fromJson(
             config.optString("nonroot_method").takeIf { it.isNotBlank() },
             module.packageName

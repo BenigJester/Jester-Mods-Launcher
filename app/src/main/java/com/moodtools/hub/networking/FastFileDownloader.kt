@@ -93,9 +93,8 @@ internal object FastFileDownloader {
                             ensureNotCancelled(isCancelled)
                             val count = input.read(buffer)
                             if (count < 0) break
-                            require(cursor + count <= expectedBytes) {
-                                "Download is larger than expected"
-                            }
+                            if (cursor + count > expectedBytes)
+                                throw DownloadValidationException(DownloadCheck.BODY_SIZE, expectedBytes, cursor + count)
                             output.write(buffer, 0, count)
                             cursor += count
                             reporter.add(count.toLong())
@@ -110,6 +109,7 @@ internal object FastFileDownloader {
                     throw DownloadCancelledException()
                 }
                 if (!isRetryable(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
+                    onDiagnostic("Download stopped: ${failureKind(error)}; attempt=$attempt; byte=$cursor; total=$expectedBytes")
                     throw DownloadFailureException(
                         "Single-stream download failed after $attempt attempt(s) at byte " +
                             "$cursor of $expectedBytes (${failureKind(error)})",
@@ -153,19 +153,17 @@ internal object FastFileDownloader {
         validateContentLength(connection, expectedPartBytes)
         val contentRange = connection.getHeaderField("Content-Range")?.trim().orEmpty()
         val match = CONTENT_RANGE.matchEntire(contentRange)
-            ?: error("Download server returned an invalid byte range")
-        require(
-            match.groupValues[1].toLong() == range.first &&
-                match.groupValues[2].toLong() == range.last &&
-                match.groupValues[3].toLong() == expectedBytes
-        ) { "Download server returned the wrong byte range" }
+            ?: throw DownloadValidationException(DownloadCheck.RANGE_METADATA)
+        if (match.groupValues[1].toLongOrNull() != range.first ||
+            match.groupValues[2].toLongOrNull() != range.last ||
+            match.groupValues[3].toLongOrNull() != expectedBytes)
+            throw DownloadValidationException(DownloadCheck.RANGE_MISMATCH)
     }
 
     private fun validateContentLength(connection: HttpURLConnection, expectedBytes: Long) {
         val contentLength = connection.contentLengthLong
-        require(contentLength < 0L || contentLength == expectedBytes) {
-            "Download response size does not match the signed size"
-        }
+        if (contentLength >= 0L && contentLength != expectedBytes)
+            throw DownloadValidationException(DownloadCheck.CONTENT_LENGTH, expectedBytes, contentLength)
     }
 
     private fun isRetryable(error: Exception): Boolean = when (error) {
@@ -179,6 +177,8 @@ internal object FastFileDownloader {
             status == 425 || status == 429 || status in 500..599
 
     private fun failureKind(error: Throwable): String = when (error) {
+        is DownloadValidationException -> error.message!! // Constructed exclusively from fixed codes/numbers.
+        is HttpDownloadException -> "http_status=${error.status}"
         is RetryableDownloadException -> error.message ?: "temporary response"
         is IOException -> error.javaClass.simpleName.ifBlank { "network I/O" }
         else -> error.javaClass.simpleName.ifBlank { "download validation" }

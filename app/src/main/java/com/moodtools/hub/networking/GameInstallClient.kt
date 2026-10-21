@@ -523,7 +523,8 @@ class GameInstallClient(private val context: Context) {
             range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
         }
         val redirect = URL(source.remoteUrl)
-        require(redirect.protocol == "https" && redirect.host == APKPURE_DOWNLOAD_HOST)
+        if (redirect.protocol != "https" || redirect.host != APKPURE_DOWNLOAD_HOST)
+            throw DownloadValidationException(DownloadCheck.SOURCE_URL)
         val gateway = (redirect.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
@@ -534,18 +535,24 @@ class GameInstallClient(private val context: Context) {
             range?.let { setRequestProperty("Range", "bytes=${it.first}-${it.last}") }
         }
         val location = try {
-            require(gateway.responseCode in 300..399) { "APKPure download is unavailable" }
-            gateway.getHeaderField("Location") ?: error("APKPure did not provide a download")
+            val status = gateway.responseCode
+            if (status !in 300..399)
+                throw DownloadValidationException(DownloadCheck.REDIRECT_STATUS, actual = status.toLong())
+            gateway.getHeaderField("Location") ?: throw DownloadValidationException(DownloadCheck.REDIRECT_MISSING)
         } finally {
             gateway.disconnect()
         }
-        val target = URL(location)
-        val targetUri = Uri.parse(location)
-        require(target.protocol == "https" && target.host == APKPURE_FILE_HOST &&
-            targetUri.getQueryParameter("package_name") == source.apkPurePackageName &&
-            targetUri.getQueryParameter("full_size")?.toLongOrNull() == source.size) {
-            "APKPure returned an unexpected download"
+        val target = try { URL(location) } catch (_: java.net.MalformedURLException) {
+            throw DownloadValidationException(DownloadCheck.REDIRECT_URL)
         }
+        val targetUri = Uri.parse(location)
+        if (target.protocol != "https" || target.host != APKPURE_FILE_HOST)
+            throw DownloadValidationException(DownloadCheck.REDIRECT_URL)
+        if (targetUri.getQueryParameter("package_name") != source.apkPurePackageName)
+            throw DownloadValidationException(DownloadCheck.REDIRECT_PACKAGE)
+        val fullSize = targetUri.getQueryParameter("full_size")?.toLongOrNull()
+        if (fullSize != source.size)
+            throw DownloadValidationException(DownloadCheck.REDIRECT_SIZE, source.size, fullSize)
         return (target.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000

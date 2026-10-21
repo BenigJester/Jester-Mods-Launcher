@@ -36,6 +36,7 @@ public final class LaunchSessionRecorder {
             pointer.finishWrite(stream);
         } catch (Throwable error) { pointer.failWrite(stream); throw error; }
         hostEvent(session, "launch_requested");
+        SupportProcessRecorder.observeSession(session, SupportProcessRecorder.Role.launcher);
         return session;
     }
 
@@ -51,6 +52,7 @@ public final class LaunchSessionRecorder {
         } catch (Throwable error) { pointer.failWrite(stream); throw error; }
         Files.write(new File(attempt, "superseded").toPath(), new byte[0]);
         hostEvent(previous, "resuming_existing_session");
+        SupportProcessRecorder.observeSession(previous, SupportProcessRecorder.Role.launcher);
     }
 
     public static File current(String pkg) {

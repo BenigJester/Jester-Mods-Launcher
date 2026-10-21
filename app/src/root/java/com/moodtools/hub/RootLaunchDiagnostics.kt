@@ -12,7 +12,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/** Root has no virtual guest lifecycle: only confirmed Android crash records become reports. */
+/** Root has no virtual guest lifecycle: crash records and explicit injection failures only. */
 internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
     override val crashOnly = true
     private var directory: File? = null
@@ -23,13 +23,13 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
         LaunchDiagnostics.backend = this
     }
 
-    @Synchronized fun begin(context: Context, game: InstalledGame, payloadSha256: String?) {
+    @Synchronized fun begin(context: Context, game: InstalledGame, payloadSha256: String?): File? {
         // Preserve a previous crash before advancing the session boundary. Never clear system logs.
-        runCatching {
+        return runCatching {
             install(context)
             lastRead = -15_000L
             reports(context)
-            val root = directory ?: return
+            val root = directory ?: return null
             val now = System.currentTimeMillis()
             val session = File(root, "$now-${UUID.randomUUID()}").apply { mkdirs() }
             File(session, "metadata.json").writeText(JSONObject().apply {
@@ -41,6 +41,16 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
                 put("payloadSha256", payloadSha256 ?: "unavailable")
             }.toString())
             // Keep prior sessions until the user explicitly clears this game's diagnostics.
+            session
+        }.getOrNull()
+    }
+
+    @Synchronized fun injectionFailed(session: File?, evidence: String) {
+        runCatching {
+            val parent = directory ?: return
+            if (session == null || !session.isDirectory || java.nio.file.Files.isSymbolicLink(session.toPath()) ||
+                session.canonicalFile.parentFile != parent.canonicalFile) return
+            File(session, "injection-failure.txt").writeText(evidence.take(4096))
         }
     }
 
@@ -68,17 +78,20 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
             }
         }
         return sessions.mapNotNull { (file, meta) ->
-            val crash = File(file, "crash.txt").takeIf(File::isFile)?.readText() ?: return@mapNotNull null
+            val crash = File(file, "crash.txt").takeIf(File::isFile)?.readText().orEmpty()
+            val injection = File(file, "injection-failure.txt").takeIf(File::isFile)?.readText().orEmpty()
+            if (crash.isBlank() && injection.isBlank()) return@mapNotNull null
             val text = buildString {
-                appendLine("Jester Mods ROOT crash diagnostics / ${file.name}")
+                appendLine("Jester Mods ROOT diagnostics / ${file.name}")
                 meta.keys().asSequence().sorted().forEach { appendLine("$it: ${meta.get(it).toString().replace('\n', ' ')}") }
-                appendLine("\n$crash")
+                if (injection.isNotBlank()) appendLine("\n$injection")
+                if (crash.isNotBlank()) appendLine("\n$crash")
                 appendLine("\nOnly game-specific crash structure is retained. No exception messages, raw logs or memory dumps.")
                 appendLine("Missing/rotated crash records cannot be recovered. No stall detection in Root mode.")
                 appendLine("Native PCs require matching game/module symbols; this report does not identify a bad hook automatically.")
             }
             LaunchDiagnosticReport(file.name, meta.getString("package"), meta.getString("title"), meta.getLong("started"),
-                "Game crash recorded", true, File(file, "acknowledged").exists(), text)
+                if (injection.isNotBlank()) "Root add-on setup failed" else "Game crash recorded", true, File(file, "acknowledged").exists(), text)
         }
     }
 

@@ -25,7 +25,7 @@ class BlackBoxLaunchReplayTest {
         assertTrue(resume.contains("if (!confirmed) {"))
         val unconfirmed = resume.substringAfter("if (!confirmed) {").substringBefore("\n                }")
         assertTrue(unconfirmed.contains("resume_unconfirmed_no_restart"))
-        assertTrue(unconfirmed.contains("error("))
+        assertTrue(unconfirmed.contains("throw LaunchConfirmationTimeoutException("))
         assertFalse(resume.contains("stopPackage("))
         assertFalse(resume.contains("stopSession("))
         assertFalse(resume.contains("clearModulePayload("))
