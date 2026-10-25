@@ -16,6 +16,10 @@ class SupportingProcessDiagnosticsTest {
         assertTrue(report.contains("SUPPORTING PROCESS SAMPLES (context only; not separate game attempts)"))
         assertTrue(report.contains("(?:process|support-resources)-([0-9]+)"))
         assertTrue(report.contains("androidSecurityPatch"))
+        assertTrue(report.contains("HELPER MAIN THREAD (shared context, not proof of cause)"))
+        val summary = report.substringAfter("val summary = buildString")
+        assertTrue(summary.contains("HELPER MAIN THREAD (shared context, not cause)"))
+        assertTrue(report.contains("bbWindowConnectionCalls counts calls/failures"))
     }
 
     @Test fun `helper observation only uses existing one way client and remains bounded`() {

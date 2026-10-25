@@ -14,6 +14,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.core.env.BEnvironment
+import top.niunaijun.blackbox.utils.InstallFailureDiagnostics
 
 /** Owns BlackBox directly inside the single non-root launcher package. */
 object NonRootBlackBoxRuntime {
@@ -184,11 +185,21 @@ object NonRootBlackBoxRuntime {
                 "Host clone ${game.packageName}: user=$userId base=${hostInfo.sourceDir} " +
                     "splits=${hostInfo.splitSourceDirs?.size ?: 0}"
             )
-            val install = if (externalController) {
-                core.installPackageAsUserWithPrivateNativeLibraries(game.packageName, userId)
-            } else {
-                core.installPackageAsUser(game.packageName, userId)
+            NonRootLaunchDiagnostics.event(diagnosticSession,
+                "guest_install_started mode=${if (externalController) "private_native" else "host_clone"} splits=${hostInfo.splitSourceDirs.orEmpty().size.coerceAtMost(9999)}")
+            val install = try {
+                if (externalController) {
+                    core.installPackageAsUserWithPrivateNativeLibraries(game.packageName, userId)
+                } else {
+                    core.installPackageAsUser(game.packageName, userId)
+                }
+            } catch (error: Throwable) {
+                NonRootLaunchDiagnostics.event(diagnosticSession,
+                    "guest_install_exception category=${InstallFailureDiagnostics.exceptionKind(error)}")
+                throw error
             }
+            NonRootLaunchDiagnostics.event(diagnosticSession,
+                "guest_install_result success=${install.success} category=${if (install.success) "none" else InstallFailureDiagnostics.resultCategory(install.msg)}")
             if (!install.success) {
                 error(
                     "Game install failed for ${game.packageName}: " +

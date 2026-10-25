@@ -66,6 +66,7 @@ public class PackageManagerCompat {
         pi.sharedUserId = p.mSharedUserId;
         pi.sharedUserLabel = p.mSharedUserLabel;
         pi.applicationInfo = generateApplicationInfo(p, flags, state, userId);
+        copySplitNames(pi);
 
         pi.firstInstallTime = firstInstallTime;
         pi.lastUpdateTime = lastUpdateTime;
@@ -364,6 +365,17 @@ public class PackageManagerCompat {
         }
         fixJar(ai);
         return ai;
+    }
+
+    static void copySplitNames(PackageInfo info) {
+        ApplicationInfo ai = info.applicationInfo;
+        if (ai == null || ai.splitNames == null || ai.splitSourceDirs == null
+                || ai.splitNames.length != ai.splitSourceDirs.length) {
+            return;
+        }
+        // Play Asset Delivery indexes splitSourceDirs through PackageInfo.splitNames.
+        // Keep the platform's exact names/order; APK filenames are not split identities.
+        info.splitNames = ai.splitNames.clone();
     }
 
     private static void hydrateSplitApkPathsFromHost(ApplicationInfo ai) {

@@ -4,6 +4,39 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiagnosticProcessAttemptTest {
+    @Test fun `selected timeline excludes old low memory history later attempts and other processes`() {
+        val attempt = DiagnosticProcessAttempt(19510, 1000, "1000 guest_attached main=true")
+        val events = listOf(
+            "process-15559.txt: 900 activity_resumed game.Screen",
+            "process-19510.txt: 999 activity_resumed old.Screen",
+            "process-19510.txt: 1000 guest_attached main=true",
+            "host.txt: 1100 main_process_died pid=19510",
+            "process-20000.txt: 1100 guest_attached main=false",
+            "process-19510.txt: 2000 guest_attached main=true",
+            "host.txt: unavailable launch_requested"
+        )
+        val (selected, other) = events.partition { diagnosticEventBelongsToAttempt(it, attempt, 2000) }
+        assertEquals(events.slice(2..3), selected)
+        assertEquals(5, other.size)
+        assertTrue(diagnosticEventBelongsToAttempt(events[5], attempt, null))
+        assertTrue(diagnosticEventBelongsToAttempt(events[0], null, null))
+        // The earlier low-memory exit must not turn the current other-system exit into a crash.
+        val current = diagnosticExitEvidence("Exit reason: 13; status: 0; PID: 19510\nSystem description hint: unclassified_or_unavailable\n")
+        assertTrue(current.contains("Exit category: other system termination"))
+        assertFalse(current.contains("low-memory"))
+        assertEquals("Process exit recorded", diagnosticFailureStatus(listOf(current), false))
+    }
+
+    @Test fun `legacy exit labels are fixed idempotent and preserve the original evidence`() {
+        val original = "Exit reason: 3; status: 0; PID: 1\nSystem last-sampled memory: pssKb=0\n"
+        val labeled = diagnosticExitEvidence(original)
+        assertTrue(labeled.startsWith(original.substringBefore('\n') + "\nExit category: system low-memory kill\n"))
+        assertTrue(labeled.endsWith("System last-sampled memory: pssKb=0\n"))
+        assertEquals(labeled, diagnosticExitEvidence(labeled))
+        assertEquals("cause java.lang.Error", diagnosticExitEvidence("cause java.lang.Error"))
+        assertTrue(diagnosticExitEvidence("Exit reason: 99; status: 0").contains("Exit category: unknown"))
+    }
+
     @Test fun `launcher confirmation timeout is not a game crash and late resume supersedes it`() {
         val timeout = "Launch confirmation timeout\nException causes:\ncause com.moodtools.hub.LaunchConfirmationTimeoutException"
         val startup = DiagnosticProcessAttempt(11476, 100, "100 guest_attached main=true")

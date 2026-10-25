@@ -3,6 +3,16 @@ package com.moodtools.hub.directpatch
 import java.io.File
 import java.security.MessageDigest
 
+internal const val ORIGINAL_GAME_INFORMATION_MISSING =
+    "Google login needs original game information that this copy is missing. Do not uninstall or clear game data. If you do not need Google login, turn off Use GmsCore under Google account support and retry."
+
+/** The current patched APK's certificate cannot substitute for the original game's certificate. */
+internal fun requireOriginalGameSigner(gmsProfile: String, originalSigner: String) {
+    require(gmsProfile.isEmpty() || originalSigner.matches(Regex("[0-9a-f]{40}"))) {
+        ORIGINAL_GAME_INFORMATION_MISSING
+    }
+}
+
 /** Preserve the existing numeric/hex cache format, including when account support is disabled. */
 internal fun directPatchDirectoryName(
     versionCode: Long,

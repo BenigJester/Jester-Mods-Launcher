@@ -24,10 +24,16 @@ data class ModuleConfig(
     val catalogSlug: String? = null,
     /** Signed module capability; user consent is stored separately on the device. */
     val gmsCoreSupport: Boolean = false,
-    val gmsCorePatch: GmsCorePatchRules? = null
+    val gmsCorePatch: GmsCorePatchRules? = null,
+    /** Actual Android replacement, not a saved choice or signed setup capability. */
+    val installedNonRootMethod: NonRootMethod? = null
 ) {
     val effectiveNonRootMethod: NonRootMethod
-        get() = selectedNonRootMethod?.takeIf(nonRootMethods::contains) ?: nonRootMethod
+        get() = if (installedNonRootMethod == NonRootMethod.IDENTITY_SHELL &&
+            nonRootMethod == NonRootMethod.DIRECT_PATCH && rootMethod == RootMethod.INJECTION) {
+            // Removing a setup choice must not reinterpret an existing shell as the original game.
+            NonRootMethod.IDENTITY_SHELL
+        } else selectedNonRootMethod?.takeIf(nonRootMethods::contains) ?: nonRootMethod
 
     val offersNonRootMethodChoice: Boolean
         get() = nonRootMethods.size > 1
@@ -220,7 +226,9 @@ internal fun launcherMethodBadgePresentations(
     rootMode: Boolean,
     installedNonRootMethod: NonRootMethod? = null
 ): List<LauncherMethodPresentation> {
-    val lockedMethod = installedNonRootMethod?.takeIf(module.nonRootMethods::contains)
+    val lockedMethod = installedNonRootMethod?.takeIf {
+        it in module.nonRootMethods || it == module.effectiveNonRootMethod
+    }
     val presentation = launcherMethodPresentation(
         lockedMethod ?: module.effectiveNonRootMethod,
         rootMode,

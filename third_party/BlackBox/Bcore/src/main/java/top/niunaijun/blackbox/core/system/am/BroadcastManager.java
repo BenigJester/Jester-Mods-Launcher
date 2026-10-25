@@ -9,6 +9,7 @@ import android.os.Message;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +35,7 @@ public class BroadcastManager implements PackageMonitor {
     private final BActivityManagerService mAms;
     private final BPackageManagerService mPms;
     private final Map<String, List<BroadcastReceiver>> mReceivers = new HashMap<>();
+    private int trackedReceivers;
     private final Map<String, PendingResultData> mReceiversData = new HashMap<>();
 
     private final Handler mHandler = new Handler(Looper.getMainLooper()) {
@@ -67,6 +69,7 @@ public class BroadcastManager implements PackageMonitor {
     public BroadcastManager(BActivityManagerService ams, BPackageManagerService pms) {
         mAms = ams;
         mPms = pms;
+        top.niunaijun.blackbox.utils.ConnectionDiagnostics.trackedReceiverCount(0);
     }
 
     public void startup() {
@@ -80,6 +83,8 @@ public class BroadcastManager implements PackageMonitor {
 
     private void registerPackage(BPackage bPackage) {
         synchronized (mReceivers) {
+            // A package refresh replaces registrations, not just our references to them.
+            unregisterPackage(bPackage.packageName);
             Slog.d(TAG, "register: " + bPackage.packageName + ", size: " + bPackage.receivers.size());
             for (BPackage.Activity receiver : bPackage.receivers) {
                 List<BPackage.ActivityIntentInfo> intents = receiver.intents;
@@ -96,6 +101,24 @@ public class BroadcastManager implements PackageMonitor {
         }
     }
 
+    /** Caller holds mReceivers. Keep failed cleanup tracked so it can be retried. */
+    private void unregisterPackage(String packageName) {
+        List<BroadcastReceiver> receivers = mReceivers.get(packageName);
+        if (receivers == null) return;
+        Iterator<BroadcastReceiver> iterator = receivers.iterator();
+        while (iterator.hasNext()) {
+            BroadcastReceiver receiver = iterator.next();
+            try {
+                BlackBoxCore.getContext().unregisterReceiver(receiver);
+            } catch (IllegalArgumentException alreadyUnregistered) {
+                // Android reports an already-removed receiver this way; there is nothing left to release.
+            }
+            iterator.remove();
+            top.niunaijun.blackbox.utils.ConnectionDiagnostics.trackedReceiverCount(--trackedReceivers);
+        }
+        mReceivers.remove(packageName);
+    }
+
     private void addReceiver(String packageName, BroadcastReceiver receiver) {
         List<BroadcastReceiver> broadcastReceivers = mReceivers.get(packageName);
         if (broadcastReceivers == null) {
@@ -103,6 +126,7 @@ public class BroadcastManager implements PackageMonitor {
             mReceivers.put(packageName, broadcastReceivers);
         }
         broadcastReceivers.add(receiver);
+        top.niunaijun.blackbox.utils.ConnectionDiagnostics.trackedReceiverCount(++trackedReceivers);
     }
 
     public void sendBroadcast(PendingResultData pendingResultData) {
@@ -125,17 +149,7 @@ public class BroadcastManager implements PackageMonitor {
     public void onPackageUninstalled(String packageName, boolean removeApp, int userId) {
         if (removeApp) {
             synchronized (mReceivers) {
-                List<BroadcastReceiver> broadcastReceivers = mReceivers.get(packageName);
-                if (broadcastReceivers != null) {
-                    Slog.d(TAG, "unregisterReceiver Package: " + packageName + ", size: " + broadcastReceivers.size());
-                    for (BroadcastReceiver broadcastReceiver : broadcastReceivers) {
-                        try {
-                            BlackBoxCore.getContext().unregisterReceiver(broadcastReceiver);
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                }
-                mReceivers.remove(packageName);
+                unregisterPackage(packageName);
             }
         }
     }
@@ -143,10 +157,11 @@ public class BroadcastManager implements PackageMonitor {
     @Override
     public void onPackageInstalled(String packageName, int userId) {
         synchronized (mReceivers) {
-            mReceivers.remove(packageName);
             BPackageSettings bPackageSetting = mPms.getBPackageSetting(packageName);
             if (bPackageSetting != null) {
                 registerPackage(bPackageSetting.pkg);
+            } else {
+                unregisterPackage(packageName);
             }
         }
     }

@@ -20,6 +20,7 @@ public final class SessionResourceRecorder {
     private final ArrayDeque<String> samples = new ArrayDeque<>();
     private volatile boolean foreground;
     private String processRole = "game";
+    private final long[] connectionBaseline = ConnectionDiagnostics.checkpoint();
 
     public void foreground(boolean value) { foreground = value; }
 
@@ -36,7 +37,9 @@ public final class SessionResourceRecorder {
                 + " activityResumed=" + ("game".equals(processRole) ? foreground : "unavailable") + " mainPendingMs=" + mainPendingMs
                 + " binderLocal=" + binderLocal + " binderProxy=" + binderProxy + " binderDeath=" + binderDeath
                 + " binderSentTotal=" + binderSent + " binderReceivedTotal=" + binderReceived
-                + " bbConnectionCalls=" + ConnectionDiagnostics.snapshot() + " processRole=" + processRole);
+                + " bbConnectionCalls=" + ConnectionDiagnostics.snapshot()
+                + " bbWindowConnectionCalls=" + ConnectionDiagnostics.since(connectionBaseline)
+                + " bbTrackedReceivers=" + ConnectionDiagnostics.trackedReceiverCount() + " processRole=" + processRole);
         while (samples.size() > MAX_SAMPLES) samples.removeFirst();
         return String.join("\n", samples) + "\n";
     }
@@ -57,6 +60,7 @@ public final class SessionResourceRecorder {
             AtomicBoolean pending = new AtomicBoolean(false);
             AtomicLong postedAt = new AtomicLong();
             Handler main = null;
+            HelperThreadSnapshot snapshot = new HelperThreadSnapshot();
             while (active.getAsBoolean() && session.isDirectory() && !new File(session, "stopped").exists()) {
                 try {
                     if (main == null && Looper.getMainLooper() != null) main = new Handler(Looper.getMainLooper());
@@ -82,7 +86,18 @@ public final class SessionResourceRecorder {
                             (runtime.totalMemory() - runtime.freeMemory()) / 1024,
                             Debug.getNativeHeapAllocatedSize() / 1024, main == null ? -1 : pendingMs,
                             binders[0], binders[1], binders[2], binders[3], binders[4]);
-                    if (active.getAsBoolean()) persist(session, Process.myPid(), text, supporting);
+                    if (active.getAsBoolean()) {
+                        persist(session, Process.myPid(), text, supporting);
+                        if (supporting && main != null && snapshot.shouldCapture(pendingMs) && active.getAsBoolean()) {
+                            Thread mainThread = main.getLooper().getThread();
+                            String frames = HelperThreadSnapshot.format(System.currentTimeMillis(), pendingMs,
+                                    mainThread.getState(), mainThread.getStackTrace());
+                            if (active.getAsBoolean()) persistHelperSnapshot(session, Process.myPid(), frames);
+                        }
+                        String sites = ConnectionDiagnostics.siteSnapshot();
+                        if (!sites.equals("not_observed") && active.getAsBoolean())
+                            persistConnectionSites(session, Process.myPid(), sites, supporting);
+                    }
                 } catch (Throwable ignored) { /* Diagnostics must never terminate a game. */ }
                 try { Thread.sleep(15_000L); }
                 catch (InterruptedException stopped) { return; }
@@ -97,15 +112,31 @@ public final class SessionResourceRecorder {
     }
 
     public static void persist(File session, int pid, String text, boolean supporting) throws Exception {
-        // Unlike AtomicFile.startWrite, this never creates parents: Clear cannot be undone by a guest.
         String prefix = supporting ? "support-resources-" : "resources-";
-        File temporary = new File(session, prefix + pid + ".pending");
+        persistText(session, prefix + pid, text);
+    }
+
+    public static void persistConnectionSites(File session, int pid, String text, boolean supporting) throws Exception {
+        if (text.getBytes(StandardCharsets.UTF_8).length > 16 * 1024)
+            throw new java.io.IOException("Connection sample limit");
+        persistText(session, (supporting ? "support-connections-" : "connections-") + pid, text);
+    }
+
+    public static void persistHelperSnapshot(File session, int pid, String text) throws Exception {
+        if (text.getBytes(StandardCharsets.UTF_8).length > 16 * 1024)
+            throw new java.io.IOException("Helper snapshot limit");
+        persistText(session, "support-stacks-" + pid, text);
+    }
+
+    private static void persistText(File session, String name, String text) throws Exception {
+        // Unlike AtomicFile.startWrite, this never creates parents: Clear cannot be undone by a guest.
+        File temporary = new File(session, name + ".pending");
         try {
             try (FileOutputStream stream = new FileOutputStream(temporary)) {
                 stream.write(text.getBytes(StandardCharsets.UTF_8));
                 stream.getFD().sync();
             }
-            Files.move(temporary.toPath(), new File(session, prefix + pid + ".txt").toPath(),
+            Files.move(temporary.toPath(), new File(session, name + ".txt").toPath(),
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { temporary.delete(); }
     }

@@ -121,7 +121,7 @@ public final class DiagnosticProvider extends ContentProvider {
                     if (files != null) for (File file : files) {
                         if (++count > 48) break;
                         if (!file.isFile() || Files.isSymbolicLink(file.toPath()) || file.length() > DiagnosticRuntime.LIMIT ||
-                            !file.getName().matches("(?:metadata|host|process-[0-9]+|failure-[0-9]+|resources-[0-9]+)\\.txt")) continue;
+                            !file.getName().matches("(?:metadata|host|process-[0-9]+|failure-[0-9]+|resources-[0-9]+|connections-[0-9]+)\\.txt")) continue;
                         try (InputStream input = Files.newInputStream(file.toPath())) { put(zip, file.getName(), DiagnosticRuntime.readBounded(input, DiagnosticRuntime.LIMIT)); }
                     }
                     if (Build.VERSION.SDK_INT >= 30) {

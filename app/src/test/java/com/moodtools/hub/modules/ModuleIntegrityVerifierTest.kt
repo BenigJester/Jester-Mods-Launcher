@@ -42,6 +42,14 @@ class ModuleIntegrityVerifierTest {
         assertEquals(NonRootMethod.DIRECT_PATCH, fixture.module.nonRootMethod)
     }
 
+    @Test fun installedShellRoutingDoesNotAlterSignedPatchMetadata() {
+        val fixture = fixture(NonRootMethod.DIRECT_PATCH)
+        val device = fixture.module.copy(installedNonRootMethod = NonRootMethod.IDENTITY_SHELL)
+        fixture.verifier.verify(fixture.directory, device, ABI)
+        assertEquals(NonRootMethod.IDENTITY_SHELL, device.effectiveNonRootMethod)
+        assertEquals(listOf(NonRootMethod.DIRECT_PATCH), device.nonRootMethods)
+    }
+
     @Test
     fun verifiesSignedStrictUidMethodChoices() {
         val methods = listOf(NonRootMethod.IDENTITY_SHELL, NonRootMethod.DIRECT_PATCH)

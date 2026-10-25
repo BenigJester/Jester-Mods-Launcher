@@ -12,6 +12,24 @@ internal data class DiagnosticProcessAttempt(val pid: Int, val startedAt: Long, 
     }
 }
 
+/** Unknown timestamps and other processes remain context, never selected-attempt evidence. */
+internal fun diagnosticEventBelongsToAttempt(line: String, attempt: DiagnosticProcessAttempt?, nextAttempt: Long?): Boolean {
+    if (attempt == null) return true
+    val source = line.substringBefore(": ")
+    val timestamp = line.substringAfter(": ", "").substringBefore(' ').toLongOrNull() ?: return false
+    return (source == "host.txt" || source == "process-${attempt.pid}.txt") &&
+        timestamp >= attempt.startedAt && (nextAttempt == null || timestamp < nextAttempt)
+}
+
+/** Adds fixed Android labels to legacy and remote exit records without reading private descriptions. */
+internal fun diagnosticExitEvidence(text: String): String {
+    if (text.lineSequence().any { it.startsWith("Exit category: ") }) return text
+    val reason = Regex("^Exit reason: ([0-9]+);").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: return text
+    val firstLineEnd = text.indexOf('\n').let { if (it < 0) text.length else it }
+    return text.substring(0, firstLineEnd) + "\nExit category: ${diagnosticExitCategory(reason)}\n" +
+        "Exit reason alone does not identify the underlying cause.\n" + text.substring(firstLineEnd).trimStart('\n')
+}
+
 /** Main-process attempts only. Legacy logs infer identity from activity events or recorded main death. */
 internal fun diagnosticProcessAttempts(logs: Map<Int, String>, host: String): List<DiagnosticProcessAttempt> =
     logs.flatMap { (pid, text) ->

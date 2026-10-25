@@ -64,6 +64,43 @@ class DirectGmsArchiveTest {
         }
     }
 
+    @Test fun `profile rejection identifies the failed check while preserving all exact build guards`() {
+        val source = inputs()
+        val rules = com.moodtools.hub.modules.GmsCorePatchRules("test-v1",
+            source.mapValues { GmsCoreDexPatcher.hash(it.value) })
+        val missing = assertThrows(GmsCorePatchFailure::class.java) {
+            GmsCoreDexPatcher.rewriteSet(source - "classes2.dex", rules)
+        }
+        assertEquals(GmsCorePatchFailure.Check.DEX_MISSING, missing.check)
+        assertEquals("classes2.dex", missing.dexEntry)
+        assertNull(missing.actualSha256)
+        val wrongHash = assertThrows(GmsCorePatchFailure::class.java) {
+            GmsCoreDexPatcher.rewriteSet(source, rules.copy(dexSha256 = rules.dexSha256 + ("classes2.dex" to "0".repeat(64))))
+        }
+        assertEquals(GmsCorePatchFailure.Check.DEX_HASH_MISMATCH, wrongHash.check)
+        assertEquals("0".repeat(64), wrongHash.expectedSha256)
+        assertEquals(GmsCoreDexPatcher.hash(source.getValue("classes2.dex")), wrongHash.actualSha256)
+        assertEquals("Google account support does not match this game build", wrongHash.message)
+        assertEquals(GmsCorePatchFailure.Check.UNPINNED_DEX_CHANGED,
+            assertThrows(GmsCorePatchFailure::class.java) {
+                GmsCoreDexPatcher.rewriteSet(source, rules.copy(dexSha256 = rules.dexSha256 - "classes3.dex"))
+            }.check)
+        assertEquals(GmsCorePatchFailure.Check.SDK_SHAPE_UNSUPPORTED,
+            assertThrows(GmsCorePatchFailure::class.java) {
+                GmsCoreDexPatcher.rewriteSet(source - "classes2.dex")
+            }.check)
+        assertEquals(GmsCorePatchFailure.Check.ALREADY_ROUTED,
+            assertThrows(GmsCorePatchFailure::class.java) {
+                GmsCoreDexPatcher.rewriteSet(GmsCoreDexPatcher.rewriteSet(source, rules))
+            }.check)
+        assertTrue(wrongHash.diagnosticLines().contains("gmsPatchCheck: dex_hash_mismatch"))
+        assertTrue(wrongHash.diagnosticLines().all { "Google account support: $it".length <= 320 })
+        val privateText = "private-account-token/secret-path"
+        val safe = GmsCorePatchFailure(GmsCorePatchFailure.Check.DEX_HASH_MISMATCH,
+            privateText, privateText, privateText).diagnosticLines()
+        assertEquals(listOf("gmsPatchCheck: dex_hash_mismatch"), safe)
+    }
+
     @Test fun `reapply uses saved originals and opt out restores every changed DEX exactly`() {
         val source = inputs()
         val rules = com.moodtools.hub.modules.GmsCorePatchRules("test-account-v1",

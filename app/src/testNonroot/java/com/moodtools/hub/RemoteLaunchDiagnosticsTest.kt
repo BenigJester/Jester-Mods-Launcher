@@ -23,9 +23,11 @@ class RemoteLaunchDiagnosticsTest {
         val directory = File(temporary.root, "100-abcd")
         RemoteLaunchDiagnostics.importSnapshot(archive("metadata.txt" to metadata.toByteArray(),
             "process-123.txt" to "100 guest_attached main=true\n101 activity_resumed game.Main\n".toByteArray(),
+            "connections-123.txt" to "100 operation=bind call=1\n  at game.Client.start:42\n".toByteArray(),
             "exit-123-200.txt" to "Exit reason: 5; status: 0;\n".toByteArray(),
             "exit-123-200.pb" to byteArrayOf(0x0f)), directory, pkg)
         assertTrue(File(directory, "process-123.txt").readText().contains("activity_resumed"))
+        assertTrue(File(directory, "connections-123.txt").readText().contains("game.Client.start:42"))
         assertFalse(File(directory, "exit-123-200.pb").exists())
         assertTrue(File(directory, "exit-123-200.txt").readText().contains("unreadable"))
     }

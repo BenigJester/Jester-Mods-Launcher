@@ -159,7 +159,7 @@ class UpdateClient(private val moduleRoot: File) {
         require(slug.matches(SLUG_PATTERN))
         require(abi == "arm64-v8a" || abi == "armeabi-v7a")
         require(authorization.capability.length in 80..4096)
-        if (authorization.expiresAt <= System.currentTimeMillis() / 1000L) {
+        if (authorization.isExpired()) {
             throw ModuleDownloadAuthorizationExpired()
         }
         val envelope = authorization.manifest

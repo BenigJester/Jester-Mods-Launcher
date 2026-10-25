@@ -63,6 +63,22 @@ class ModuleGmsRulesTest {
             rules.copy(dexSha256 = rules.dexSha256 - "classes.dex")) }
     }
 
+    @Test fun `Soul Knight module profile still matches the local original and patches only its pinned DEX`() {
+        val original = File(root, "../../Fast_analysis/Tests/soul-knight/Update-8.7.0/base.apk")
+        assumeTrue("Local proprietary fixture required", original.isFile)
+        val module = JSONObject(File(root, "modules/com.ChillyRoom.DungeonShooter/config.json").readText())
+        val rules = requireNotNull(GmsCorePatchRules.fromJson(module, "gmscore_patch"))
+        val source = ZipFile(original).use { zip -> zip.entries().asSequence()
+            .filter { it.name.matches(Regex("classes[0-9]*\\.dex")) }
+            .associate { it.name to zip.getInputStream(it).use { input -> input.readBytes() } } }
+        rules.dexSha256.forEach { (name, expected) ->
+            assertEquals(name, expected, GmsCoreDexPatcher.hash(source.getValue(name)))
+        }
+        val patched = GmsCoreDexPatcher.rewriteSet(source, rules)
+        assertEquals(setOf("classes2.dex"), patched.keys)
+        assertFalse(source.getValue("classes2.dex").contentEquals(patched.getValue("classes2.dex")))
+    }
+
     @Test fun `renamed SDK symbol validation rejects executable rules duplicates and missing selectors`() {
         val symbols = com.moodtools.hub.modules.GmsCoreSdkSymbols("LU0/f;", "c", false, "LU0/j;", "f",
             setOf("LU0/f;", "LU0/j;"))

@@ -165,12 +165,13 @@ bool KittyInjector::validateElf(const std::string &elfPath, KT_ElfW(Ehdr) * hdr,
 
 bool KittyInjector::waitBreakpoint(bool needsNB)
 {
-    uintptr_t bp_addr = 0;
+    std::vector<uintptr_t> bp_addrs;
 
     if (!_cfg.bp_args.empty())
     {
         std::string bp_binary = _cfg.bp_args[0];
         std::string bp_symbol = _cfg.bp_args[1];
+        uintptr_t bp_addr = 0;
 
         auto elf = _kMgr->elfScanner.findElf(bp_binary);
         if (elf.isValid())
@@ -185,19 +186,19 @@ bool KittyInjector::waitBreakpoint(bool needsNB)
         if (bp_addr == 0)
         {
             KITTY_LOGI("Injector: Couldn't find the specified breakpoint target symbol!");
+            KITTY_LOGE("Root breakpoint result: target_missing");
             return false;
         }
+        bp_addrs.push_back(bp_addr);
     }
     else
     {
         if (!needsNB)
         {
-            bp_addr = _rdlopen;
-            // bp_addr = _rdlclose;
-            // bp_addr = _rdlsym;
-            // bp_addr = _rdlerror;
-            // bp_addr = _kMgr->elfScanner.findRemoteSymbol("getpid", uintptr_t(getpid));
-            // bp_addr = _kMgr->elfScanner.findRemoteSymbol("gettid", uintptr_t(gettid));
+            // As in upstream AndKittyInjector: watch both loader entry points concurrently.
+            // ART may use android_dlopen_ext without ever calling dlopen.
+            if (_rdlopen_ext) bp_addrs.push_back(_rdlopen_ext);
+            if (_rdlopen && _rdlopen != _rdlopen_ext) bp_addrs.push_back(_rdlopen);
         }
         else
         {
@@ -208,24 +209,30 @@ bool KittyInjector::waitBreakpoint(bool needsNB)
             }
             else
             {
-                bp_addr = callbacks.version < KT_NB_NAMESPACE_VERSION ? uintptr_t(callbacks.loadLibrary)
-                                                                      : uintptr_t(callbacks.loadLibraryExt);
+                uintptr_t bp_addr = callbacks.version < KT_NB_NAMESPACE_VERSION ? uintptr_t(callbacks.loadLibrary)
+                                                                               : uintptr_t(callbacks.loadLibraryExt);
+                if (bp_addr) bp_addrs.push_back(bp_addr);
             }
         }
 
-        if (bp_addr == 0)
+        if (bp_addrs.empty())
         {
             KITTY_LOGI("Injector: Couldn't find a breakpoint target!");
+            KITTY_LOGE("Root breakpoint result: target_missing");
             return false;
         }
     }
 
-    KITTY_LOGI("Injector: Creating breakpoint at %p...", (void *)bp_addr);
+    for (uintptr_t address : bp_addrs)
+        KITTY_LOGI("Injector: Creating breakpoint at %p...", (void *)address);
 
     // breakpoint return paths that will mostly cause crashes
     static std::vector<std::string> forbidden_return_paths = {"/libnativebridge.so", "/libbinder.so"};
 
+    unsigned int breakpoint_hits = 0;
+    unsigned int breakpoint_skipped = 0;
     auto bp_ok = [&](user_regs_struct *regs) -> bool {
+        if (breakpoint_hits < 999999999U) ++breakpoint_hits;
         auto pc_map = KittyMemoryEx::getAddressMap(_kMgr->processID(), regs->KT_REG_PC);
         KITTY_LOGI("bp]: PC(%p) -> %s", (void *)regs->KT_REG_PC, pc_map.toString().c_str());
 
@@ -252,6 +259,7 @@ bool KittyInjector::waitBreakpoint(bool needsNB)
             if (KittyUtils::String::contains(filePath, "libnativebridge.so"))
             {
                 KITTY_LOGW("bp]: Skipping forbidden library load (%s)...", filePath.c_str());
+                if (breakpoint_skipped < 999999999U) ++breakpoint_skipped;
                 return false;
             }
         }
@@ -259,6 +267,7 @@ bool KittyInjector::waitBreakpoint(bool needsNB)
         if (should_skip)
         {
             KITTY_LOGW("bp]: Skipping forbidden return path (%s)...", ret_map.pathname.c_str());
+            if (breakpoint_skipped < 999999999U) ++breakpoint_skipped;
             return false;
         }
 
@@ -276,22 +285,34 @@ bool KittyInjector::waitBreakpoint(bool needsNB)
         return nb_state == 3;*/
     };
 
-#if 0
-    KITTY_LOGI("Injector: Trying software breakpoint...");
-    return _kMgr->trace.setSoftBreakpointAndWait(
-               bp_addr,
-               [&](user_regs_struct bp_regs) -> bool { return bp_ok(&bp_regs); },
-               5000) == KT_BP_SUCCESS;
-#else
-    KITTY_LOGI("Injector: Trying hardware breakpoint...");
-    return _kMgr->trace.setHardBreakpointAndWait(
-               bp_addr,
+    KITTY_LOGI("Injector: Trying hardware breakpoints...");
+    const auto result = _kMgr->trace.setHardBreakpointsAndWait(
+               bp_addrs,
                KT_HW_BP_EXECUTE,
                KT_HW_BP_SIZE_EXEC,
                0,
-               [&](user_regs_struct bp_regs) -> bool { return bp_ok(&bp_regs); },
-               5000) == KT_BP_SUCCESS;
-#endif
+               [&](uintptr_t, user_regs_struct bp_regs) -> bool { return bp_ok(&bp_regs); },
+               5000);
+    const char *category = "invalid_state";
+    switch (result)
+    {
+    case KT_BP_SUCCESS: category = "success"; break;
+    case KT_BP_TIMEOUT: category = "timeout"; break;
+    case KT_BP_EXITED: category = "target_exited"; break;
+    case KT_BP_SETUP_FAILED: category = "setup_failed"; break;
+    case KT_BP_CLEAR_FAILED: category = "cleanup_failed"; break;
+    case KT_BP_CONT_FAILED: category = "continue_failed"; break;
+    case KT_BP_STEP_FAILED: category = "step_failed"; break;
+    case KT_BP_REGS_FAILED: category = "registers_failed"; break;
+    case KT_BP_WAIT_FAILED: category = "wait_failed"; break;
+    case KT_BP_NOT_STOPPED: category = "stop_failed"; break;
+    case KT_BP_MISMATCH_STOP: category = "unexpected_stop"; break;
+    default: break;
+    }
+    KITTY_LOGI("Root breakpoint result: %s", category);
+    KITTY_LOGI("Root breakpoint hits: %u", breakpoint_hits);
+    KITTY_LOGI("Root breakpoint skipped: %u", breakpoint_skipped);
+    return result == KT_BP_SUCCESS;
 }
 
 inject_elf_info_t KittyInjector::inject(const std::string &elfPath)

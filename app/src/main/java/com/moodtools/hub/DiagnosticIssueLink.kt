@@ -32,7 +32,11 @@ internal fun diagnosticIssueLink(reportTitle: String, reportText: String): Strin
         // Remove long stack traces before sacrificing metadata or the startup event trail.
         val frame = lines.indexOfLast { it.trimStart().startsWith("at ") }
         excerpt = if (frame >= 0) lines.filterIndexed { index, _ -> index != frame }.joinToString("\n")
-            else excerpt.dropLast(100.coerceAtMost(excerpt.length))
+            else {
+                // Do not leave a half-written resource/counter line in the submitted report.
+                val end = excerpt.lastIndexOf('\n', (excerpt.length - 100).coerceAtLeast(0))
+                if (end >= 0) excerpt.take(end) else ""
+            }
     }
     return "https://github.com/BenigJester/Jester-Mods-Launcher/issues/new?title=$title&body=${body()}"
 }

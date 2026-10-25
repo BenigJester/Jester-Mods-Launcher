@@ -1,6 +1,7 @@
 package com.moodtools.hub.modules
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -254,6 +255,27 @@ class NonRootMethodTest {
                 installedDirectPatch = true
             )
         )
+    }
+
+    @Test fun removingShellSetupChoicePreservesOnlyAnActuallyInstalledShell() {
+        val patchOnly = dualMethodModule().copy(
+            nonRootMethod = NonRootMethod.DIRECT_PATCH,
+            nonRootMethods = listOf(NonRootMethod.DIRECT_PATCH))
+        assertEquals(NonRootMethod.DIRECT_PATCH, patchOnly.effectiveNonRootMethod)
+        assertEquals(NonRootMethod.DIRECT_PATCH,
+            patchOnly.copy(selectedNonRootMethod = NonRootMethod.IDENTITY_SHELL).effectiveNonRootMethod)
+        val installed = patchOnly.copy(installedNonRootMethod = NonRootMethod.IDENTITY_SHELL)
+        assertEquals(NonRootMethod.IDENTITY_SHELL, installed.effectiveNonRootMethod)
+        assertEquals(listOf(NonRootMethod.DIRECT_PATCH), installed.nonRootMethods)
+        assertFalse(installed.offersNonRootMethodChoice)
+        assertEquals("SHELL", launcherMethodBadgePresentations(installed, false,
+            NonRootMethod.IDENTITY_SHELL).single().badgeLabel)
+        assertEquals(NonRootMethod.DIRECT_PATCH,
+            installed.copy(installedNonRootMethod = null).effectiveNonRootMethod)
+        assertEquals(NonRootMethod.NONE, installed.copy(nonRootMethod = NonRootMethod.NONE,
+            nonRootMethods = listOf(NonRootMethod.NONE)).effectiveNonRootMethod)
+        assertEquals(NonRootMethod.DIRECT_PATCH,
+            installed.copy(rootMethod = RootMethod.EXTERNAL_CONTROLLER).effectiveNonRootMethod)
     }
 
     private fun dualMethodModule(selected: NonRootMethod? = null) = ModuleConfig(

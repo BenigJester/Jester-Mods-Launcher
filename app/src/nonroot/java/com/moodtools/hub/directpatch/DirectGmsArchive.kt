@@ -18,7 +18,8 @@ internal object DirectGmsArchive {
             val entry = requireNotNull(archive.getEntry(name)) { "The original Google service client is unavailable" }
             require(entry.size in 1..(32L * 1024 * 1024))
             total += entry.size
-            require(total <= 96L * 1024 * 1024) { "Google account support does not match this game build" }
+            if (total > 96L * 1024 * 1024)
+                throw GmsCorePatchFailure(GmsCorePatchFailure.Check.ARCHIVE_LIMIT_EXCEEDED)
             return archive.getInputStream(entry).use { it.readBytes() }
         }
         val recorded = previous?.optJSONObject("gmsOriginals")

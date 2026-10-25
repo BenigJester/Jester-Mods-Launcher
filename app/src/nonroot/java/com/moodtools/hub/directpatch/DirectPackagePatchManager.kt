@@ -139,9 +139,15 @@ internal class DirectPackagePatchManager(
     ): PackageReplacementRequest {
         require(game.packageName == targetPackage) { "The direct patch request targets another game" }
         require(game.versionSupported && game.abiSupported) { "This game build is not supported" }
+        require(!com.moodtools.hub.identity.IdentityShellManager(context, targetPackage).isInstalledShell()) {
+            "Restore the original game before changing this device to Patch."
+        }
         val gmsProfile = gmsProfile()
-        if (gmsProfile.isNotEmpty()) require(GmsCoreSupport.state(context) == GmsCoreSupport.State.READY) {
-            "Set up GmsCore from Google account support first"
+        if (gmsProfile.isNotEmpty()) {
+            val companionState = GmsCoreSupport.state(context)
+            require(companionState == GmsCoreSupport.State.READY) {
+                GmsCoreSupport.setupFailureDetail(companionState)
+            }
         }
         val moduleDirectory = File(context.filesDir, "menus/$targetPackage")
         val verifiedModule = ModuleIntegrityVerifier().verify(moduleDirectory, game.module, game.abi)
@@ -164,6 +170,11 @@ internal class DirectPackagePatchManager(
         require(sources.all { it.file.isFile && it.file.canRead() && it.file.length() > 0L }) {
             "Android did not expose the installed game APK set"
         }
+        // Fail before compatibility processing, keystore creation or touching patch output.
+        val previousMarker = installedPatchMarker()
+        val sourceAlreadyPatched = installedFactory() == PATCH_FACTORY || previousMarker != null
+        val originalSigner = originalGameSigner(sources.first().file, previousMarker, sourceAlreadyPatched)
+        requireOriginalGameSigner(gmsProfile, originalSigner)
         val compatibility = ModuleCompatibility.fromNative(moduleNative, targetPackage)?.let { recipe ->
             onProgress?.invoke("Checking game compatibility", "Verifying startup code and native split contents.")
             val plan = try {
@@ -195,7 +206,6 @@ internal class DirectPackagePatchManager(
         // Verify the actual installed split files instead: an exact signer match means Android can
         // accept this as an in-place update and preserve the game's data.
         val requiresUninstall = !installedClusterSignedBy(sources, signingMaterial.certificate)
-        val sourceAlreadyPatched = installedFactory() == PATCH_FACTORY || installedPatchMarker() != null
         val inheritExistingInstallation = sourceAlreadyPatched && !requiresUninstall
         val sourcesToWrite = if (inheritExistingInstallation) {
             sources.filter { it.name == "base.apk" || it.name == gameNativeSource?.name ||
@@ -247,7 +257,7 @@ internal class DirectPackagePatchManager(
                 game.versionCode,
                 verifiedModule.build,
                 verifiedModule.version,
-                sourceAlreadyPatched,
+                originalSigner,
                 "lib/${game.abi}/libYourSaviour.so",
                 externalControllerOnly,
                 expectedGameNativeSha256,
@@ -304,6 +314,12 @@ internal class DirectPackagePatchManager(
             )
         } catch (error: Throwable) {
             runCatching { recreateDirectory(outputDirectory) }
+            if (error is GmsCorePatchFailure) runCatching {
+                // Separate bounded events survive the setup report's 320-character/event limit.
+                val evidence = listOf("Game version code: ${game.versionCode}", "GmsCore profile: $gmsProfile") +
+                    error.diagnosticLines()
+                evidence.forEach { onProgress?.invoke("Google account support", it) }
+            }
             throw error
         }
     }
@@ -396,7 +412,7 @@ internal class DirectPackagePatchManager(
         versionCode: Long,
         moduleBuild: Long,
         moduleVersion: String,
-        alreadyPatched: Boolean,
+        originalSigner: String,
         nativeEntry: String,
         externalControllerOnly: Boolean,
         gameNativeSha256: String,
@@ -431,10 +447,7 @@ internal class DirectPackagePatchManager(
             val cleanedManifest = BinaryXmlStringPool.withoutPairIpManifestEntries(manifest)
             val gmsProfile = gmsProfile()
             val previousGms = previousMarker?.optString("gmsProfile").orEmpty()
-            val originalSigner = originalGameSigner(source, previousMarker, alreadyPatched)
-            require(gmsProfile.isEmpty() || originalSigner.matches(Regex("[0-9a-f]{40}"))) {
-                "The original game signature is missing. Back up your progress before preparing from the original game."
-            }
+            requireOriginalGameSigner(gmsProfile, originalSigner)
             val gms = DirectGmsArchive.prepare(archive, gmsProfile.isNotEmpty(), previousMarker,
                 setOf(embeddedDex, diagnosticDex), gmsRules(), compatibilityEntries.filterKeys { DEX_NAME.matches(it) })
             val gmsManifest = if (gmsProfile.isNotEmpty() || previousGms.isNotEmpty())
@@ -813,6 +826,7 @@ internal class DirectPackagePatchManager(
     )
 
     private fun gmsProfile(): String {
+        if (!GmsCoreSupport.enabled(context, targetPackage)) return ""
         val config = JSONObject(File(context.filesDir, "menus/$targetPackage/config.json").readText())
         if (!com.moodtools.hub.modules.moduleGmsCoreSupport(config, "gmscore_support")) return ""
         val rules = com.moodtools.hub.modules.GmsCorePatchRules.fromJson(config, "gmscore_patch")

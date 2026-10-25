@@ -17,6 +17,7 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
     override val crashOnly = true
     private var directory: File? = null
     private var lastRead = -15_000L
+    private var readingCrashBuffer = false
 
     fun install(context: Context) {
         directory = File(context.filesDir, "root-crash-diagnostics").apply { mkdirs() }
@@ -24,11 +25,11 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
     }
 
     @Synchronized fun begin(context: Context, game: InstalledGame, payloadSha256: String?): File? {
-        // Preserve a previous crash before advancing the session boundary. Never clear system logs.
+        // Record the boundary without running su/logcat on the game's launch path.
+        // Later report refreshes match retained crash records to these timestamp boundaries.
         return runCatching {
             install(context)
             lastRead = -15_000L
-            reports(context)
             val root = directory ?: return null
             val now = System.currentTimeMillis()
             val session = File(root, "$now-${UUID.randomUUID()}").apply { mkdirs() }
@@ -59,13 +60,23 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
         .mapNotNull { file -> runCatching { file to JSONObject(File(file, "metadata.json").readText()) }.getOrNull() }
         .sortedByDescending { it.second.optLong("started") }
 
-    @Synchronized override fun reports(context: Context): List<LaunchDiagnosticReport> {
-        val sessions = sessions()
-        if (sessions.isEmpty()) return emptyList()
-        if (SystemClock.elapsedRealtime() - lastRead >= 15_000) {
-            lastRead = SystemClock.elapsedRealtime()
-            // ponytail: finite crash buffer only; rotated/OEM-suppressed records need device-level capture.
-            val log = readCrashBuffer()
+    override fun reports(context: Context): List<LaunchDiagnosticReport> {
+        val shouldRead = synchronized(this) {
+            if (!readingCrashBuffer && SystemClock.elapsedRealtime() - lastRead >= 15_000 && sessions().isNotEmpty()) {
+                readingCrashBuffer = true
+                lastRead = SystemClock.elapsedRealtime()
+                true
+            } else false
+        }
+        // Never hold the session lock while waiting for su/logcat: Play must not wait for a report scan.
+        // ponytail: finite crash buffer only; rotated/OEM-suppressed records need device-level capture.
+        val log = if (shouldRead) try { readCrashBuffer() } finally {
+            synchronized(this) { readingCrashBuffer = false }
+        } else null
+        return synchronized(this) {
+            // Re-read after capture so clear/begin during logcat cannot resurrect a removed session
+            // or incorrectly assign a new game's crash to an older timestamp range.
+            val sessions = sessions()
             if (log != null) sessions.forEach { (file, meta) ->
                 val start = meta.getLong("started")
                 val end = sessions.filter { it.second.optString("package") == meta.optString("package") }
@@ -76,22 +87,22 @@ internal object RootLaunchDiagnostics : LaunchDiagnosticsBackend {
                     if (!output.exists()) output.writeText(crash)
                 }
             }
-        }
-        return sessions.mapNotNull { (file, meta) ->
-            val crash = File(file, "crash.txt").takeIf(File::isFile)?.readText().orEmpty()
-            val injection = File(file, "injection-failure.txt").takeIf(File::isFile)?.readText().orEmpty()
-            if (crash.isBlank() && injection.isBlank()) return@mapNotNull null
-            val text = buildString {
-                appendLine("Jester Mods ROOT diagnostics / ${file.name}")
-                meta.keys().asSequence().sorted().forEach { appendLine("$it: ${meta.get(it).toString().replace('\n', ' ')}") }
-                if (injection.isNotBlank()) appendLine("\n$injection")
-                if (crash.isNotBlank()) appendLine("\n$crash")
-                appendLine("\nOnly game-specific crash structure is retained. No exception messages, raw logs or memory dumps.")
-                appendLine("Missing/rotated crash records cannot be recovered. No stall detection in Root mode.")
-                appendLine("Native PCs require matching game/module symbols; this report does not identify a bad hook automatically.")
+            sessions.mapNotNull { (file, meta) ->
+                val crash = File(file, "crash.txt").takeIf(File::isFile)?.readText().orEmpty()
+                val injection = File(file, "injection-failure.txt").takeIf(File::isFile)?.readText().orEmpty()
+                if (crash.isBlank() && injection.isBlank()) return@mapNotNull null
+                val text = buildString {
+                    appendLine("Jester Mods ROOT diagnostics / ${file.name}")
+                    meta.keys().asSequence().sorted().forEach { appendLine("$it: ${meta.get(it).toString().replace('\n', ' ')}") }
+                    if (injection.isNotBlank()) appendLine("\n$injection")
+                    if (crash.isNotBlank()) appendLine("\n$crash")
+                    appendLine("\nOnly game-specific crash structure is retained. No exception messages, raw logs or memory dumps.")
+                    appendLine("Missing/rotated crash records cannot be recovered. No stall detection in Root mode.")
+                    appendLine("Native PCs require matching game/module symbols; this report does not identify a bad hook automatically.")
+                }
+                LaunchDiagnosticReport(file.name, meta.getString("package"), meta.getString("title"), meta.getLong("started"),
+                    if (injection.isNotBlank()) "Root add-on setup failed" else "Game crash recorded", true, File(file, "acknowledged").exists(), text)
             }
-            LaunchDiagnosticReport(file.name, meta.getString("package"), meta.getString("title"), meta.getLong("started"),
-                if (injection.isNotBlank()) "Root add-on setup failed" else "Game crash recorded", true, File(file, "acknowledged").exists(), text)
         }
     }
 

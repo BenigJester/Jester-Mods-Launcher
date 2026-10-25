@@ -35,6 +35,8 @@ class GmsCoreDexPatcherTest {
             nonRootMethod = com.moodtools.hub.modules.NonRootMethod.DIRECT_PATCH, gmsCoreSupport = true)
         assertTrue(GmsCoreSupport.supports(module))
         assertFalse(GmsCoreSupport.supports(module.copy(gmsCoreSupport = false)))
+        assertFalse(GmsCoreSupport.supports(module.copy(
+            installedNonRootMethod = com.moodtools.hub.modules.NonRootMethod.IDENTITY_SHELL)))
         assertThrows(IllegalArgumentException::class.java) { module.copy(
             nonRootMethod = com.moodtools.hub.modules.NonRootMethod.INJECTION,
             nonRootMethods = listOf(com.moodtools.hub.modules.NonRootMethod.INJECTION)) }
@@ -50,25 +52,30 @@ class GmsCoreDexPatcherTest {
         assertEquals(GmsCoreSupport.State.UNTRUSTED, GmsCoreSupport.classify(listOf(GmsCoreSupport.SIGNER, "other"), true, Long.MAX_VALUE))
     }
 
-    @Test fun `supported modules include routing automatically without a user preference or toggle`() {
+    @Test fun `per-game toggle gates routing without weakening module eligibility or companion checks`() {
         fun source(path: String) = File(root, "app/src/$path").readText()
         val support = source("main/java/com/moodtools/hub/GmsCoreSupport.kt")
-        assertFalse(support.contains("getSharedPreferences"))
-        assertFalse(support.contains("fun select("))
+        assertTrue(support.contains("getSharedPreferences(\"gmscore_support\""))
+        assertTrue(support.contains("getBoolean(packageName, false)"))
+        assertTrue(support.contains("require(supports(module))"))
         val manager = source("nonroot/java/com/moodtools/hub/directpatch/DirectPackagePatchManager.kt")
         val profile = manager.substringAfter("private fun gmsProfile(): String {").substringBefore("private fun gmsRules()")
         assertTrue(profile.contains("moduleGmsCoreSupport(config, \"gmscore_support\")"))
         assertTrue(profile.contains("GmsCoreSupport.PROFILE"))
-        assertFalse(profile.contains("GmsCoreSupport.enabled"))
-        assertTrue(manager.contains("require(GmsCoreSupport.state(context) == GmsCoreSupport.State.READY)"))
+        assertTrue(profile.contains("if (!GmsCoreSupport.enabled(context, targetPackage)) return \"\""))
+        assertTrue(manager.contains("val companionState = GmsCoreSupport.state(context)"))
+        assertTrue(manager.contains("require(companionState == GmsCoreSupport.State.READY)"))
+        assertTrue(manager.contains("GmsCoreSupport.setupFailureDetail(companionState)"))
         val ui = source("main/java/com/moodtools/hub/modules/GmsCoreSetupUi.kt")
-        assertFalse(ui.contains("Switch("))
+        assertTrue(ui.contains("Switch("))
+        assertTrue(ui.contains("canChange && GmsCoreSupport.supports(module)"))
         assertFalse(ui.contains("Experimental", ignoreCase = true))
-        assertTrue(ui.contains("Google login uses GmsCore automatically."))
+        assertTrue(ui.contains("After changing this setting, update the patched game from Library."))
         assertTrue(ui.contains("Get GmsCore") && ui.contains("Open GmsCore"))
         assertFalse(LauncherGmsCoreTranslations.entries.keys.any {
-            it.contains("Experimental", ignoreCase = true) || it.contains("Use GmsCore")
+            it.contains("Experimental", ignoreCase = true)
         })
+        assertTrue(LauncherGmsCoreTranslations.entries.containsKey("Use GmsCore"))
     }
 
     @Test fun `production bootstrap packages the exact bridge entry points`() {

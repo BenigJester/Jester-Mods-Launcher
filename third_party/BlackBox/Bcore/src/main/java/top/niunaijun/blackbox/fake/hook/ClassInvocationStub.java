@@ -97,7 +97,7 @@ public abstract class ClassInvocationStub implements InvocationHandler, IInjectH
     private Object invokeTracked(Object proxy, Method method, Object[] args) throws Throwable {
         ConnectionDiagnostics.Operation operation = ConnectionDiagnostics.operation(method.getName(), method.getDeclaringClass().getName());
         if (operation == null) return invoke(proxy, method, args);
-        ConnectionDiagnostics.begin(operation);
+        ConnectionDiagnostics.begin(operation, ClassInvocationStub.class.getName());
         try {
             Object result = invoke(proxy, method, args);
             if ((operation == ConnectionDiagnostics.Operation.bind && result instanceof Number

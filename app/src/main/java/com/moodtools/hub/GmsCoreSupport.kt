@@ -14,15 +14,41 @@ internal object GmsCoreSupport {
     const val SIGNER = "d732e4055c97f8d7a43170a6dc737dc71b6f3e0410940e1b3706c6ade1ff3488"
     const val MIN_VERSION = 250932004L
     const val PROFILE = "google-sdk-routing-v2"
+    const val OPTIONAL_SETUP_GUIDANCE =
+        "If you do not need Google login, turn off Use GmsCore and retry setup."
 
     enum class State(val label: String) {
         MISSING("Install GmsCore"), UNTRUSTED("GmsCore could not be verified"),
         DISABLED("Enable GmsCore"), OLD("Update GmsCore"), READY("GmsCore is ready")
     }
 
+    fun setupFailureDetail(state: State): String =
+        "${state.label}\nSet up GmsCore from Google account support first\n$OPTIONAL_SETUP_GUIDANCE"
+
+    /** Fixed values captured before preparation, not a query of account/sign-in state. */
+    fun setupDiagnostics(supported: Boolean, selected: Boolean, state: State): List<String> = listOf(
+        "GmsCore setup snapshot: before package preparation",
+        "gmscoreSupported: $supported",
+        "gmscoreSelected: $selected",
+        "gmscoreRequired: ${supported && selected}",
+        "gmscoreState: ${state.name}",
+        "Companion availability does not confirm account sign-in."
+    )
+
     fun supports(module: com.moodtools.hub.modules.ModuleConfig) =
         !BuildConfig.IS_ROOT_MODE && module.gmsCoreSupport &&
+            module.effectiveNonRootMethod == com.moodtools.hub.modules.NonRootMethod.DIRECT_PATCH &&
             com.moodtools.hub.modules.NonRootMethod.DIRECT_PATCH in module.nonRootMethods
+
+    fun enabled(context: Context, packageName: String) =
+        !BuildConfig.IS_ROOT_MODE && context.getSharedPreferences("gmscore_support", Context.MODE_PRIVATE)
+            .getBoolean(packageName, false)
+
+    fun select(context: Context, module: com.moodtools.hub.modules.ModuleConfig, enabled: Boolean) {
+        require(supports(module))
+        context.getSharedPreferences("gmscore_support", Context.MODE_PRIVATE).edit()
+            .putBoolean(module.packageName, enabled).apply()
+    }
 
     @Suppress("DEPRECATION")
     fun state(context: Context): State = try {

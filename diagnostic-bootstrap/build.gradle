@@ -10,6 +10,8 @@ android {
 tasks.register('prepareResourceSampler', Copy) {
     from('../third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/utils/SessionResourceRecorder.java')
     from('../third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/utils/ConnectionDiagnostics.java')
+    from('../third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/utils/HelperThreadSnapshot.java')
+    from('../third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/utils/FailureEvidence.java')
     into("$buildDir/generated/resourceSampler/top/niunaijun/blackbox/utils")
 }
 tasks.named('preBuild').configure { dependsOn('prepareResourceSampler') }

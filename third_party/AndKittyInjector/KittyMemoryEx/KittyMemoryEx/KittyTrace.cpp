@@ -1,4 +1,6 @@
 #include "KittyTrace.hpp"
+#include <chrono>
+#include "RootWaitDiagnostics.hpp"
 
 bool KittyTraceMgr::attach(int options)
 {
@@ -1133,7 +1135,20 @@ KT_BP_RESULT KittyTraceMgr::setHardBreakpointAndWait(uintptr_t address,
                                                      const std::function<bool(user_regs_struct regs)> &cb,
                                                      int timeout_ms)
 {
-    if (!_attached || _pid <= 0 || address == 0)
+    return setHardBreakpointsAndWait({address}, type, size, slot,
+        [&](uintptr_t, user_regs_struct regs) { return !cb || cb(regs); }, timeout_ms);
+}
+
+KT_BP_RESULT KittyTraceMgr::setHardBreakpointsAndWait(const std::vector<uintptr_t> &addresses,
+                                                     KT_HW_BP_TYPE type,
+                                                     KT_HW_BP_SIZE size,
+                                                     int slot,
+                                                     const std::function<bool(uintptr_t, user_regs_struct)> &cb,
+                                                     int timeout_ms)
+{
+    if (!_attached || _pid <= 0 || addresses.empty() || slot < 0 || slot >= 4 ||
+        addresses.size() > size_t(4 - slot) ||
+        std::any_of(addresses.begin(), addresses.end(), [](uintptr_t a) { return a == 0; }))
         return KT_BP_FAILED;
 
     pid_t tid = _pid;
@@ -1141,10 +1156,31 @@ KT_BP_RESULT KittyTraceMgr::setHardBreakpointAndWait(uintptr_t address,
     pid_t wp = 0;
     user_regs_struct regs = {};
 
+    size_t installed = 0;
+    const auto wait_started = std::chrono::steady_clock::now();
+    const auto deadline = wait_started + std::chrono::milliseconds(timeout_ms);
+    auto observe_timeout = [&]() {
+        // Capture before stop(): otherwise our own cleanup stop hides the actual wait state.
+        try {
+            const auto sample = RootWaitDiagnostics::read(tid);
+            KITTY_LOGI("Root wait timeout state: %s", sample.state);
+            KITTY_LOGI("Root wait timeout channel: %s", sample.channel);
+            KITTY_LOGI("Root wait timeout threads: %d", sample.threads);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - wait_started).count();
+            KITTY_LOGI("Root wait elapsed ms: %lld", static_cast<long long>(std::min<int64_t>(999999, elapsed)));
+        } catch (...) {
+            KITTY_LOGI("Root wait timeout state: unavailable");
+        }
+    };
+    auto clear_all = [&]() -> bool {
+        bool ok = true;
+        while (installed > 0)
+            ok = clearHwBreakpoint(type, slot + int(--installed)) && ok;
+        return ok;
+    };
     auto failure_return = [&](KT_BP_RESULT res = KT_BP_FAILED) -> KT_BP_RESULT {
-        KITTY_LOGE("setHardBreakpointAndWait(%p): Failed.", (void *)address);
-        clearHwBreakpoint(type, slot);
-        return res;
+        return clear_all() ? res : KT_BP_CLEAR_FAILED;
     };
 
     auto validate_trap = [this, size](const user_regs_struct &regs, uintptr_t trap_addr) -> bool {
@@ -1163,34 +1199,33 @@ KT_BP_RESULT KittyTraceMgr::setHardBreakpointAndWait(uintptr_t address,
     };
 
 again:
-
-    if (type == KT_HW_BP_EXECUTE)
+    for (size_t i = 0; i < addresses.size(); ++i)
     {
+        uintptr_t address = addresses[i];
+        // Include a failed slot in cleanup: some architectures write address/control separately.
+        installed = i + 1;
+        KT_HW_BP_SIZE effective_size = size;
+        if (type == KT_HW_BP_EXECUTE)
+        {
 #if defined(__arm__)
-        if (!setHwBreakpoint(address, type, (address & 1) != 0 ? KT_HW_BP_SIZE_2 : KT_HW_BP_SIZE_4, slot))
+            effective_size = (address & 1) != 0 ? KT_HW_BP_SIZE_2 : KT_HW_BP_SIZE_4;
 #elif defined(__aarch64__)
-        if (!setHwBreakpoint(address, type, KT_HW_BP_SIZE_4, slot))
+            effective_size = KT_HW_BP_SIZE_4;
 #else
-        if (!setHwBreakpoint(address, type, KT_HW_BP_SIZE_1, slot))
+            effective_size = KT_HW_BP_SIZE_1;
 #endif
-        {
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Failed to set breakpoint. \"%s\"",
-                       (void *)address,
-                       strerror(errno));
-            return KT_BP_FAILED;
         }
-    }
-    else
-    {
-        if (!setHwBreakpoint(address, type, size, slot))
+        if (!setHwBreakpoint(address, type, effective_size, slot + int(i)))
         {
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Failed to set watchpoint. \"%s\"",
+            KITTY_LOGE("Root breakpoint setup errno: %d", errno);
+            KITTY_LOGE("setHardBreakpointsAndWait(%p): Failed to set breakpoint. \"%s\"",
                        (void *)address,
                        strerror(errno));
-            return KT_BP_FAILED;
+            return failure_return(KT_BP_SETUP_FAILED);
         }
     }
 
+    KITTY_LOGI("Root wait installed slots: %u", static_cast<unsigned int>(installed));
     if (!cont())
         return failure_return(KT_BP_CONT_FAILED);
 
@@ -1198,19 +1233,29 @@ again:
     {
         errno = 0;
         status = 0;
-        wp = wait(&status, WUNTRACED, timeout_ms);
+        int remaining_ms = timeout_ms;
+        if (timeout_ms > 0)
+        {
+            remaining_ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()).count());
+            if (remaining_ms <= 0)
+            {
+                observe_timeout();
+                if (!stop()) return failure_return(KT_BP_NOT_STOPPED);
+                return failure_return(KT_BP_TIMEOUT);
+            }
+        }
+        wp = wait(&status, WUNTRACED, remaining_ms);
         if (wp != tid)
         {
             if (wp == 0)
             {
-                stop();
-                KITTY_LOGE("setHardBreakpointAndWait(%p): timedout!", (void *)address);
-                clearHwBreakpoint(type, slot);
-                return KT_BP_TIMEOUT;
+                observe_timeout();
+                if (!stop()) return failure_return(KT_BP_NOT_STOPPED);
+                return failure_return(KT_BP_TIMEOUT);
             }
 
-            KITTY_LOGE("setHardBreakpointAndWait(%p): waitpid returned %d. \"%s\".",
-                       (void *)address,
+            KITTY_LOGE("setHardBreakpointsAndWait: waitpid returned %d. \"%s\".",
                        wp,
                        strerror(errno));
 
@@ -1220,8 +1265,7 @@ again:
         if (WIFEXITED(status))
         {
             _attached = false;
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Target process exited (%d).",
-                       (void *)address,
+            KITTY_LOGE("setHardBreakpointsAndWait: Target process exited (%d).",
                        WEXITSTATUS(status));
             return KT_BP_EXITED;
         }
@@ -1229,8 +1273,7 @@ again:
         if (WIFSIGNALED(status))
         {
             _attached = false;
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Target process terminated (%d).",
-                       (void *)address,
+            KITTY_LOGE("setHardBreakpointsAndWait: Target process terminated (%d).",
                        WTERMSIG(status));
             return KT_BP_EXITED;
         }
@@ -1256,27 +1299,25 @@ again:
             if (si.si_code == 4)
                 break;*/
 
-            if (validate_trap(regs, address))
+            if (std::any_of(addresses.begin(), addresses.end(),
+                            [&](uintptr_t a) { return validate_trap(regs, a); }))
                 break;
 
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Process didn't stop at specified Hardware Breakpoint",
-                       (void *)address);
+            KITTY_LOGE("setHardBreakpointsAndWait: Process didn't stop at specified Hardware Breakpoint");
         }
         else
         {
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Target process didn't stop with SIGTRAP", (void *)address);
+            KITTY_LOGE("setHardBreakpointsAndWait: Target process didn't stop with SIGTRAP");
         }
 
-        KITTY_LOGE("setHardBreakpointAndWait(%p): PC(%p) | RET(%p).",
-                   (void *)address,
+        KITTY_LOGE("setHardBreakpointsAndWait: PC(%p) | RET(%p).",
                    (void *)(regs.KT_REG_PC),
                    (void *)(regs.KT_REG_RET));
 
         siginfo_t si = {};
         getSignalInfo(&si);
 
-        KITTY_LOGE("setHardBreakpointAndWait(%p): SIG(%s) | CODE(%d) | ADDR(%p).",
-                   (void *)address,
+        KITTY_LOGE("setHardBreakpointsAndWait: SIG(%s) | CODE(%d) | ADDR(%p).",
                    strsignal(si.si_signo),
                    si.si_code,
                    (void *)(si.si_addr));
@@ -1284,8 +1325,7 @@ again:
         auto map = KittyMemoryEx::getAddressMap(_pid, uintptr_t(si.si_addr));
         if (map.isValid())
         {
-            KITTY_LOGE("setHardBreakpointAndWait(%p): MAP(<base>+%p) %s",
-                       (void *)address,
+            KITTY_LOGE("setHardBreakpointsAndWait: MAP(<base>+%p) %s",
                        (void *)((map.offset + uintptr_t(si.si_addr)) - map.startAddress),
                        map.toString().c_str());
         }
@@ -1297,15 +1337,16 @@ again:
 
     } while (true);
 
-    KITTY_LOGD("setHardBreakpointAndWait(%p): Success PC(%p).", (void *)address, (void *)regs.KT_REG_PC);
+    auto hit = std::find_if(addresses.begin(), addresses.end(),
+                            [&](uintptr_t a) { return validate_trap(regs, a); });
+    if (hit == addresses.end()) return failure_return(KT_BP_MISMATCH_STOP);
+    if (!clear_all()) return KT_BP_CLEAR_FAILED;
 
-    clearHwBreakpoint(type, slot);
-
-    if (cb && !cb(regs))
+    if (cb && !cb(*hit, regs))
     {
         if (!waitStep())
         {
-            KITTY_LOGE("setHardBreakpointAndWait(%p): Failed to step past breakpoint!", (void *)address);
+            KITTY_LOGE("setHardBreakpointsAndWait: Failed to step past breakpoint!");
             return KT_BP_STEP_FAILED;
         }
 

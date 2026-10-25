@@ -13,6 +13,7 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /** Public Root bridge: production-only methods fail closed; injection remains reviewable. */
@@ -231,7 +232,7 @@ object ExecutionModeLaunchBridge {
         report("Opening game", "Starting ${game.module.title} now.")
         val diagnosticSession = RootLaunchDiagnostics.begin(context, game, runCatching { sha256(nativePayload) }.getOrNull())
         val injection = RootShell.run(
-            "${quote(remoteInjector)} " +
+            "printf '%s\\n' 'Root launch phase: root_shell_ready'; ${quote(remoteInjector)} " +
                 "--package ${quote(game.packageName)} " +
                 "--libs ${quote(remoteBootstrap)} " +
                 "--payload-dex ${quote(remoteDex)} " +
@@ -248,6 +249,19 @@ object ExecutionModeLaunchBridge {
 
         report("Opening game", "${game.module.title} is starting now.")
         return true
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun extractInjector(context: Context, assetPath: String): File {
@@ -304,19 +318,6 @@ object ExecutionModeLaunchBridge {
         }
     }
 
-    private fun sha256(file: File): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(32768)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
     private fun quote(value: String): String = "'${value.replace("'", "'\\''")}'"
 }
 
@@ -342,7 +343,8 @@ object ExecutionModeStartupGate {
 }
 
 internal object RootShell {
-    data class Result(val success: Boolean, val output: String, val exitCode: Int? = null, val timedOut: Boolean = false)
+    data class Result(val success: Boolean, val output: String, val exitCode: Int? = null, val timedOut: Boolean = false,
+        val outputTruncated: Boolean = false, val outputReadComplete: Boolean? = null)
 
     fun run(command: String): Result {
         return run(listOf("su", "-c", command))

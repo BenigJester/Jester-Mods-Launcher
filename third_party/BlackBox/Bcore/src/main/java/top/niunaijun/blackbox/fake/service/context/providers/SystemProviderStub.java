@@ -2,7 +2,11 @@ package top.niunaijun.blackbox.fake.service.context.providers;
 
 import android.os.IInterface;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 import black.android.content.BRAttributionSource;
 import top.niunaijun.blackbox.BlackBoxCore;
@@ -42,8 +46,10 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        // Never rewrite a caller-owned array or its cached Context attribution in place.
+        args = args == null ? null : args.clone();
         if ("asBinder".equals(method.getName())) {
-            return method.invoke(mBase, args);
+            return invokeProvider(mBase, method, args);
         }
         
         String methodName = method.getName();
@@ -68,11 +74,11 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
 
                     if (arg != null && attributionSourceClass != null &&
                             arg.getClass().getName().equals(attributionSourceClass.getName())) {
-                        ContextCompat.fixAttributionSourceState(arg, hostPackage, hostUid);
+                        args[i] = copyAttributionForHost(arg, hostPackage, hostUid);
                     }
                 }
             }
-            return method.invoke(mBase, args);
+            return invokeProvider(mBase, method, args);
         }
         
         
@@ -88,12 +94,60 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
                 Class<?> attrSourceClass = BRAttributionSource.getRealClass();
                 
                 if (attrSourceClass != null && arg.getClass().getName().equals(attrSourceClass.getName())) {
-                    ContextCompat.fixAttributionSourceState(
+                    args[0] = copyAttributionForHost(
                             arg, BlackBoxCore.getHostPkg(), BlackBoxCore.getHostUid());
                 }
             }
         }
-        return method.invoke(mBase, args);
+        return invokeProvider(mBase, method, args);
+    }
+
+    private static Object copyAttributionForHost(Object source, String packageName, int uid)
+            throws ReflectiveOperationException {
+        Object copy = copyAttributionChain(source);
+        ContextCompat.fixAttributionSourceState(copy, packageName, uid);
+        return copy;
+    }
+
+    static Object copyAttributionChain(Object source) throws ReflectiveOperationException {
+        // Builder(AttributionSource) only exists on API 33+. Copy the framework state
+        // instead, using the same hidden state contract as ContextCompat's identity rewrite.
+        // Preserve token, permissions and version-specific fields; isolate every next state.
+        // Do not unparcel AttributionSource outside Binder (Android rejects that operation).
+        Field stateField = source.getClass().getDeclaredField("mAttributionSourceState");
+        stateField.setAccessible(true);
+        Object state = stateField.get(source);
+        return source.getClass().getConstructor(state.getClass()).newInstance(copyAttributionState(state));
+    }
+
+    private static Object copyAttributionState(Object state) throws ReflectiveOperationException {
+        Class<?> stateClass = state.getClass();
+        Object copy = stateClass.getConstructor().newInstance();
+        for (Field field : stateClass.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) continue;
+            field.setAccessible(true);
+            Object value = field.get(state);
+            if (field.getType().isArray() && field.getType().getComponentType() == stateClass
+                    && value != null) {
+                Object next = Array.newInstance(stateClass, Array.getLength(value));
+                for (int i = 0; i < Array.getLength(value); i++) {
+                    Object child = Array.get(value, i);
+                    Array.set(next, i, child == null ? null : copyAttributionState(child));
+                }
+                value = next;
+            }
+            field.set(copy, value);
+        }
+        return copy;
+    }
+
+    static Object invokeProvider(Object provider, Method method, Object[] args) throws Throwable {
+        try {
+            return method.invoke(provider, args);
+        } catch (InvocationTargetException failure) {
+            // Preserve the provider's real exception rather than an undeclared proxy wrapper.
+            throw failure.getCause();
+        }
     }
 
     private boolean isSystemProviderAuthority(String authority) {

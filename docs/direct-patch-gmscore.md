@@ -2,7 +2,7 @@
 
 ## Module configuration
 
-Non-root direct-patch modules can declare automatic ReVanced GmsCore support:
+Non-root direct-patch modules can declare ReVanced GmsCore support:
 
 ```json
 {
@@ -13,9 +13,11 @@ Non-root direct-patch modules can declare automatic ReVanced GmsCore support:
 
 Set `gmscore_support` to false to exclude a game. Omitted means false for legacy
 modules. Only a JSON boolean is accepted, and true requires a direct-patch method.
-The flag enables the setup UI and automatically includes routing in the prepared
-patch. There is no user toggle or per-package preference; old preferences are
-ignored. The module flag remains the authority for including/excluding a game,
+The flag enables the setup UI and its per-game **Use GmsCore** toggle. Selection
+is saved per package in `gmscore_support`; existing explicit selections are
+honored, and packages without a saved selection default to on. Both selection
+and signed module eligibility are required to include routing in a new patch.
+The module flag remains the authority for including/excluding a game,
 not a claim that every Google feature is implemented by the companion.
 
 The publisher carries this as `gmsCoreSupport` in both the signed manifest and
@@ -31,9 +33,19 @@ can still require an adapter/launcher update.
 Library → game → **Google account support** → **Get GmsCore** opens the pinned
 official ReVanced release page. Install the standard companion through Android,
 open it to set up the account, then update the patched game from Library.
-Supported modules always include the adapter. A missing, disabled, outdated or
-untrusted companion blocks preparing that supported patch with setup guidance;
-it never silently prepares a different, non-GmsCore variant.
+When **Use GmsCore** is on, a missing, disabled, outdated or untrusted companion
+blocks preparation with setup guidance. Turning it off explicitly prepares a
+non-GmsCore variant without requiring the companion. This does not guarantee
+the game itself supports running without Google services.
+
+Changing the switch does not modify an installed APK immediately. Update the
+patched game from Library to apply the choice; the profile in the patch revision
+and cache identity changes. Existing verified DEX backups and manifest restoration
+remove previously applied routing when opting out. Missing/corrupt originals
+still fail safely rather than guessing a restoration. Keep progress backed up.
+The switch is disabled during launch/update. Root and BlackBox remain unaffected.
+Diagnostics record the selected choice separately from the profile actually
+installed, so an unapplied change is not mistaken for an active patch.
 
 The companion package, enabled state, minimum version and signing certificate
 are checked. No silent download or installation occurs. Google login stays in

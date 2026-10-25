@@ -165,6 +165,11 @@ public final class LaunchSessionRecorder {
         for (int cause = causes.size() - 1; cause >= 0 && text.length() < maxChars; cause--) {
             Throwable captured = causes.get(cause);
             text.append("cause ").append(captured.getClass().getName()).append('\n');
+            if (captured instanceof WebViewDirectoryLease.LeaseException) {
+                text.append("webview_directory_failure: ")
+                        .append(((WebViewDirectoryLease.LeaseException) captured).reason.name()
+                                .toLowerCase(java.util.Locale.ROOT)).append('\n');
+            }
             String category = dynamicCodeRejection(captured);
             if (category != null) text.append("dynamic_code_rejection: ").append(category).append('\n');
             StackTraceElement[] frames = captured.getStackTrace();
@@ -203,7 +208,7 @@ public final class LaunchSessionRecorder {
         try {
             event("failure " + stage + " " + error.getClass().getName() + " tid=" + Process.myTid());
             File file = new File(guestSession, "failure-" + Process.myPid() + ".txt");
-            if (!file.exists()) Files.write(file.toPath(), exceptionFrames(error).getBytes(StandardCharsets.UTF_8));
+            FailureEvidence.record(file, stage, error, exceptionFrames(error));
         } catch (Throwable ignored) { }
     }
 }

@@ -41,7 +41,8 @@ internal object RemoteLaunchDiagnostics {
                 .put("android", "${android.os.Build.VERSION.RELEASE} / API ${android.os.Build.VERSION.SDK_INT}")
                 .put("abis", android.os.Build.SUPPORTED_ABIS.joinToString())
             if (method == "direct_patch") {
-                meta.put("gmscoreState", GmsCoreSupport.state(context).name)
+                meta.put("gmscoreSelected", GmsCoreSupport.enabled(context, pkg))
+                    .put("gmscoreState", GmsCoreSupport.state(context).name)
                 val applied = java.util.zip.ZipFile(app.applicationInfo!!.sourceDir).use { archive ->
                     archive.getEntry(CONFIG)?.takeIf { it.size in 1..16000 }?.let { entry ->
                         archive.getInputStream(entry).use { JSONObject(String(it.readBytes(), Charsets.UTF_8)).optString("gmsProfile") }
@@ -91,7 +92,7 @@ internal object RemoteLaunchDiagnostics {
         ZipInputStream(input).use { zip ->
             repeat(64) {
                 val entry = zip.nextEntry ?: return@use
-                require(!entry.isDirectory && entry.name.matches(Regex("(?:metadata|host|process-[0-9]+|failure-[0-9]+|resources-[0-9]+|exit-[0-9]+-[0-9]+)\\.(?:txt|pb)")))
+                require(!entry.isDirectory && entry.name.matches(Regex("(?:metadata|host|process-[0-9]+|failure-[0-9]+|resources-[0-9]+|connections-[0-9]+|exit-[0-9]+-[0-9]+)\\.(?:txt|pb)")))
                 require(entry.name !in files)
                 val bytes = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)

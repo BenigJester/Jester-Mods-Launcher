@@ -34,7 +34,10 @@ internal object GmsCoreDexPatcher {
     fun rewriteSet(inputs: Map<String, ByteArray>, rules: GmsCorePatchRules? = null): Map<String, ByteArray> {
         require(inputs.isNotEmpty() && inputs.keys.all { it.matches(Regex("classes(?:[2-9]|[1-9][0-9]+)?\\.dex")) })
         rules?.dexSha256?.forEach { (name, expected) ->
-            require(inputs[name]?.let(::hash) == expected) { "Google account support does not match this game build" }
+            val actual = inputs[name]?.let(::hash)
+            if (actual != expected) throw GmsCorePatchFailure(
+                if (actual == null) GmsCorePatchFailure.Check.DEX_MISSING else GmsCorePatchFailure.Check.DEX_HASH_MISMATCH,
+                name, expected, actual)
         }
         val changed = linkedMapOf<String, ByteArray>()
         val counts = IntArray(4)
@@ -42,12 +45,14 @@ internal object GmsCoreDexPatcher {
             val result = rewriteDex(bytes, counts, rules)
             if (result != null) changed[name] = result
         }
-        require(counts[0] == 1 && counts[1] == 1 && counts[2] > 0) {
-            "This game's Google login is not supported by this add-on. Update the add-on and try again."
-        }
-        if (rules != null) require(changed.keys.all { it in rules.dexSha256 } &&
-            (rules.accountType == null || counts[3] > 0)) {
-            "Google account support does not match this game build"
+        if (counts[0] != 1 || counts[1] != 1 || counts[2] <= 0)
+            throw GmsCorePatchFailure(GmsCorePatchFailure.Check.SDK_SHAPE_UNSUPPORTED)
+        if (rules != null) {
+            changed.keys.firstOrNull { it !in rules.dexSha256 }?.let {
+                throw GmsCorePatchFailure(GmsCorePatchFailure.Check.UNPINNED_DEX_CHANGED, it)
+            }
+            if (rules.accountType != null && counts[3] <= 0)
+                throw GmsCorePatchFailure(GmsCorePatchFailure.Check.ACCOUNT_ROUTE_MISSING)
         }
         return changed
     }
@@ -66,17 +71,18 @@ internal object GmsCoreDexPatcher {
                     method.definingClass.startsWith(BASE + it)
                 }
                 if (!scoped) return@Rewriter method
-                require(implementation.instructions.none { instruction ->
+                if (implementation.instructions.any { instruction ->
                     val ref = (instruction as? ReferenceInstruction)?.reference as? org.jf.dexlib2.iface.reference.MethodReference
                     ref?.definingClass in setOf(BRIDGE, "Lcom/jester/experiment/GmsCoreBridge;")
-                }) { "Google account support does not match this game build" }
+                }) throw GmsCorePatchFailure(GmsCorePatchFailure.Check.ALREADY_ROUTED)
                 val parameters = method.parameterTypes.map { it.toString() }
                 val body = when {
                     method.definingClass == (symbols?.availabilityClass ?: AVAILABILITY) &&
                         method.name == (symbols?.availabilityMethod ?: "isGooglePlayServicesAvailable") &&
                         parameters == listOf("Landroid/content/Context;", "I") && method.returnType == "I" -> {
                         available++
-                        require((method.accessFlags and 8 != 0) == (symbols?.availabilityStatic ?: true))
+                        if ((method.accessFlags and 8 != 0) != (symbols?.availabilityStatic ?: true))
+                            throw GmsCorePatchFailure(GmsCorePatchFailure.Check.AVAILABILITY_SHAPE_MISMATCH)
                         ImmutableMethodImplementation(3, listOf(
                             ImmutableInstruction35c(Opcode.INVOKE_STATIC, 2, 1, 2, 0, 0, 0,
                                 ImmutableMethodReference(BRIDGE, "available", parameters, "I")),
@@ -112,9 +118,8 @@ internal object GmsCoreDexPatcher {
                             method.name == (symbols?.signatureMethod ?: "zzb") &&
                             parameters == listOf("Landroid/content/pm/PackageInfo;", "Z") && method.returnType == "Z") {
                             trusted++
-                            require(method.accessFlags and 8 != 0 && implementation.registerCount in 3..16) {
-                                "Google account support does not match this game build"
-                            }
+                            if (method.accessFlags and 8 == 0 || implementation.registerCount !in 3..16)
+                                throw GmsCorePatchFailure(GmsCorePatchFailure.Check.SIGNATURE_SHAPE_MISMATCH)
                             // Insert the branch after constructing its destination at the shifted original entry.
                             mutable.addInstruction(0, org.jf.dexlib2.builder.instruction.BuilderInstruction35c(
                                 Opcode.INVOKE_STATIC, 1, implementation.registerCount - 2, 0, 0, 0, 0,

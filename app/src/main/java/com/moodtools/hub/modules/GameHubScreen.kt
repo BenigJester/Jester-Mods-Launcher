@@ -436,6 +436,7 @@ data class PackageSetupUiState(
     val kind: PackageReplacementKind = PackageReplacementKind.DIRECT_PATCH,
     val headline: String? = null,
     val detail: String? = null,
+    val gmsCoreDiagnostics: List<String> = emptyList(),
     val diagnostics: List<String> = emptyList()
 )
 
@@ -4610,6 +4611,7 @@ private fun PackageSetupDialog(
             if (state.title.isNotBlank()) appendLine("Game: ${state.title}")
             if (state.packageName.isNotBlank()) appendLine("Package: ${state.packageName}")
             appendLine("Method: ${if (identityShell) "Exact-package shell" else "Direct patch"}")
+            state.gmsCoreDiagnostics.forEach(::appendLine)
             state.stageProgress?.let {
                 appendLine("Stage progress: ${(it.coerceIn(0f, 1f) * 100).toInt()}%")
             }
@@ -8849,7 +8851,8 @@ private fun ModuleScreen(
         }
         if (com.moodtools.hub.GmsCoreSupport.supports(game.module) &&
             game.module.effectiveNonRootMethod == NonRootMethod.DIRECT_PATCH) {
-            item { GmsCoreSetupPortal(ActivePalette) }
+            item { GmsCoreSetupPortal(ActivePalette, game.module,
+                !launch.inProgress && !update.inProgress, onRefresh) }
         }
         item { LaunchDiagnosticsPortal(palette = ActivePalette, packageName = game.packageName) }
         item { Spacer(Modifier.height(12.dp)) }

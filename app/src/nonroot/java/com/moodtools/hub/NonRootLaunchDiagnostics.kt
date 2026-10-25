@@ -233,6 +233,8 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             System.currentTimeMillis() - started, died) else diagnosticAttemptStatus(attempt,
             attemptFailures.map { it.readText() }, stopped || nextAttempt != null, died, System.currentTimeMillis(), launchRequestedAt)
         val status = diagnosticStatusWithMenu(baseStatus, menuState)
+        val prioritizedSupport = com.moodtools.hub.prioritizedSupportingResources(supportingResources)
+        val binderLimitReported = attemptFailures.any { it.readText().contains("System description hint: binder_limit_reported") }
         val suffix = attempt?.let { "@${it.pid}-$started" }.orEmpty()
         if (status == "Possible startup stall") File(session, "possible-stall$suffix").apply { if (!exists()) writeText("suspected") }
         // Reclassification also clears old background-only false alarms without clearing evidence.
@@ -245,19 +247,40 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             appendLine("Menu window verification: ${menuState ?: "unavailable"}")
             appendLine("attached confirms a window attachment, not that its button is visible or unobscured. unsupported/probe_error are not attachment failures.")
             meta.keys().asSequence().sorted().forEach { key -> appendLine("$key: ${meta.get(key).toString().replace('\n', ' ')}") }
-            appendLine("\n--- STARTUP TIMELINE (epoch milliseconds) ---")
-            events.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }.forEach(::appendLine)
-            failures.forEach { appendLine("\n--- ${it.name} ---"); appendLine(it.readText().take(64 * 1024)) }
+            val (selectedEvents, otherEvents) = events.partition { diagnosticEventBelongsToAttempt(it, attempt, nextAttempt) }
+            appendLine(if (attempt == null) "\n--- SESSION TIMELINE (no main-process attempt identified) ---"
+                else "\n--- SELECTED ATTEMPT TIMELINE (epoch milliseconds; host events are shared context) ---")
+            selectedEvents.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }.forEach(::appendLine)
+            appendLine(if (attempt == null) "\n--- SESSION FAILURE / EXIT FILES ---" else "\n--- SELECTED ATTEMPT FAILURE / EXIT FILES ---")
+            appendLine("Failure files are retained per PID and may contain multiple captures; compare their timestamps with the selected attempt.")
+            if (attemptFailures.isEmpty()) appendLine("No matching failure or exit file recorded.")
+            attemptFailures.forEach { appendLine("\n--- ${it.name} ---"); appendLine(diagnosticExitEvidence(it.readText()).take(64 * 1024)) }
+            appendLine("\n--- OTHER SESSION HISTORY (not selected-attempt evidence) ---")
+            appendLine("May include older or later attempts and other processes. Their exits do not explain this attempt.")
+            otherEvents.sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }.forEach(::appendLine)
+            (failures - attemptFailures.toSet()).forEach {
+                appendLine("\n--- OTHER SESSION EVIDENCE: ${it.name} ---"); appendLine(diagnosticExitEvidence(it.readText()).take(64 * 1024))
+            }
             files.filter { it.name.startsWith("stacks-") }.forEach {
-                appendLine("\n--- STARTUP JAVA THREAD SNAPSHOT ---"); appendLine(it.readText().take(64 * 1024))
+                appendLine("\n--- SESSION JAVA THREAD SNAPSHOT (may be from another attempt) ---"); appendLine(it.readText().take(64 * 1024))
+            }
+            files.filter { it.name.matches(Regex("support-stacks-[0-9]+\\.txt")) }.take(4).forEach {
+                appendLine("\n--- ${it.name}: HELPER MAIN THREAD (shared context, not proof of cause) ---")
+                appendLine(it.readText().take(16 * 1024))
             }
             appendLine("\n--- ROLLING SESSION RESOURCES (15-second target interval; latest 24 per process) ---")
             resources.forEach(::appendLine)
             appendLine("\n--- SUPPORTING PROCESS SAMPLES (context only; not separate game attempts) ---")
             if (supportingResources.isEmpty()) appendLine("Unavailable; missing samples do not mean zero usage.")
             supportingResources.forEach(::appendLine)
+            files.filter { it.name.matches(Regex("(?:support-)?connections-[0-9]+\\.txt")) }.take(8).forEach {
+                appendLine("\n--- ${it.name}: SAMPLED CONNECTION CALLERS (process-lifetime context) ---")
+                appendLine(it.readText().take(16 * 1024))
+            }
+            appendLine("Callsites are sampled on calls 1, 2, 4, then every 256 calls per operation; latest 16 retained, up to three code frames each. Samples may precede this attempt or serve another game. They do not prove a leak or Binder allocation ownership.")
             appendLine("Supporting capture runs for up to 10 minutes per observation, at most four sessions per process. Shared helpers may serve other games; these samples do not identify the cause.")
             appendLine("Supporting activityResumed is unavailable because its activity lifecycle is not tracked.")
+            appendLine("bbWindowConnectionCalls counts calls/failures since this process's observation window began, not live connections or exclusive activity for this game. bbTrackedReceivers counts BroadcastManager-owned registrations only; -1 is unavailable, not zero. It excludes other receivers and unknown leaks from older code.")
             appendLine("CPU is cumulative process CPU milliseconds; divide its delta by elapsedMs delta for core usage (may exceed one core).")
             appendLine("mainPendingMs measures an outstanding main-thread probe, not game rendering or a confirmed freeze; -1 means unavailable.")
             appendLine("activityResumed is the last observed activity lifecycle state, not proof of Android foreground importance.")
@@ -277,20 +300,39 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
             for (key in listOf("package", "launcher", "device", "android", "game", "abis", "pageSize", "moduleNativeSha256", "gmscoreEnabled", "gmscoreSelected", "gmscoreState", "gmscoreProfile")) {
                 appendLine("$key: ${meta.opt(key)}")
             }
+            if (binderLimitReported && prioritizedSupport.isNotEmpty()) {
+                appendLine("--- HIGHEST SAMPLED HELPER BINDER COUNT (context only, not proof of cause) ---")
+                appendLine(prioritizedSupport.first())
+                appendLine("Latest sample per helper; not system_server's per-UID count or a kill threshold.")
+                val pid = prioritizedSupport.first().substringBefore(": ")
+                    .removePrefix("support-resources-").removeSuffix(".txt")
+                files.firstOrNull { it.name == "support-connections-$pid.txt" }?.let { file ->
+                    latestConnectionSiteSamples(file.readText()).takeIf(String::isNotEmpty)?.let { sites ->
+                        appendLine("--- LATEST TWO SAMPLED CALLSITES FOR THIS HELPER (context, not cause) ---")
+                        appendLine(sites)
+                        appendLine("Process-lifetime samples; may precede this attempt. Not live connections or allocation ownership.")
+                    }
+                }
+            }
             events.filter { line ->
                 (line.contains(" window_add_rejected ") || line.contains(" window_add_exception ")) &&
                     (attempt == null || line.startsWith("process-${attempt.pid}.txt:")) &&
                     (line.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)
             }.takeLast(3).forEach(::appendLine)
-            attemptFailures.take(2).forEach { appendLine(compactDiagnosticExcerpt(it.readText()).take(3500)) }
+            attemptFailures.filter { it.name.startsWith("failure-") }.forEach { file ->
+                diagnosticFailureEvidenceOverview(file.readText()).takeIf(String::isNotEmpty)?.let(::appendLine)
+            }
+            attemptFailures.take(2).forEach { appendLine(compactDiagnosticExcerpt(diagnosticExitEvidence(it.readText())).take(3500)) }
+            files.filter { it.name.matches(Regex("support-stacks-[0-9]+\\.txt")) }.take(2).forEach {
+                appendLine("--- ${it.name}: HELPER MAIN THREAD (shared context, not cause) ---")
+                appendLine(compactDiagnosticExcerpt(it.readText().take(16 * 1024)).take(1600))
+            }
             appendLine("--- LAST RESOURCE SAMPLES ---")
             resources.takeLast(3).forEach(::appendLine)
             appendLine("--- SUPPORTING PROCESSES (shared context, not proof of cause) ---")
-            supportingResources.groupBy { it.substringBefore(": ") }.values.forEach { it.takeLast(1).forEach(::appendLine) }
+            prioritizedSupport.drop(if (binderLimitReported) 1 else 0).forEach(::appendLine)
             appendLine("--- LAST STARTUP EVENTS ---")
-            events.filter { line -> attempt == null || (
-                (line.startsWith("process-${attempt.pid}.txt:") || line.startsWith("host.txt:")) &&
-                (line.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0) in started until (nextAttempt ?: Long.MAX_VALUE)) }
+            events.filter { diagnosticEventBelongsToAttempt(it, attempt, nextAttempt) }
                 .sortedBy { it.substringAfter(": ").substringBefore(' ').toLongOrNull() ?: 0 }
                 .takeLast(12).forEach(::appendLine)
             appendLine("Share the full report for complete details; a stalled launch is not a confirmed freeze.")

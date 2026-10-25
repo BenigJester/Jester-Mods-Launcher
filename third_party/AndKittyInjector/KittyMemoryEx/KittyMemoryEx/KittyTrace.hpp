@@ -134,6 +134,8 @@ enum KT_BP_RESULT
     KT_BP_MEM_FAILED,
     KT_BP_NOT_STOPPED,
     KT_BP_MISMATCH_STOP,
+    KT_BP_SETUP_FAILED,
+    KT_BP_CLEAR_FAILED,
 };
 
 /**
@@ -585,6 +587,15 @@ public:
                                           KT_HW_BP_SIZE size,
                                           int slot,
                                           const std::function<bool(user_regs_struct regs)> &cb,
+                                          int timeout_ms);
+
+    // Watch all entry points concurrently; callback receives the address that fired.
+    // Uses consecutive slots starting at slot, and clears every installed slot on return.
+    KT_BP_RESULT setHardBreakpointsAndWait(const std::vector<uintptr_t> &addresses,
+                                          KT_HW_BP_TYPE type,
+                                          KT_HW_BP_SIZE size,
+                                          int slot,
+                                          const std::function<bool(uintptr_t, user_regs_struct)> &cb,
                                           int timeout_ms);
 
     /**

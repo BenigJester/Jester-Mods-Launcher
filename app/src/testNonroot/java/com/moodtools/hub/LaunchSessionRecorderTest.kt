@@ -10,6 +10,20 @@ import java.io.File
 class LaunchSessionRecorderTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun `WebView directory failure code survives wrappers without exposing filesystem messages`() {
+        val blocked = temporary.newFile("private-account-path")
+        val error = assertThrows(top.niunaijun.blackbox.utils.WebViewDirectoryLease.LeaseException::class.java) {
+            top.niunaijun.blackbox.utils.WebViewDirectoryLease.acquire(blocked, "0:a.game:a.game")
+        }
+        val report = LaunchSessionRecorder.exceptionFrames(IllegalStateException("private-token", error))
+        assertTrue(report.contains("webview_directory_failure: ownership_directory_unavailable"))
+        assertFalse(report.contains("private-account-path"))
+        assertFalse(report.contains("private-token"))
+        assertFalse(report.contains(blocked.absolutePath))
+        val unknown = LaunchSessionRecorder.exceptionFrames(java.io.IOException("All WebView directory owners are busy"))
+        assertFalse(unknown.contains("webview_directory_failure:"))
+    }
+
     @Test fun `Binder resource samples retain only bounded numeric counters`() {
         val recorder = top.niunaijun.blackbox.utils.SessionResourceRecorder()
         val sample = recorder.record(1, 2, 3, 4, 5, 6, 0, 10, 20, 30, 40, -1)

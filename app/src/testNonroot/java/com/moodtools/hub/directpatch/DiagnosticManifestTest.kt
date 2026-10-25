@@ -12,6 +12,28 @@ import org.junit.rules.TemporaryFolder
 
 class DiagnosticManifestTest {
     @get:Rule val temporary = TemporaryFolder()
+    @Test fun `identity shell diagnostic provider is not evidence of a direct patched game`() {
+        val root = listOf(File("."), File("..")).first { File(it, "settings.gradle").isFile }
+        val template = File(root, "identity-shell-template/build/outputs/apk/release")
+            .listFiles()!!.single { it.extension == "apk" }
+        val manifest = ZipFile(template).use { zip ->
+            zip.getInputStream(zip.getEntry("AndroidManifest.xml")).readBytes()
+        }
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            BinaryXmlStringPool.withDiagnosticProvider(manifest, "com.example.game")
+        }
+        assertEquals("Existing diagnostic provider has an unexpected application factory", error.message)
+        val patcher = File(root, "app/src/nonroot/java/com/moodtools/hub/directpatch/DirectPackagePatchManager.kt")
+            .readText().substringAfter("fun prepare(")
+        assertTrue(patcher.indexOf(".isInstalledShell()") < patcher.indexOf("val gmsProfile = gmsProfile()"))
+        val routing = File(root, "app/src/main/java/com/moodtools/hub/LauncherActivity.kt").readText()
+            .substringAfter("private fun resolveNonRootMethodChoice(").substringBefore("fun selectNonRootMethod(")
+        assertTrue(routing.indexOf("ExecutionModeLaunchBridge.installedNonRootMethod(") <
+            routing.indexOf("if (!config.offersNonRootMethodChoice)"))
+        assertTrue(routing.contains("installedNonRootMethod = installed"))
+        assertTrue(routing.contains("installedNonRootMethod = null"))
+    }
+
     @Test fun `injects isolated provider and factory into compiled manifests without replacing game declarations`() {
         val root = listOf(File("."), File("..")).first { File(it, "settings.gradle").isFile }
         val template = File(root, "diagnostic-bootstrap/build/outputs/apk/release").listFiles()!!.single { it.extension == "apk" }

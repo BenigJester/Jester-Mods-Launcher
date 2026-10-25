@@ -29,39 +29,6 @@ Supported direct-patch flows create a launcher-signed replacement package only
 after an explicit user action. Android may erase the original game’s local data
 on the first signer-changing replacement; the UI must disclose that risk.
 
-## Launch and crash diagnostics
-
-Diagnostics are stored on the device in private app storage. They can include
-game/launcher versions, device model, Android version, ABI, module hashes,
-launch stages, and filtered crash stack traces or native fault addresses.
-Non-root mode records BlackBox sessions and suspected startup stalls. Supported
-direct patches and identity shells also record their own session/crash evidence
-inside their app sandbox, then transfer reports to the launcher through a
-separate diagnostics process restricted to the configured launcher package and
-signing certificate. Available Android process-exit records and bounded resource
-samples can be included; raw native traces are reduced to summaries and are not
-retained in launcher storage. Root mode reads matching game crashes from
-Android's crash buffer using root access.
-Exception messages, raw crash logs, and memory dumps are not retained in Root
-reports. Diagnostics do not automatically identify a faulty hook or prove that
-a game reached its menu.
-
-Reports are not automatically uploaded. Copy, export, or sharing requires an
-explicit user action. The GitHub flow opens an issue with key details prefilled;
-users review and submit it themselves. Saving and attaching the full report is
-optional. The Diagnostic Tutorial button opens the linked YouTube video in an
-external app or browser; it does not send diagnostic reports to YouTube.
-Clearing diagnostics removes that game's saved reports, not game data,
-previously exported files, or Android's system crash logs.
-
-## Optional Google account support
-
-Supported Non-root direct-patch games can use the separately installed ReVanced
-GmsCore companion. Account setup and sign-in happen in that companion, not in
-the launcher. The launcher checks the companion's identity, version and signing
-certificate; it does not read account names, passwords or authentication tokens.
-The device's official Google Play Services and system accounts are unchanged.
-
 ## Public reports
 
 Remove digital keys, identifiers, certificate chains, complete request bodies,

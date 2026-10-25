@@ -59,7 +59,9 @@ public class WebViewDirectoryLeaseTest {
                 assertEquals(i != 0, lease.alternate);
                 leases.add(lease);
             }
-            assertThrows(java.io.IOException.class, () -> WebViewDirectoryLease.acquire(root, primary));
+            assertEquals(WebViewDirectoryLease.FailureReason.ALL_OWNERS_BUSY,
+                    assertThrows(WebViewDirectoryLease.LeaseException.class,
+                            () -> WebViewDirectoryLease.acquire(root, primary)).reason);
             assertEquals(4, root.list().length); // No PID/time-dependent unbounded profile creation.
             leases.remove(0).close();
             try (WebViewDirectoryLease reused = WebViewDirectoryLease.acquire(root, primary)) {
@@ -88,6 +90,38 @@ public class WebViewDirectoryLeaseTest {
             assertThrows(java.io.IOException.class, () -> WebViewDirectoryLease.acquire(root, ""));
         } finally {
             for (WebViewDirectoryLease lease : leases) lease.close();
+            for (File file : root.listFiles()) assertTrue(file.delete());
+            assertTrue(root.delete());
+        }
+    }
+
+    @Test public void diagnosticCodesDistinguishInvalidIdentityDirectoryAndFileFailures() throws Exception {
+        File root = Files.createTempDirectory("webview-failures-").toFile();
+        File blocked = new File(root, "private-account-path");
+        try {
+            assertEquals(WebViewDirectoryLease.FailureReason.INVALID_IDENTITY,
+                    assertThrows(WebViewDirectoryLease.LeaseException.class,
+                            () -> WebViewDirectoryLease.acquire(root, "../escape")).reason);
+            assertTrue(blocked.createNewFile());
+            assertEquals(WebViewDirectoryLease.FailureReason.OWNERSHIP_DIRECTORY_UNAVAILABLE,
+                    assertThrows(WebViewDirectoryLease.LeaseException.class,
+                            () -> WebViewDirectoryLease.acquire(blocked, "0:a.game:a.game")).reason);
+            assertTrue(blocked.delete());
+            // Occupy the first ownership-file path with a directory, not a lock owner.
+            try (WebViewDirectoryLease lease = WebViewDirectoryLease.acquire(root, "0:a.game:a.game")) { }
+            File slot = root.listFiles()[0];
+            assertTrue(slot.delete());
+            assertTrue(slot.mkdir());
+            WebViewDirectoryLease.LeaseException failure = assertThrows(WebViewDirectoryLease.LeaseException.class,
+                    () -> WebViewDirectoryLease.acquire(root, "0:a.game:a.game"));
+            assertEquals(WebViewDirectoryLease.FailureReason.OWNERSHIP_FILE_OPEN_FAILED, failure.reason);
+            String report = LaunchSessionRecorder.exceptionFrames(new IllegalStateException("private-token", failure));
+            assertTrue(report.contains("webview_directory_failure: ownership_file_open_failed"));
+            assertFalse(report.contains(root.getAbsolutePath()));
+            assertFalse(report.contains(slot.getName()));
+            assertFalse(report.contains("private-token"));
+            assertEquals(1, root.list().length); // Fail closed: don't silently choose a new profile.
+        } finally {
             for (File file : root.listFiles()) assertTrue(file.delete());
             assertTrue(root.delete());
         }

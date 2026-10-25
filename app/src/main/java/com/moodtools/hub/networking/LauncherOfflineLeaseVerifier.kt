@@ -18,7 +18,8 @@ internal data class LauncherOfflineLeaseClaims(
 internal enum class LauncherLeaseClockStatus {
     VALID,
     EXPIRED,
-    ROLLED_BACK
+    ROLLED_BACK,
+    REQUIRES_ONLINE
 }
 
 internal object LauncherOfflineLeaseVerifier {
@@ -73,20 +74,24 @@ internal object LauncherOfflineLeaseVerifier {
         now: Long,
         lastSeen: Long,
         elapsedRealtimeMillis: Long,
-        lastElapsedRealtimeMillis: Long
+        lastElapsedRealtimeMillis: Long,
+        bootCount: Int,
+        savedBootCount: Int
     ): LauncherLeaseClockStatus {
         if (now >= expiresAt) return LauncherLeaseClockStatus.EXPIRED
+        if (bootCount < 0 || savedBootCount != bootCount || lastSeen <= 0L ||
+            lastElapsedRealtimeMillis < 0L || elapsedRealtimeMillis < lastElapsedRealtimeMillis) {
+            return LauncherLeaseClockStatus.REQUIRES_ONLINE
+        }
         if (now + CLOCK_SKEW_SECONDS < issuedAt) return LauncherLeaseClockStatus.ROLLED_BACK
         if (lastSeen > 0L && now + CLOCK_SKEW_SECONDS < lastSeen) {
             return LauncherLeaseClockStatus.ROLLED_BACK
         }
-        if (lastSeen > 0L && lastElapsedRealtimeMillis > 0L &&
-            elapsedRealtimeMillis >= lastElapsedRealtimeMillis) {
-            val expectedWallTime = lastSeen +
-                (elapsedRealtimeMillis - lastElapsedRealtimeMillis) / 1000L
-            if (now + CLOCK_SKEW_SECONDS < expectedWallTime) {
-                return LauncherLeaseClockStatus.ROLLED_BACK
-            }
+        val expectedWallTime = lastSeen +
+            (elapsedRealtimeMillis - lastElapsedRealtimeMillis) / 1000L
+        if (expectedWallTime >= expiresAt) return LauncherLeaseClockStatus.EXPIRED
+        if (now + CLOCK_SKEW_SECONDS < expectedWallTime) {
+            return LauncherLeaseClockStatus.ROLLED_BACK
         }
         return LauncherLeaseClockStatus.VALID
     }

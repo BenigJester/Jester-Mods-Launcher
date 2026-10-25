@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.zip.ZipFile;
 import top.niunaijun.blackbox.utils.SessionResourceRecorder;
+import top.niunaijun.blackbox.utils.FailureEvidence;
 
 /** Fixed stages and exception frames only. Never persist arbitrary exception messages or intents. */
 public final class DiagnosticRuntime {
@@ -108,7 +109,7 @@ public final class DiagnosticRuntime {
     public static synchronized void failure(String stage, Throwable error) {
         event("failure " + stage + " " + error.getClass().getName());
         if (session == null || !session.isDirectory()) return;
-        try { Files.write(new File(session, "failure-" + Process.myPid() + ".txt").toPath(), frames(error).getBytes(StandardCharsets.UTF_8)); }
+        try { FailureEvidence.record(new File(session, "failure-" + Process.myPid() + ".txt"), stage, error, frames(error)); }
         catch (Throwable ignored) { }
     }
     public static String frames(Throwable error) {

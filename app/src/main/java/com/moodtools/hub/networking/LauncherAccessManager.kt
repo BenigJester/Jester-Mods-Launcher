@@ -57,8 +57,10 @@ class LauncherModuleAuthorization internal constructor(
     val expiresAt: Long,
     val privateScope: String?,
     internal val proofKeyId: String,
-    private val payloadProofProvider: (method: String, path: String) -> LauncherRequestProof
+    private val payloadProofProvider: (method: String, path: String) -> LauncherRequestProof,
+    private val nowSeconds: () -> Long
 ) {
+    internal fun isExpired(): Boolean = expiresAt <= nowSeconds()
     internal fun payloadProof(method: String, path: String): LauncherRequestProof =
         payloadProofProvider(method, path)
 }
@@ -133,13 +135,16 @@ class LauncherAccessManager(context: Context) {
                 now = now,
                 lastSeen = preferences.getLong(privateLastSeenKey(scope), 0L),
                 elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), 0L)
+                lastElapsedRealtimeMillis = preferences.getLong(privateElapsedKey(scope), -1L),
+                bootCount = bootCount(),
+                savedBootCount = preferences.getInt(privateBootKey(scope), -1)
             )) {
                 LauncherLeaseClockStatus.VALID -> LauncherPrivateAccessResult.Approved(lease)
                 LauncherLeaseClockStatus.EXPIRED -> LauncherPrivateAccessResult.Unavailable(
                     IllegalStateException("The cached private approval has expired")
                 )
-                LauncherLeaseClockStatus.ROLLED_BACK -> LauncherPrivateAccessResult.Unavailable(
+                LauncherLeaseClockStatus.ROLLED_BACK,
+                LauncherLeaseClockStatus.REQUIRES_ONLINE -> LauncherPrivateAccessResult.Unavailable(
                     IllegalStateException("The device clock cannot verify cached private approval")
                 )
             }
@@ -152,7 +157,6 @@ class LauncherAccessManager(context: Context) {
     internal fun checkPrivateAccess(scope: String): LauncherPrivateAccessResult {
         require(scope.matches(PRIVATE_SCOPE_PATTERN)) { "Invalid private module scope" }
         return try {
-            val now = System.currentTimeMillis() / 1_000L
             val digitalKey = preferences.getString(DIGITAL_KEY, null).orEmpty()
             if (digitalKey.isEmpty()) {
                 return LauncherPrivateAccessResult.Unavailable(
@@ -160,7 +164,6 @@ class LauncherAccessManager(context: Context) {
                 )
             }
             val proofIdentity = proofKeys.identity()
-            val cached = (cachedPrivateAccess(scope) as? LauncherPrivateAccessResult.Approved)?.lease
             try {
                 val response = postJson(
                     "$BASE_URL/api/launcher/private-access",
@@ -193,19 +196,21 @@ class LauncherAccessManager(context: Context) {
                     )
                     check(preferences.edit()
                         .putString("$PRIVATE_LEASE_PREFIX$scope", envelope.toString())
-                        .putLong(privateLastSeenKey(scope), now)
+                        .putLong(privateLastSeenKey(scope), lease.issuedAt)
                         .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
+                        .putInt(privateBootKey(scope), bootCount())
                         .commit()) { "Private device approval could not be saved" }
                     LauncherPrivateAccessResult.Approved(lease)
                 }
             } catch (error: Exception) {
+                // Recheck after the request deadline; cached approval may have expired meanwhile.
+                val cached = (cachedPrivateAccess(scope) as? LauncherPrivateAccessResult.Approved)?.lease
                 if (cached != null) {
                     android.util.Log.w(
                         "JesterMoodsPrivateAccess",
                         "The private access server could not be reached; using the signed offline approval.",
                         error
                     )
-                    rememberPrivateLeaseClock(scope, now)
                     LauncherPrivateAccessResult.Approved(cached)
                 } else {
                     LauncherPrivateAccessResult.Unavailable(error)
@@ -229,22 +234,19 @@ class LauncherAccessManager(context: Context) {
             .remove("$PRIVATE_LEASE_PREFIX$scope")
             .remove(privateLastSeenKey(scope))
             .remove(privateElapsedKey(scope))
-            .apply()
-    }
-
-    private fun rememberPrivateLeaseClock(scope: String, now: Long) {
-        preferences.edit()
-            .putLong(
-                privateLastSeenKey(scope),
-                maxOf(now, preferences.getLong(privateLastSeenKey(scope), 0L))
-            )
-            .putLong(privateElapsedKey(scope), SystemClock.elapsedRealtime())
+            .remove(privateBootKey(scope))
             .apply()
     }
 
     private fun privateLastSeenKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_last_seen"
 
     private fun privateElapsedKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_elapsed"
+
+    private fun privateBootKey(scope: String) = "$PRIVATE_LEASE_PREFIX${scope}_boot"
+
+    private fun bootCount(): Int = runCatching {
+        Settings.Global.getInt(appContext.contentResolver, Settings.Global.BOOT_COUNT)
+    }.getOrDefault(-1)
 
     fun currentLease(): LauncherLease? {
         val deadline = AccessCheckDeadline()
@@ -280,10 +282,13 @@ class LauncherAccessManager(context: Context) {
                 now = now,
                 lastSeen = lastSeen,
                 elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                lastElapsedRealtimeMillis = preferences.getLong(LAST_ELAPSED_REALTIME, 0L)
+                lastElapsedRealtimeMillis = preferences.getLong(LAST_ELAPSED_REALTIME, -1L),
+                bootCount = bootCount(),
+                savedBootCount = preferences.getInt(LEASE_BOOT_COUNT, -1)
             )
             return when (clockStatus) {
-                LauncherLeaseClockStatus.VALID -> {
+                LauncherLeaseClockStatus.VALID,
+                LauncherLeaseClockStatus.REQUIRES_ONLINE -> {
                     val response = try {
                         postJson(
                             "$BASE_URL/api/launcher/access",
@@ -304,14 +309,16 @@ class LauncherAccessManager(context: Context) {
                                 now = fallbackNow,
                                 lastSeen = lastSeen,
                                 elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                                lastElapsedRealtimeMillis = preferences.getLong(LAST_ELAPSED_REALTIME, 0L)
+                                lastElapsedRealtimeMillis = preferences.getLong(LAST_ELAPSED_REALTIME, -1L),
+                                bootCount = bootCount(),
+                                savedBootCount = preferences.getInt(LEASE_BOOT_COUNT, -1)
                             ) != LauncherLeaseClockStatus.VALID) throw error
                         android.util.Log.w(
                             "JesterMoodsAccess",
                             "The access server could not be reached; using the verified offline lease.",
                             error
                         )
-                        rememberLeaseClock(fallbackNow)
+                        // Keep the server-approved anchor fixed: offline checks must not renew skew tolerance.
                         return LauncherLease(issuedAt, expiresAt, claims.grantExpiresAt)
                     }
                     // An explicit server rejection must not fall back to the rejected lease
@@ -486,7 +493,7 @@ class LauncherAccessManager(context: Context) {
             .put("slug", slug)
             .put("abi", abi)
             .put("bootstrap", bootstrap)
-        val challengeResponse = postJson("$BASE_URL/api/launcher/proof/challenge", request)
+        val challengeResponse = postProofChallenge("$BASE_URL/api/launcher/proof/challenge", request, identity.keyId)
         require(challengeResponse.optBoolean("ok")) {
             challengeResponse.optString("message", "The launcher proof challenge failed")
         }
@@ -519,7 +526,7 @@ class LauncherAccessManager(context: Context) {
         requireServiceOk(response, "The launcher could not authorize this module download")
         val capability = response.getString("capability")
         val expiresAt = response.getLong("expiresAt")
-        val now = System.currentTimeMillis() / 1000L
+        val now = onlineNowSeconds(response)
         require(capability.length in 80..4096 && capability.matches(Regex("[A-Za-z0-9_.-]+")) &&
             expiresAt > now && expiresAt <= now + MODULE_CAPABILITY_TTL_SECONDS + CLOCK_SKEW_SECONDS &&
             response.optBoolean("proofRequired") &&
@@ -539,7 +546,8 @@ class LauncherAccessManager(context: Context) {
             proofKeyId = identity.keyId,
             payloadProofProvider = { method, path ->
                 createPayloadProof(capability, identity.keyId, method, path)
-            }
+            },
+            nowSeconds = { onlineNowSeconds(response) }
         )
     }
 
@@ -550,12 +558,13 @@ class LauncherAccessManager(context: Context) {
         val accessVersion = activeAccessVersion()
         val identity = ensureProofKeyRegistered(digitalKey)
         tryEnsureProofAttestation(digitalKey, identity)
-        val challengeResponse = postJson(
+        val challengeResponse = postProofChallenge(
             "$BASE_URL/api/launcher/proof/challenge",
             accessRequest(digitalKey)
                 .put("purpose", "private-catalog")
                 .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
-                .put("keyId", identity.keyId)
+                .put("keyId", identity.keyId),
+            identity.keyId
         )
         require(challengeResponse.optBoolean("ok")) {
             challengeResponse.optString("message", "The private catalog proof challenge failed")
@@ -584,7 +593,7 @@ class LauncherAccessManager(context: Context) {
         require(catalogs.length() in 0..MAX_PRIVATE_CATALOGS)
         val capability = response.getString("capability")
         val expiresAt = response.getLong("expiresAt")
-        val now = System.currentTimeMillis() / 1_000L
+        val now = onlineNowSeconds(response)
         require(capability.length in 80..4096 && capability.matches(Regex("[A-Za-z0-9_.-]+")) &&
             expiresAt > now && expiresAt <= now + MODULE_CAPABILITY_TTL_SECONDS + CLOCK_SKEW_SECONDS)
         val envelopes = buildList {
@@ -601,7 +610,7 @@ class LauncherAccessManager(context: Context) {
             .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
             .put("keyId", identity.keyId)
             .put("publicKey", identity.publicKey)
-        val challengeResponse = postJson("$BASE_URL/api/launcher/proof/challenge", request)
+        val challengeResponse = postProofChallenge("$BASE_URL/api/launcher/proof/challenge", request, identity.keyId)
         require(challengeResponse.optBoolean("ok")) {
             challengeResponse.optString("message", "The launcher proof key could not be registered")
         }
@@ -646,13 +655,14 @@ class LauncherAccessManager(context: Context) {
         try {
             val registeredIdentity = ensureProofKeyRegistered(digitalKey)
             require(registeredIdentity.keyId == identity.keyId)
-            val challengeResponse = postJson(
+            val challengeResponse = postProofChallenge(
                 "$BASE_URL/api/launcher/proof/challenge",
                 accessRequest(digitalKey)
                     .put("purpose", "recovery-bind")
                     .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
                     .put("keyId", identity.keyId)
-                    .put("recoveryId", recoveryId)
+                    .put("recoveryId", recoveryId),
+                identity.keyId
             )
             require(challengeResponse.optBoolean("ok")) {
                 challengeResponse.optString("message", "Device recovery binding is unavailable")
@@ -692,11 +702,12 @@ class LauncherAccessManager(context: Context) {
         identity: LauncherProofIdentity
     ) {
         val accessVersion = activeAccessVersion()
-        val challengeResponse = postJson(
+        val challengeResponse = postProofChallenge(
             "$BASE_URL/api/launcher/proof/attestation/challenge",
             accessRequest(digitalKey)
                 .put("proofVersion", LauncherProofKeyManager.PROOF_VERSION)
-                .put("keyId", identity.keyId)
+                .put("keyId", identity.keyId),
+            identity.keyId
         )
         require(challengeResponse.optBoolean("ok") &&
             challengeResponse.optInt("proofVersion") == LauncherProofKeyManager.PROOF_VERSION &&
@@ -785,12 +796,13 @@ class LauncherAccessManager(context: Context) {
     ): LauncherRequestProof {
         require(method == "GET" || method == "HEAD")
         require(path.matches(Regex("^/api/launcher-module-payload/[A-Za-z0-9._/-]{1,400}$")))
-        val response = postJson(
+        val response = postProofChallenge(
             "$BASE_URL/api/launcher-module-proof",
             JSONObject()
                 .put("method", method)
                 .put("path", path)
                 .put("keyId", keyId),
+            keyId,
             mapOf("Authorization" to "Bearer $capability")
         )
         require(response.optBoolean("ok")) {
@@ -811,14 +823,23 @@ class LauncherAccessManager(context: Context) {
     }
 
     private fun validateProofChallenge(response: JSONObject, keyId: String, nonce: String) {
-        val now = System.currentTimeMillis() / 1000L
-        val expiresAt = response.getLong("expiresAt")
-        require(response.optInt("proofVersion") == LauncherProofKeyManager.PROOF_VERSION &&
-            response.optString("keyId") == keyId && nonce.matches(ID_PATTERN) &&
-            expiresAt > now && expiresAt <= now + PROOF_NONCE_TTL_SECONDS + CLOCK_SKEW_SECONDS) {
-            "The launcher proof challenge is invalid"
-        }
+        validateLauncherProofChallenge(response, keyId, nonce, onlineNowSeconds(response),
+            (response as? LauncherOnlineResponse)?.hasServerTime == true)
     }
+
+    private fun onlineNowSeconds(response: JSONObject): Long =
+        (response as? LauncherOnlineResponse)?.nowSeconds(SystemClock.elapsedRealtime(), System.currentTimeMillis())
+            ?: System.currentTimeMillis() / 1000L
+
+    private fun postProofChallenge(address: String, body: JSONObject, keyId: String,
+        headers: Map<String, String> = emptyMap()): JSONObject = freshLauncherProofChallenge(
+        fetch = { postJson(address, body, headers) },
+        validate = { response ->
+            // Registered-key replies contain no nonce; retain their caller's existing checks.
+            if (response.optBoolean("ok") && !response.optBoolean("registered"))
+                validateProofChallenge(response, keyId, response.optString("nonce"))
+        }
+    )
 
     private fun accessRequest(digitalKey: String): JSONObject = JSONObject()
         .put("digitalKey", digitalKey)
@@ -981,8 +1002,9 @@ class LauncherAccessManager(context: Context) {
             .apply {
                 if (offlineLease == null) remove(OFFLINE_LEASE) else putString(OFFLINE_LEASE, offlineLease)
             }
-            .putLong(LAST_SEEN, System.currentTimeMillis() / 1000L)
+            .putLong(LAST_SEEN, issuedAt)
             .putLong(LAST_ELAPSED_REALTIME, SystemClock.elapsedRealtime())
+            .putInt(LEASE_BOOT_COUNT, bootCount())
             .commit()) { "The launcher lease could not be saved" }
     }
 
@@ -1023,12 +1045,14 @@ class LauncherAccessManager(context: Context) {
         if (deadline != null) return deadline.await { postJson(address, body, headers) }
         val url = URL(address)
         require(url.protocol == "https" && url.host == HOST)
+        val startedElapsedMillis = SystemClock.elapsedRealtime()
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = false
+            useCaches = false
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
             headers.forEach { (name, value) -> setRequestProperty(name, value) }
@@ -1047,7 +1071,8 @@ class LauncherAccessManager(context: Context) {
                 }
                 result.toString()
             }.orEmpty()
-            parseLauncherServiceResponse(status, connection.contentType, text)
+            LauncherOnlineResponse(parseLauncherServiceResponse(status, connection.contentType, text),
+                connection.getHeaderFieldDate("Date", 0L), startedElapsedMillis)
         } finally {
             connection.disconnect()
         }
@@ -1075,6 +1100,7 @@ class LauncherAccessManager(context: Context) {
         private const val OFFLINE_LEASE = "offline_lease"
         private const val LAST_SEEN = "last_seen"
         private const val LAST_ELAPSED_REALTIME = "last_elapsed_realtime"
+        private const val LEASE_BOOT_COUNT = "lease_boot_count"
         private const val PENDING_CHALLENGE = "pending_challenge"
         private const val PENDING_EXPIRES = "pending_expires"
         private const val RECOVERY_BOUND_KEY = "recovery_bound_key"
@@ -1085,7 +1111,6 @@ class LauncherAccessManager(context: Context) {
         private const val MAX_MANAGED_ACCESS_TTL_SECONDS = 10L * 365L * 24L * 60L * 60L
         private const val CLOCK_SKEW_SECONDS = 5L * 60L
         private const val MODULE_CAPABILITY_TTL_SECONDS = 10L * 60L
-        private const val PROOF_NONCE_TTL_SECONDS = 2L * 60L
         private const val MAX_PRIVATE_CATALOGS = 256
         private const val DEVICE_ID_NAMESPACE = "jester-moods-launcher-device-v1"
         private const val RECOVERY_ID_NAMESPACE = "jester-moods-launcher-recovery-v1"

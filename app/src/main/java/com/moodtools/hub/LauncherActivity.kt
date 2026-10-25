@@ -395,6 +395,8 @@ class LauncherActivity : ComponentActivity() {
         lifecycleScope.launch {
             PackageReplacementInstallEvents.results.collect { result ->
                 if (result.packageName != pendingPackageReplacement?.packageName) return@collect
+                viewModel.onPackageReplacementDiagnostic(packageInstallEvidence(result.status, result.sessionId, result.observation))
+                if (result.observation == PackageInstallObservation.CONFIRMATION_OPENED) return@collect
                 if (result.successful) {
                     // PackageInstaller can report success just before PackageManager exposes the
                     // replacement application's metadata. Keep the setup pending until the exact
@@ -1004,6 +1006,9 @@ class LauncherActivity : ComponentActivity() {
                 packageReplacementPhase == PackageReplacementPhase.WAITING_FOR_INSTALL_RESULT &&
                 (installerReportedSuccess ||
                     lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) {
+                viewModel.onPackageReplacementDiagnostic(packageInstallEvidence(null, null,
+                    if (installerReportedSuccess) PackageInstallObservation.SUCCESS_IDENTITY_NOT_VISIBLE
+                    else PackageInstallObservation.RESULT_NOT_OBSERVED))
                 finishPackageReplacementWithFailure(
                     if (installerReportedSuccess) {
                         "Android installed the package, but its verified package identity was not ready in time. Return to the Library and refresh before retrying."
@@ -3230,8 +3235,23 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 }
                 return@launch
             }
+            if (!BuildConfig.IS_ROOT_MODE && kind == PackageReplacementKind.DIRECT_PATCH) {
+                val context = getApplication<android.app.Application>()
+                val snapshot = runCatching {
+                    GmsCoreSupport.setupDiagnostics(
+                        GmsCoreSupport.supports(game.module),
+                        GmsCoreSupport.enabled(context, game.packageName),
+                        GmsCoreSupport.state(context)
+                    )
+                }.getOrDefault(listOf("GmsCore setup snapshot: unavailable"))
+                _packageSetupState.update { current -> current.copy(gmsCoreDiagnostics = snapshot) }
+            }
             withContext(Dispatchers.Main) { onAuthorized() }
         }
+    }
+
+    fun onPackageReplacementDiagnostic(detail: String) {
+        _packageSetupState.update { it.copy(diagnostics = appendDiagnostic(it.diagnostics, detail)) }
     }
 
     fun onPackageReplacementProgress(headline: String, detail: String) {
@@ -5234,18 +5254,22 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun resolveNonRootMethodChoice(
         config: com.moodtools.hub.modules.ModuleConfig
     ): com.moodtools.hub.modules.ModuleConfig {
-        if (BuildConfig.IS_ROOT_MODE || !config.offersNonRootMethodChoice) {
-            return config.copy(selectedNonRootMethod = null)
+        if (BuildConfig.IS_ROOT_MODE) {
+            return config.copy(selectedNonRootMethod = null, installedNonRootMethod = null)
         }
         val installed = ExecutionModeLaunchBridge.installedNonRootMethod(
             getApplication(),
             config.packageName
-        )?.takeIf(config.nonRootMethods::contains)
+        )
+        if (!config.offersNonRootMethodChoice) {
+            return config.copy(selectedNonRootMethod = null, installedNonRootMethod = installed)
+        }
         val saved = libraryPreferences.getString(nonRootMethodChoiceKey(config), null)
             ?.let { value -> runCatching { NonRootMethod.fromJson(value) }.getOrNull() }
             ?.takeIf(config.nonRootMethods::contains)
         return config.copy(
-            selectedNonRootMethod = resolveNonRootMethodChoice(config, saved, installed)
+            selectedNonRootMethod = resolveNonRootMethodChoice(config, saved, installed),
+            installedNonRootMethod = installed
         )
     }
 

@@ -9,6 +9,7 @@
 
 #include <sys/inotify.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 
 #include <chrono>
 #include <vector>
@@ -278,22 +279,9 @@ bool inject(int pid,
     // Manually initialize tracer to seize and interrupt as soon as possible
     kmgr.trace = KittyTraceMgr(pid, 0, true);
 
-    if (kill(pid, SIGSTOP) == -1)
-    {
-        KITTY_LOGE("Failed to stop target process threads!");
-        return false;
-    }
-
-    KITTY_LOGI("Stopped target process threads successfully.");
-
-    // resume main thread only
-    // main thread should be stopped by ptrace attach/seize
-    if (tgkill(pid, pid, SIGCONT) == -1)
-    {
-        KITTY_LOGE("tgkill(%d, SIGCONT) failed. \"%s\".", pid, strerror(errno));
-        return false;
-    }
-
+    // Upstream AndKittyInjector d39b458: stop only the traced main thread.
+    // Process-wide stop/continue can interrupt a sibling holding a loader/runtime lock.
+    // Siblings must be able to finish initialization while we wait for a loader breakpoint.
     errno = 0;
     bool attached = cfg.seize = cfg.sdk >= 21 && kmgr.trace.seize(PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD);
     if (!attached)
@@ -315,6 +303,13 @@ bool inject(int pid,
     }
 
     KITTY_LOGI("Attached to target process successfully.");
+    KITTY_LOGI("Root thread pause mode: main_thread_only");
+    KITTY_LOGI("Root trace method: %s", cfg.seize ? "seize" : "attach");
+    struct utsname kernel{};
+    unsigned int major = 0, minor = 0, patch = 0;
+    if (uname(&kernel) == 0 && sscanf(kernel.release, "%u.%u.%u", &major, &minor, &patch) == 3 &&
+        major <= 9999 && minor <= 9999 && patch <= 9999)
+        KITTY_LOGI("Root kernel version: %u.%u.%u", major, minor, patch);
 
     KITTY_LOGI("Initializing Injector...");
 
@@ -404,14 +399,6 @@ bool inject(int pid,
     }
 
     KITTY_LOGI("Dettached from target process successfully.");
-
-    if (kill(pid, SIGCONT) == -1)
-    {
-        KITTY_LOGE("Failed to resume target process threads!");
-        return false;
-    }
-
-    KITTY_LOGI("Resumed target process threads successfully.");
 
     return true;
 }

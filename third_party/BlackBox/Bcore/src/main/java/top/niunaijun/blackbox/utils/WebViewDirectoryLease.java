@@ -12,6 +12,21 @@ import java.security.NoSuchAlgorithmException;
 
 /** Process-lifetime ownership, separate from Chromium's own lock (which we never touch). */
 public final class WebViewDirectoryLease implements Closeable {
+    public enum FailureReason {
+        INVALID_IDENTITY, OWNERSHIP_DIRECTORY_UNAVAILABLE, OWNERSHIP_FILE_OPEN_FAILED,
+        OWNERSHIP_LOCK_FAILED, ALL_OWNERS_BUSY
+    }
+
+    /** Fixed diagnostic codes: filesystem exception messages can contain private paths. */
+    public static final class LeaseException extends IOException {
+        public final FailureReason reason;
+
+        private LeaseException(FailureReason reason, Throwable cause) {
+            super(reason.name(), cause);
+            this.reason = reason;
+        }
+    }
+
     private static final int DIRECTORY_COUNT = 4;
     public final String suffix;
     public final boolean alternate;
@@ -27,9 +42,13 @@ public final class WebViewDirectoryLease implements Closeable {
 
     public static WebViewDirectoryLease acquire(File ownershipRoot, String primarySuffix) throws IOException {
         if (primarySuffix == null || primarySuffix.isEmpty() || primarySuffix.contains("/")
-                || primarySuffix.contains("\\")) throw new IOException("Invalid WebView directory identity");
-        if (!ownershipRoot.isDirectory() && !ownershipRoot.mkdirs() && !ownershipRoot.isDirectory())
-            throw new IOException("Cannot create WebView ownership directory");
+                || primarySuffix.contains("\\")) throw new LeaseException(FailureReason.INVALID_IDENTITY, null);
+        try {
+            if (!ownershipRoot.isDirectory() && !ownershipRoot.mkdirs() && !ownershipRoot.isDirectory())
+                throw new LeaseException(FailureReason.OWNERSHIP_DIRECTORY_UNAVAILABLE, null);
+        } catch (SecurityException error) {
+            throw new LeaseException(FailureReason.OWNERSHIP_DIRECTORY_UNAVAILABLE, error);
+        }
         final String key;
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(primarySuffix.getBytes(StandardCharsets.UTF_8));
@@ -39,12 +58,20 @@ public final class WebViewDirectoryLease implements Closeable {
         } catch (NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
         // Bounded, stable alternatives: no PID-named profiles or deletion of existing cookies/data.
         for (int index = 0; index < DIRECTORY_COUNT; index++) {
-            RandomAccessFile file = new RandomAccessFile(new File(ownershipRoot, key + "-" + index + ".lock"), "rw");
+            final RandomAccessFile file;
+            try {
+                file = new RandomAccessFile(new File(ownershipRoot, key + "-" + index + ".lock"), "rw");
+            } catch (IOException | SecurityException error) {
+                throw new LeaseException(FailureReason.OWNERSHIP_FILE_OPEN_FAILED, error);
+            }
             boolean retained = false;
             try {
                 FileLock lock;
                 try { lock = file.getChannel().tryLock(); }
                 catch (OverlappingFileLockException busy) { lock = null; }
+                catch (IOException | SecurityException error) {
+                    throw new LeaseException(FailureReason.OWNERSHIP_LOCK_FAILED, error);
+                }
                 if (lock != null) {
                     retained = true;
                     // Primary suffixes start with the integer virtual user ID. A nonnumeric
@@ -54,7 +81,7 @@ public final class WebViewDirectoryLease implements Closeable {
                 }
             } finally { if (!retained) file.close(); }
         }
-        throw new IOException("All WebView directory owners are busy");
+        throw new LeaseException(FailureReason.ALL_OWNERS_BUSY, null);
     }
 
     @Override public void close() throws IOException {

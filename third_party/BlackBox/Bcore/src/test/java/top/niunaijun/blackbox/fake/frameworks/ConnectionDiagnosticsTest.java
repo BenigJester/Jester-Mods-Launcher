@@ -21,6 +21,29 @@ public class ConnectionDiagnosticsTest {
         observed.setAccessible(true); observed.setBoolean(null, false);
         Field last = ConnectionDiagnostics.class.getDeclaredField("lastFailure");
         last.setAccessible(true); last.set(null, "none");
+        Field sites = ConnectionDiagnostics.class.getDeclaredField("sites");
+        sites.setAccessible(true); ((java.util.Deque<?>) sites.get(null)).clear();
+    }
+
+    @Test public void observerBaselinesAreIndependentAndDoNotResetLifetimeCounters() {
+        ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.bind);
+        long[] first = ConnectionDiagnostics.checkpoint();
+        ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.bind);
+        ConnectionDiagnostics.failed(ConnectionDiagnostics.Operation.bind, null);
+        long[] second = ConnectionDiagnostics.checkpoint();
+        ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.receiver_add);
+        assertEquals("bind:1/1,receiver_add:1/0", ConnectionDiagnostics.since(first));
+        assertEquals("receiver_add:1/0", ConnectionDiagnostics.since(second));
+        assertTrue(ConnectionDiagnostics.snapshot().contains("bind:2/1"));
+        assertEquals("none_observed", ConnectionDiagnostics.since(ConnectionDiagnostics.checkpoint()));
+        ConnectionDiagnostics.trackedReceiverCount(7);
+        assertEquals(7, ConnectionDiagnostics.trackedReceiverCount());
+        ConnectionDiagnostics.trackedReceiverCount(0);
+        SessionResourceRecorder recorder = new SessionResourceRecorder();
+        ConnectionDiagnostics.begin(ConnectionDiagnostics.Operation.unbind);
+        String text = recorder.record(1, 2, 3, 4, 5, 6, 0);
+        assertTrue(text.contains("bbWindowConnectionCalls=unbind:1/0"));
+        assertTrue(text.contains("bbTrackedReceivers=0"));
     }
 
     public interface Service {
@@ -60,6 +83,9 @@ public class ConnectionDiagnosticsTest {
         assertTrue(snapshot.endsWith("lastFailure=receiver_add:permission"));
         assertFalse(snapshot.contains("private"));
         assertFalse(snapshot.contains("example"));
+        assertTrue(ConnectionDiagnostics.siteSnapshot().contains("operation=bind call=1"));
+        assertFalse(ConnectionDiagnostics.siteSnapshot().contains("https://private.example"));
+        assertFalse(ConnectionDiagnostics.siteSnapshot().contains("private-account-token"));
     }
 
     @Test public void largeCallVolumesRemainBoundedAndThreadSafe() throws Exception {
