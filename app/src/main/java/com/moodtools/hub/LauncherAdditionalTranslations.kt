@@ -57,6 +57,7 @@ internal object LauncherAdditionalTranslations {
             )
         )
         putAll(LauncherTranslationChunk0.entries)
+        putAll(LauncherObbTranslations.entries)
         putAll(LauncherTranslationChunk1.entries)
         putAll(LauncherTranslationChunk2.entries)
         putAll(LauncherTranslationChunk3.entries)

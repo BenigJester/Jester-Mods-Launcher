@@ -65,6 +65,7 @@ import com.moodtools.hub.modules.DirectPatchPromptUiState
 import com.moodtools.hub.modules.EmbeddedPrivateModuleInstaller
 import com.moodtools.hub.modules.EmbeddedLocalTestModuleInstaller
 import com.moodtools.hub.modules.architectureLabel
+import com.moodtools.hub.modules.moduleArchitectureEvidence
 import com.moodtools.hub.modules.isVisibleInLauncher
 import com.moodtools.hub.modules.sortLibraryGames
 import com.moodtools.hub.networking.LauncherAccessManager
@@ -97,6 +98,7 @@ import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
@@ -119,14 +121,6 @@ private enum class ProtectedActionBoundary(val description: String) {
 private class NewSessionAccessBoundaryException : IllegalStateException(
     "Active launcher access is required"
 )
-
-private enum class PackageReplacementPhase {
-    IDLE,
-    PREPARING,
-    WAITING_FOR_UNINSTALL,
-    COMMITTING_INSTALL,
-    WAITING_FOR_INSTALL_RESULT
-}
 
 private class PendingGameInstaller(
     val packageName: String,
@@ -398,6 +392,7 @@ class LauncherActivity : ComponentActivity() {
                 viewModel.onPackageReplacementDiagnostic(packageInstallEvidence(result.status, result.sessionId, result.observation))
                 if (result.observation == PackageInstallObservation.CONFIRMATION_OPENED) return@collect
                 if (result.successful) {
+                    packageReplacementPhase = packageReplacementPhase.afterInstallerSuccess()
                     // PackageInstaller can report success just before PackageManager exposes the
                     // replacement application's metadata. Keep the setup pending until the exact
                     // shell/patch identity is observable, otherwise the Library can immediately
@@ -868,6 +863,37 @@ class LauncherActivity : ComponentActivity() {
             installPackageReplacement(request)
             return
         }
+        if (request.kind == PackageReplacementKind.DIRECT_PATCH) {
+            if (packageReplacementPreparation?.isActive == true) return
+            packageReplacementPhase = PackageReplacementPhase.PREPARING
+            viewModel.onPackageReplacementProgress("Saving game files", "Keeping downloaded game files before setup.")
+            packageReplacementPreparation = lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    com.moodtools.hub.networking.GameObbManager(applicationContext).preserveInstalled(
+                        request.packageName, request.versionCode, isCancelled = { !isActive }
+                    )
+                    withContext(Dispatchers.Main) {
+                        packageReplacementPreparation = null
+                        if (pendingPackageReplacement === request) requestPackageUninstall(request)
+                    }
+                } catch (error: Throwable) {
+                    if (error is CancellationException) return@launch
+                    withContext(Dispatchers.Main) {
+                        packageReplacementPreparation = null
+                        if (pendingPackageReplacement === request) finishPackageReplacementWithFailure(
+                            "Could not save the game files. Nothing was uninstalled. Check storage access and free space, then try again.", error
+                        )
+                    }
+                }
+            }
+            return
+        }
+        requestPackageUninstall(request)
+    }
+
+    private fun requestPackageUninstall(request: PackageReplacementRequest) {
+        viewModel.onPackageReplacementProgress("Waiting for Android",
+            "Confirm the ${request.title} uninstall. Installation follows automatically.")
         val uninstall = Intent(
             Intent.ACTION_DELETE,
             Uri.parse("package:${request.packageName}")
@@ -1014,7 +1040,8 @@ class LauncherActivity : ComponentActivity() {
                         "Android installed the package, but its verified package identity was not ready in time. Return to the Library and refresh before retrying."
                     } else {
                         "The Android installation was cancelled or could not be confirmed. The prepared package is still available."
-                    }
+                    },
+                    awaitingInstallerResult = !installerReportedSuccess
                 )
             }
         }
@@ -1034,14 +1061,22 @@ class LauncherActivity : ComponentActivity() {
         viewModel.onPackageReplacementInstalled(request)
     }
 
-    private fun finishPackageReplacementWithFailure(detail: String, error: Throwable? = null) {
+    private fun finishPackageReplacementWithFailure(
+        detail: String,
+        error: Throwable? = null,
+        awaitingInstallerResult: Boolean = false
+    ) {
         val title = pendingPackageReplacement?.title ?: "Game"
         packageReplacementReconciliation?.cancel()
         packageReplacementReconciliation = null
         packageReplacementPreparation?.cancel()
         packageReplacementPreparation = null
         packageReplacementRetryAvailable = pendingPackageReplacement != null
-        packageReplacementPhase = PackageReplacementPhase.IDLE
+        packageReplacementPhase = if (awaitingInstallerResult) {
+            PackageReplacementPhase.WAITING_FOR_LATE_INSTALL_RESULT
+        } else {
+            PackageReplacementPhase.IDLE
+        }
         packageReplacementLeftLauncher = false
         viewModel.hideDirectPatchPrompt()
         viewModel.onPackageReplacementFailed(
@@ -4480,6 +4515,17 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             ?: _games.value.firstOrNull { it.packageName == request.packageName }
             ?: scanner.scan(repository.loadModules()).firstOrNull { it.packageName == request.packageName }
             ?: error("Installed game could not be inspected")
+        val publishDiagnostic: (String) -> Unit = { message ->
+            if (onDiagnostic != null) {
+                onDiagnostic(message)
+            } else {
+                _updateState.update { state ->
+                    state.copy(diagnostics = appendDiagnostic(state.diagnostics, message))
+                }
+            }
+        }
+        publishDiagnostic(moduleArchitectureEvidence(game.abi, game.module.supportedAbis,
+            DeviceArchitectureGuard.supportedAbis()) + "; recordedGameSupported=${game.abiSupported}")
         check(DeviceArchitectureGuard.supports(game.module.supportedAbis)) {
             "Add-on architecture is not supported by this device"
         }
@@ -4564,15 +4610,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     }
                 }
             },
-            onDiagnostic = { message ->
-                if (onDiagnostic != null) {
-                    onDiagnostic(message)
-                } else {
-                    _updateState.update { state ->
-                        state.copy(diagnostics = appendDiagnostic(state.diagnostics, message))
-                    }
-                }
-            },
+            onDiagnostic = publishDiagnostic,
             isCancelled = isCancelled
         )
         return try {

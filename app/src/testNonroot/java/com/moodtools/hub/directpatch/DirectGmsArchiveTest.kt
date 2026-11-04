@@ -64,6 +64,23 @@ class DirectGmsArchiveTest {
         }
     }
 
+    @Test fun `lazy input reads each DEX once and retains originals only for changed DEX`() {
+        val source = inputs()
+        val reads = mutableListOf<String>()
+        val originals = linkedMapOf<String, ByteArray>()
+        val changed = GmsCoreDexPatcher.rewriteSet(source.keys,
+            onChanged = { name, bytes -> originals[name] = bytes }) {
+            reads += it
+            source.getValue(it)
+        }
+        assertEquals(source.keys.toList(), reads)
+        assertEquals(setOf("classes.dex", "classes2.dex", "classes3.dex"), originals.keys)
+        assertEquals(changed.keys, originals.keys)
+        originals.forEach { (name, bytes) -> assertSame(source.getValue(name), bytes) }
+        val eager = GmsCoreDexPatcher.rewriteSet(source)
+        changed.forEach { (name, bytes) -> assertArrayEquals(eager.getValue(name), bytes) }
+    }
+
     @Test fun `profile rejection identifies the failed check while preserving all exact build guards`() {
         val source = inputs()
         val rules = com.moodtools.hub.modules.GmsCorePatchRules("test-v1",

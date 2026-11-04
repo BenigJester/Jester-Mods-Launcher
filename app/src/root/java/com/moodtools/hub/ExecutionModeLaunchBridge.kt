@@ -13,7 +13,6 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
-import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /** Public Root bridge: production-only methods fail closed; injection remains reviewable. */
@@ -249,19 +248,6 @@ object ExecutionModeLaunchBridge {
 
         report("Opening game", "${game.module.title} is starting now.")
         return true
-    }
-
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun extractInjector(context: Context, assetPath: String): File {

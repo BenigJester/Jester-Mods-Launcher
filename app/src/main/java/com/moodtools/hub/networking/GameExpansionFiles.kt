@@ -4,6 +4,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.CRC32
@@ -41,6 +42,46 @@ internal object GameExpansionFiles {
         isCancelled: () -> Boolean = { false }, onProgress: (Long, Long) -> Unit = { _, _ -> }
     ) {
         val entries = inspect(archive, packageName)
+        stageEntries(entries, directory, isCancelled, onProgress) { expansion ->
+            archive.getInputStream(archive.getEntry(expansion.entry))
+        }
+    }
+
+    /** Copy only this package's expansion files; never rename or delete installed files. */
+    @Synchronized fun preserveInstalled(
+        source: File, packageName: String, directory: File,
+        isCancelled: () -> Boolean = { false }, onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ) {
+        requirePackage(packageName)
+        require(!Files.isSymbolicLink(source.toPath())) { "Invalid installed OBB folder" }
+        // exists()/listFiles() can conceal access denial as an absent/empty folder.
+        val files = try {
+            Files.newDirectoryStream(source.toPath()).use { stream -> stream.map { it.toFile() }.toList() }
+        } catch (_: NoSuchFileException) {
+            return
+        }
+        val obbs = files.filter { it.name.endsWith(".obb", ignoreCase = true) }
+        require(obbs.size <= 2) { "A game folder may contain only a main and a patch OBB" }
+        val entries = obbs.map { file ->
+            require(validName(file.name, packageName) && !Files.isSymbolicLink(file.toPath()) &&
+                file.isFile && file.canonicalFile.parentFile == source.canonicalFile) { "Invalid installed OBB file" }
+            val size = file.length()
+            require(size in 1..MAX_FILE_BYTES) { "The installed OBB is empty or oversized" }
+            Expansion(file.name, file.name, size, fileCrc(file, isCancelled))
+        }
+        require(entries.map { it.name.substringBefore('.') }.distinct().size == entries.size) {
+            "The game folder contains duplicate OBB files"
+        }
+        stageEntries(entries, directory, isCancelled, onProgress) { expansion ->
+            safeChild(source, expansion.name).inputStream()
+        }
+    }
+
+    private fun stageEntries(
+        entries: List<Expansion>, directory: File,
+        isCancelled: () -> Boolean, onProgress: (Long, Long) -> Unit,
+        openInput: (Expansion) -> InputStream
+    ) {
         if (entries.isEmpty()) return
         val parent = requireNotNull(directory.parentFile)
         check(parent.mkdirs() || parent.isDirectory) { "Could not create OBB storage" }
@@ -64,7 +105,7 @@ internal object GameExpansionFiles {
             var completed = 0L
             var reportedPercent = -1L
             entries.forEach { expansion ->
-                archive.getInputStream(archive.getEntry(expansion.entry)).use { input ->
+                openInput(expansion).use { input ->
                     copyVerified(input, incoming, expansion, isCancelled) { count ->
                         completed += count
                         val percent = completed * 100 / total
@@ -115,7 +156,7 @@ internal object GameExpansionFiles {
         }
         require(entries.size in 1..2 && entries.map { it.name }.distinct().size == entries.size)
         check(destination.mkdirs() || destination.isDirectory) {
-            "Android denied OBB folder access. Allow this launcher to install unknown apps, then reopen it. Android 11 or older also needs storage permission."
+            "Android denied OBB folder access. Allow this launcher to install unknown apps, then reopen it. Android 12L or older also needs storage permission."
         }
         val total = entries.sumOf { it.size }
         var completed = 0L

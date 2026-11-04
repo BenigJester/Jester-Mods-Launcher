@@ -306,6 +306,7 @@ public final class ModuleRuntime {
         supported_versions = @($game.Version)
         supported_abis = @('arm64-v8a')
         nonroot_method = 'injection'
+        gmscore_support = $false
         entry_point = 'com.android.support.Main'
         dex_file = 'classes.dex'
         native_file = 'libmenu_native.so'

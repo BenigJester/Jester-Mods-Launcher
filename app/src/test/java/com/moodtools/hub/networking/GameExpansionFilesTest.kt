@@ -13,6 +13,73 @@ class GameExpansionFilesTest {
     private val main = "main.1063.$pkg.obb"
     private val patch = "patch.1060.$pkg.obb" // Expansion versions need not equal APK versions.
 
+    @Test fun preservesGameDownloadedFilesWithoutMovingOriginalsAndRestoresAfterUninstall() = withRoot { root ->
+        val source = File(root, "installed").apply { mkdir() }
+        File(source, main).writeText("downloaded-main")
+        File(source, patch).writeText("downloaded-patch")
+        File(source, "unrelated.txt").writeText("leave-alone")
+        val retained = File(root, "retained/1063")
+        GameExpansionFiles.preserveInstalled(source, pkg, retained)
+        assertEquals("downloaded-main", File(source, main).readText())
+        assertEquals("downloaded-patch", File(source, patch).readText())
+        assertFalse(File(retained, "unrelated.txt").exists())
+        source.deleteRecursively() // Simulated Android uninstall; production never deletes this folder.
+        GameExpansionFiles.deliver(retained, pkg, source)
+        assertEquals("downloaded-main", File(source, main).readText())
+        assertEquals("downloaded-patch", File(source, patch).readText())
+    }
+
+    @Test fun preservationFailureKeepsPreviousBackupAndOriginalFiles() = withRoot { root ->
+        val retained = File(root, "retained/1063")
+        ZipFile(archive(root, mapOf(main to "retained"))).use { GameExpansionFiles.stage(it, pkg, retained) }
+        val source = File(root, "installed").apply { mkdir() }
+        File(source, main).writeText("downloaded")
+        assertThrows(GameInstallCancelledException::class.java) {
+            GameExpansionFiles.preserveInstalled(source, pkg, retained, { true })
+        }
+        assertEquals("downloaded", File(source, main).readText())
+        assertEquals("retained", File(retained, main).readText())
+        File(source, "main.2.foreign.game.obb").writeText("foreign")
+        assertThrows(IllegalArgumentException::class.java) {
+            GameExpansionFiles.preserveInstalled(source, pkg, retained)
+        }
+        assertEquals("retained", File(retained, main).readText())
+    }
+
+    @Test fun absentOrEmptyObbFolderDoesNotEraseRetainedDownloads() = withRoot { root ->
+        val retained = File(root, "retained/1063")
+        ZipFile(archive(root, mapOf(main to "retained"))).use { GameExpansionFiles.stage(it, pkg, retained) }
+        val source = File(root, "installed")
+        GameExpansionFiles.preserveInstalled(source, pkg, retained)
+        source.mkdir()
+        GameExpansionFiles.preserveInstalled(source, pkg, retained)
+        assertEquals("retained", File(retained, main).readText())
+    }
+
+    @Test fun interruptedCopyCannotPublishPartialBackupOrChangeOriginal() = withRoot { root ->
+        val retained = File(root, "retained/1063")
+        ZipFile(archive(root, mapOf(main to "previous"))).use { GameExpansionFiles.stage(it, pkg, retained) }
+        val source = File(root, "installed").apply { mkdir() }
+        File(source, main).writeText("downloaded")
+        var cancelled = false
+        assertThrows(GameInstallCancelledException::class.java) {
+            GameExpansionFiles.preserveInstalled(source, pkg, retained, { cancelled }) { _, _ -> cancelled = true }
+        }
+        assertEquals("downloaded", File(source, main).readText())
+        assertEquals("previous", File(retained, main).readText())
+        assertEquals(listOf("1063"), retained.parentFile!!.list()!!.toList())
+    }
+
+    @Test fun invalidSourceCannotBeMistakenForMissingObbFiles() = withRoot { root ->
+        val source = File(root, "installed").apply { writeText("not-a-directory") }
+        val retained = File(root, "retained/1063")
+        assertThrows(java.io.IOException::class.java) {
+            GameExpansionFiles.preserveInstalled(source, pkg, retained)
+        }
+        assertFalse(retained.exists())
+        assertEquals("not-a-directory", source.readText())
+    }
+
     @Test fun stagesMainAndPatchThenDeliversToSystemAndBlackBoxWithoutApks() = withRoot { root ->
         val archive = archive(root, mapOf("Android/obb/$pkg/$main" to "main-data", patch to "patch-data", "base.apk" to "apk"))
         val stage = File(root, "retained/1063")

@@ -50,22 +50,16 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Per-game diagnostics with copy, export, sharing, and clear controls
 - [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
 
-### 4.6.0 source update
+### 4.6.5 source update
 
-- Preserves the detected launch path for existing Identity Shell installations
-  when an add-on's new setup uses Direct Patch. New setup choices remain controlled
-  by the signed add-on; saves are not migrated automatically.
-- Releases old BlackBox broadcast receivers before registering replacements,
-  preventing registrations from building up across package refreshes.
-- Adds clearer installation results, WebView setup errors, Google login patch
-  checks, and Root timeout progress without treating every report as a confirmed fix.
-- Adds bounded snapshots for delayed BlackBox helper main threads and connection
-  counts for each observation window. Shared helper activity is context, not proof
-  that it caused a game failure.
-- Strengthens cached-access expiry checks against clock changes and reboots.
-  Older cached access may require an online check after updating.
+- Requests the storage permission needed for OBB backup and installation on
+  Android 12 and 12L, while keeping the backup-before-uninstall safeguard.
+- Identifies recognized missing SDK classes in login failure reports without
+  including arbitrary error messages or account data.
+- Records BlackBox launch-dispatch failures that previously appeared only as
+  launch-confirmation timeouts. These reports do not establish a game fix.
 
-Download the signed [4.6.0 release](https://github.com/BenigJester/Jester-Mods-Launcher/releases/tag/v4.6.0).
+Download the signed [4.6.5 release](https://github.com/BenigJester/Jester-Mods-Launcher/releases/tag/v4.6.5).
 Game add-ons are updated separately; this source update does not bundle games or
 announce untested Google login support for additional games.
 

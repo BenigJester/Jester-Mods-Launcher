@@ -79,6 +79,47 @@ class ModuleGmsRulesTest {
         assertFalse(source.getValue("classes2.dex").contentEquals(patched.getValue("classes2.dex")))
     }
 
+    @Test fun `Shadow Fight 2 profile adapts renamed SDK through module rules only`() {
+        val original = File(root, "../../Fast_analysis/Tests/shadow-fight2/2.46.0-30000121/apks/base.apk")
+        assumeTrue("Local proprietary fixture required", original.isFile)
+        val moduleRoot = File(root, "modules/com.nekki.shadowfight")
+        val config = JSONObject(File(moduleRoot, "config.json").readText())
+        assertEquals("direct_patch", config.getString("nonroot_method"))
+        assertEquals("injection", config.getString("root_method"))
+        assertTrue(config.getBoolean("gmscore_support"))
+        assertTrue(File(moduleRoot, "java/DirectLaunchGuard.java").isFile)
+        assertTrue(File(moduleRoot, "java/ModComponentFactory.java").isFile)
+        val rules = requireNotNull(GmsCorePatchRules.fromJson(config, "gmscore_patch"))
+        val inputs = ZipFile(original).use { zip -> zip.entries().asSequence()
+            .filter { it.name.matches(Regex("classes[0-9]*\\.dex")) }
+            .associate { it.name to zip.getInputStream(it).use { input -> input.readBytes() } } }
+        assertEquals(setOf("classes3.dex"), rules.dexSha256.keys)
+        assertEquals(rules.dexSha256.getValue("classes3.dex"), GmsCoreDexPatcher.hash(inputs.getValue("classes3.dex")))
+        assertThrows(IllegalArgumentException::class.java) { GmsCoreDexPatcher.rewriteSet(inputs) }
+        val changed = GmsCoreDexPatcher.rewriteSet(inputs, rules)
+        assertEquals(setOf("classes3.dex"), changed.keys)
+        assertTrue(accountConstants(changed, rules.sdkSymbols!!.routingClasses).isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { GmsCoreDexPatcher.rewriteSet(inputs,
+            rules.copy(dexSha256 = mapOf("classes3.dex" to "0".repeat(64)))) }
+        val restored = ZipFile(original).use { DirectGmsArchive.prepare(it, false, null, emptySet(), rules) }
+        assertTrue(restored.replacements.isEmpty() && restored.originals.isEmpty())
+        val marker = JSONObject().put("gmsProfile", "google-sdk-routing-v2")
+            .put("gmsOriginals", JSONObject(rules.dexSha256))
+        val temporary = java.nio.file.Files.createTempFile("shadowfight-gms-", ".zip").toFile()
+        try {
+            java.util.zip.ZipOutputStream(temporary.outputStream()).use { zip ->
+                for ((name, bytes) in changed + (DirectGmsArchive.BACKUP_PREFIX + "classes3.dex" to inputs.getValue("classes3.dex"))) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(bytes); zip.closeEntry()
+                }
+            }
+            ZipFile(temporary).use {
+                val disabled = DirectGmsArchive.prepare(it, false, marker, emptySet(), rules)
+                assertArrayEquals(inputs.getValue("classes3.dex"), disabled.replacements.getValue("classes3.dex"))
+                assertTrue(disabled.originals.isEmpty())
+            }
+        } finally { check(temporary.delete()) }
+    }
+
     @Test fun `renamed SDK symbol validation rejects executable rules duplicates and missing selectors`() {
         val symbols = com.moodtools.hub.modules.GmsCoreSdkSymbols("LU0/f;", "c", false, "LU0/j;", "f",
             setOf("LU0/f;", "LU0/j;"))

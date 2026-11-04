@@ -9,7 +9,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
 
-/** Shared BlackBox/direct-patch failure storage. No exception messages or callback arguments. */
+/** Shared failure storage. No raw exception messages or callback arguments. */
 public final class FailureEvidence {
     private static final int MAX_BYTES = 64 * 1024;
     private static final String CAPTURE = "Failure capture: ";
@@ -31,6 +31,13 @@ public final class FailureEvidence {
     }
 
     public static String hint(Throwable error) {
+        Set<Throwable> parcelSeen = Collections.newSetFromMap(new IdentityHashMap<>());
+        boolean parcel = false, missing = false;
+        for (Throwable cause = error; cause != null && parcelSeen.size() < 32 && parcelSeen.add(cause); cause = cause.getCause()) {
+            parcel |= cause.getClass().getName().equals("android.os.BadParcelableException");
+            missing |= cause instanceof ClassNotFoundException;
+        }
+        if (parcel && missing) return "parcel_class_not_found";
         if (!phase(error).equals("activity_teardown")) return "unclassified";
         Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (int depth = 0; error != null && depth < 32 && seen.add(error); depth++, error = error.getCause()) {
@@ -45,6 +52,20 @@ public final class FailureEvidence {
         return "unclassified";
     }
 
+    /** Exact SDK class identities only, never arbitrary messages or path-containing loader errors. */
+    public static String missingSdkClass(Throwable error) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (int depth = 0; error != null && depth < 32 && seen.add(error); depth++, error = error.getCause()) {
+            if (!(error instanceof ClassNotFoundException)) continue;
+            String name = error.getMessage();
+            if (name != null && name.length() <= 240 &&
+                    name.matches("(?:com\\.google\\.android\\.gms|org\\.microg|com\\.chillyroomsdk)(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)+")) {
+                return name;
+            }
+        }
+        return "unavailable";
+    }
+
     /** Preserve the first capture; deduplicate and retain at most two later failures. */
     public static synchronized void record(File file, String stage, Throwable error, String frames)
             throws IOException {
@@ -52,6 +73,8 @@ public final class FailureEvidence {
         String phase = phase(error);
         String detail = "Failure stage: " + (stage.matches("[a-z_]{1,48}") ? stage : "unclassified")
                 + "\nFailure phase: " + phase + "\nFailure hint: " + hint(error) + "\n"
+                + (hint(error).equals("parcel_class_not_found")
+                   ? "Missing SDK class: " + missingSdkClass(error) + "\n" : "")
                 + (phase.equals("activity_teardown")
                    ? "Shutdown was already in progress; the trigger for shutdown is not established.\n" : "")
                 + frames.substring(0, Math.min(frames.length(), 12000));

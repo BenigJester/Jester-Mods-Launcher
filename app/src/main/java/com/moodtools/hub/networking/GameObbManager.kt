@@ -11,6 +11,16 @@ import java.util.zip.ZipFile
 
 /** Retained outside the download cache: patch replacement uninstalls can remove Android/obb. */
 internal class GameObbManager(private val context: Context) {
+    fun preserveInstalled(packageName: String, versionCode: Long, isCancelled: () -> Boolean = { false }) {
+        val retained = directory(packageName, versionCode)
+        val source = File(Environment.getExternalStorageDirectory(), "Android/obb/$packageName")
+        // Check permission first: Android can hide a denied folder from isDirectory().
+        requireLegacyStoragePermission()
+        GameExpansionFiles.preserveInstalled(
+            source, packageName, retained, isCancelled
+        )
+    }
+
     fun stage(
         archive: ZipFile, packageName: String, versionCode: Long,
         isCancelled: () -> Boolean, onProgress: (Long, Long) -> Unit
@@ -35,7 +45,8 @@ internal class GameObbManager(private val context: Context) {
     }
 
     private fun requireLegacyStoragePermission() {
-        if (Build.VERSION.SDK_INT <= 30 && context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+        if (needsLegacyObbStoragePermission(Build.VERSION.SDK_INT,
+                context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)) {
             context.startActivity(Intent(context, GameObbPermissionActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             error("Allow storage access in Android's permission prompt, then try again. If denied permanently, enable Storage in the launcher's app settings.")
         }
@@ -47,3 +58,8 @@ internal class GameObbManager(private val context: Context) {
         return File(context.filesDir, "game-obb/$packageName/$versionCode")
     }
 }
+
+internal const val LAST_LEGACY_OBB_STORAGE_API = 32
+
+internal fun needsLegacyObbStoragePermission(sdk: Int, granted: Boolean): Boolean =
+    sdk <= LAST_LEGACY_OBB_STORAGE_API && !granted

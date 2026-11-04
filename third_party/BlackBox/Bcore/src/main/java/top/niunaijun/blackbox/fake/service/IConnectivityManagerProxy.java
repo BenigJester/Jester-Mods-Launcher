@@ -7,6 +7,7 @@ import android.net.Network;
 import android.net.LinkProperties;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Array;
 import java.net.InetAddress;
@@ -19,6 +20,7 @@ import top.niunaijun.blackbox.fake.hook.BinderInvocationStub;
 import top.niunaijun.blackbox.fake.hook.ScanClass;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
+import top.niunaijun.blackbox.fake.hook.ProxyMethods;
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
 import top.niunaijun.blackbox.utils.Slog;
 
@@ -517,96 +519,21 @@ public class IConnectivityManagerProxy extends BinderInvocationStub {
     }
 
     
-    @ProxyMethod("requestNetwork")
+    @ProxyMethods({"requestNetwork", "listenForNetwork", "registerNetworkCallback", "registerDefaultNetworkCallback"})
     public static class RequestNetwork extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            Slog.d(TAG, "Intercepting requestNetwork call for internet access");
-            try {
-                
-                Object result = method.invoke(who, args);
-                if (result != null) {
-                    Slog.d(TAG, "requestNetwork succeeded via original method");
-                    return result;
-                }
-                
-                
-                Slog.w(TAG, "requestNetwork failed, creating fallback result");
-                return createMockNetworkRequestResult();
-                
-            } catch (Exception e) {
-                Slog.w(TAG, "Error in requestNetwork, creating fallback: " + e.getMessage());
-                return createMockNetworkRequestResult();
-            }
-        }
-        
-        private Object createMockNetworkRequestResult() {
-            try {
-                
-                
-                if (android.os.Build.VERSION.SDK_INT >= 21) {
-                    
-                    Class<?> networkRequestClass = Class.forName("android.net.NetworkRequest");
-                    if (networkRequestClass != null) {
-                        Slog.d(TAG, "Created fallback NetworkRequest for internet access");
-                        return null; 
-                    }
-                }
-            } catch (Exception e) {
-                Slog.w(TAG, "Could not create NetworkRequest fallback: " + e.getMessage());
-            }
-            return null;
-        }
-    }
-
-    @ProxyMethod("listenForNetwork")
-    public static class ListenForNetwork extends MethodHook {
-        @Override
-        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            // Android checks this package against the real Binder UID. Preserve
+            // the real request/result: a failed registration must not look successful.
             MethodParameterUtils.replaceFirstAppPkg(args);
-            return method.invoke(who, args);
-        }
-    }
-
-    
-    @ProxyMethod("registerNetworkCallback")
-    public static class RegisterNetworkCallback extends MethodHook {
-        @Override
-        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            Slog.d(TAG, "Intercepting registerNetworkCallback for internet access");
             try {
-                
-                Object result = method.invoke(who, args);
-                Slog.d(TAG, "Network callback registration successful");
-                return result;
-            } catch (Exception e) {
-                Slog.w(TAG, "Network callback registration failed: " + e.getMessage());
-                
-                return 0;
+                return method.invoke(who, args);
+            } catch (InvocationTargetException error) {
+                throw error.getCause();
             }
         }
     }
 
-    
-    @ProxyMethod("registerDefaultNetworkCallback")
-    public static class RegisterDefaultNetworkCallback extends MethodHook {
-        @Override
-        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            Slog.d(TAG, "Intercepting registerDefaultNetworkCallback for internet access");
-            try {
-                
-                Object result = method.invoke(who, args);
-                Slog.d(TAG, "Default network callback registration successful");
-                return result;
-            } catch (Exception e) {
-                Slog.w(TAG, "Default network callback registration failed: " + e.getMessage());
-                
-                return 0;
-            }
-        }
-    }
-
-    
     @ProxyMethod("getActiveNetworkInfoForUid")
     public static class GetActiveNetworkInfoForUid extends MethodHook {
         @Override
@@ -757,25 +684,6 @@ public class IConnectivityManagerProxy extends BinderInvocationStub {
             } catch (Exception e) {
                 Slog.w(TAG, "Error in getNetworkForType: " + e.getMessage());
                 return null;
-            }
-        }
-    }
-
-    
-    @ProxyMethod("registerNetworkCallback")
-    public static class RegisterNetworkCallbackWithRequest extends MethodHook {
-        @Override
-        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            Slog.d(TAG, "Intercepting registerNetworkCallback with NetworkRequest for internet access");
-            try {
-                
-                Object result = method.invoke(who, args);
-                Slog.d(TAG, "Network callback registration with request successful");
-                return result;
-            } catch (Exception e) {
-                Slog.w(TAG, "Network callback registration with request failed: " + e.getMessage());
-                
-                return 0;
             }
         }
     }

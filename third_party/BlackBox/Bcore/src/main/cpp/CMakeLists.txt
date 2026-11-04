@@ -27,6 +27,7 @@ add_library(
     hidden_api.cpp
     IO.cpp
     Utils/elf_util.cpp
+    Utils/CodePatch.cpp
     Hook/DexFileHook.cpp
     Hook/FileSystemHook.cpp
     Utils/VirtualSpoof.cpp
@@ -56,6 +57,6 @@ target_include_directories(blackbox PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_options(
     blackbox
     PRIVATE
-    -Wl,--gc-sections,--strip-all,-z,max-page-size=16384
+    -Wl,--gc-sections,--strip-all,--wrap=CodePatch,-z,max-page-size=16384
 )
 target_link_libraries(blackbox PRIVATE dobby xdl log android z)

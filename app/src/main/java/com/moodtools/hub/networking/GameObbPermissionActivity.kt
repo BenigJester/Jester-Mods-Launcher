@@ -9,7 +9,7 @@ import android.os.Bundle
 class GameObbPermissionActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT > 30) {
+        if (Build.VERSION.SDK_INT > LAST_LEGACY_OBB_STORAGE_API) {
             finish()
         } else if (savedInstanceState == null) {
             requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE), 1)

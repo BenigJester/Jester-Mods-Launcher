@@ -41,9 +41,12 @@ internal object DirectGmsArchive {
         if (!enabled) return Patch(originals + inputOverrides, emptyMap())
         val names = archive.entries().asSequence().map { it.name }
             .filter { DEX.matches(it) && it !in excluded }.toSet() + inputOverrides.keys
-        val inputs = names.associateWith { inputOverrides[it] ?: originals[it] ?: read(it) }
-        val changed = GmsCoreDexPatcher.rewriteSet(inputs, rules)
-        return Patch(changed, changed.keys.associateWith { inputs.getValue(it) })
+        val changedOriginals = linkedMapOf<String, ByteArray>()
+        val changed = GmsCoreDexPatcher.rewriteSet(names, rules,
+            onChanged = { name, bytes -> changedOriginals[name] = bytes }) {
+            inputOverrides[it] ?: originals[it] ?: read(it)
+        }
+        return Patch(changed, changedOriginals)
     }
 
     fun verify(archive: ZipFile, marker: JSONObject) {

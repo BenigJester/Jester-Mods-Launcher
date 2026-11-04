@@ -803,6 +803,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             }
             result.packageName = aPackage.packageName;
 
+            installStage = "split_metadata";
             if (selectedSplits != null && !selectedSplits.isEmpty()) {
                 ArrayList<String> splitPaths = new ArrayList<>();
                 ArrayList<String> splitNames = new ArrayList<>();
@@ -820,12 +821,15 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 }
             }
 
+            installStage = "host_metadata";
             if (option.isFlag(InstallOption.FLAG_SYSTEM)) {
                 aPackage.applicationInfo = BlackBoxCore.getPackageManager().getPackageInfo(aPackage.packageName, 0).applicationInfo;
             }
+            installStage = "package_settings";
             BPackageSettings bPackageSettings = mSettings.getPackageLPw(aPackage.packageName, aPackage, option);
 
             
+            installStage = "stop_process";
             BProcessManagerService.get().killPackageAsUser(aPackage.packageName, userId);
 
             installStage = "copy";

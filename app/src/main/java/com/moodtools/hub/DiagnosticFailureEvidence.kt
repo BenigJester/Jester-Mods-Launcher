@@ -5,7 +5,7 @@ internal fun diagnosticFailureEvidenceOverview(text: String): String {
     val allowed = setOf(
         "Failure capture: first_observed", "Failure capture: later_observed",
         "Failure phase: activity_teardown", "Failure phase: unclassified",
-        "Failure hint: network_callback_cleanup", "Failure hint: unclassified"
+        "Failure hint: network_callback_cleanup", "Failure hint: parcel_class_not_found", "Failure hint: unclassified"
     )
     val lines = text.take(64 * 1024).lineSequence().filter { it in allowed }.take(9).toList()
     if (lines.isEmpty()) return ""

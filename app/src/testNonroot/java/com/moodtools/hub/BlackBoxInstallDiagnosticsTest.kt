@@ -13,6 +13,7 @@ class BlackBoxInstallDiagnosticsTest {
         try {
             val cases = mapOf(
                 "install_exception:parse:permission" to "install_exception:parse:permission",
+                "install_exception:package_settings:missing_field" to "install_exception:package_settings:missing_field",
                 "install apk error." to "package_copy_failed",
                 "parser apk error." to "package_parse_failed",
                 "getPackageArchiveInfo error.Please check whether APK is normal." to "archive_inspection_failed",
@@ -33,6 +34,20 @@ class BlackBoxInstallDiagnosticsTest {
         } finally {
             session.deleteRecursively()
         }
+    }
+
+    @Test fun `parsing checkpoints separate metadata conversion from APK parsing`() {
+        val path = "third_party/BlackBox/Bcore/src/main/java/top/niunaijun/blackbox/core/system/pm/BPackageManagerService.java"
+        val source = listOf(File(path), File("../$path")).first { it.isFile }.readText()
+            .substringAfter("private InstallResult installPackageAsUserLocked(")
+            .substringBefore("private String resolveDisplayName(")
+        val steps = listOf("installStage = \"parse\"", "result.packageName = aPackage.packageName",
+            "installStage = \"split_metadata\"", "installStage = \"host_metadata\"",
+            "installStage = \"package_settings\"", "mSettings.getPackageLPw(",
+            "installStage = \"stop_process\"", "killPackageAsUser(", "installStage = \"copy\"")
+        val positions = steps.map { step -> source.indexOf(step).also { assertTrue(step, it >= 0) } }
+        assertEquals(positions.sorted(), positions)
+        assertTrue(source.contains("InstallFailureDiagnostics.exceptionKind(t)"))
     }
 
     @Test fun `both game install modes record result before failure is thrown`() {

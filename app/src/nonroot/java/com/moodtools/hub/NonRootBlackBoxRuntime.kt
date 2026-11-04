@@ -145,13 +145,21 @@ object NonRootBlackBoxRuntime {
                 prepareBlackBoxExternalController(context, game, userId)
             } else null
 
-            prepareGuestSwitch(context, core, game.packageName, userId)
-            val retryInternalStorage = needsInternalStorageRetry(game.packageName, userId)
-            val running = BlackBoxCore.isRunningApplication(game.packageName, userId)
+            recordBlackBoxPreparationStage(diagnosticSession, "guest_switch") {
+                prepareGuestSwitch(context, core, game.packageName, userId)
+            }
+            val retryInternalStorage = recordBlackBoxPreparationStage(diagnosticSession, "storage_retry_check") {
+                needsInternalStorageRetry(game.packageName, userId)
+            }
+            val running = recordBlackBoxPreparationStage(diagnosticSession, "guest_running_check") {
+                BlackBoxCore.isRunningApplication(game.packageName, userId)
+            }
             val externalControllerReady = expectedPatchedHash != null &&
                 virtualIl2Cpp(game.packageName).takeIf(File::isFile)
                     ?.let(::sha256) == expectedPatchedHash
-            val resumePid = BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId)
+            val resumePid = recordBlackBoxPreparationStage(diagnosticSession, "guest_resume_check") {
+                BlackBoxCore.getBActivityManager().getResumableActivityPid(game.packageName, userId)
+            }
             if (resumePid > 0 && previousDiagnosticSession != null && diagnosticSession != null &&
                 !retryInternalStorage && (!externalController || externalControllerReady)) {
                 val requestedAt = System.currentTimeMillis()
@@ -175,11 +183,21 @@ object NonRootBlackBoxRuntime {
             }
 
             if (running) NonRootLaunchDiagnostics.stopSession(previousDiagnosticSession)
-            runCatching { core.stopPackage(game.packageName, userId) }
-            clearModulePayload(game.packageName, userId)
-            ensureGoogleCompatibilityStack(context, core, userId)
+            runCatching {
+                recordBlackBoxPreparationStage(diagnosticSession, "guest_stop") {
+                    core.stopPackage(game.packageName, userId)
+                }
+            }
+            recordBlackBoxPreparationStage(diagnosticSession, "stale_payload_cleanup") {
+                clearModulePayload(game.packageName, userId)
+            }
+            recordBlackBoxPreparationStage(diagnosticSession, "google_stack_prepare") {
+                ensureGoogleCompatibilityStack(context, core, userId, diagnosticSession)
+            }
 
-            val hostInfo = context.packageManager.getApplicationInfo(game.packageName, 0)
+            val hostInfo = recordBlackBoxPreparationStage(diagnosticSession, "game_host_lookup") {
+                context.packageManager.getApplicationInfo(game.packageName, 0)
+            }
             Log.i(
                 TAG,
                 "Host clone ${game.packageName}: user=$userId base=${hostInfo.sourceDir} " +
@@ -437,21 +455,30 @@ object NonRootBlackBoxRuntime {
             .commit()
     }
 
-    private fun ensureGoogleCompatibilityStack(context: Context, core: BlackBoxCore, userId: Int) {
+    private fun ensureGoogleCompatibilityStack(context: Context, core: BlackBoxCore, userId: Int, session: File?) {
         for (packageName in googleCompatibilityStack) {
-            val hostInstalled = try {
-                context.packageManager.getApplicationInfo(packageName, 0)
-                true
-            } catch (_: PackageManager.NameNotFoundException) {
-                false
+            val hostInstalled = recordBlackBoxPreparationStage(session, "google_host_lookup package=$packageName") {
+                try {
+                    context.packageManager.getApplicationInfo(packageName, 0)
+                    true
+                } catch (_: PackageManager.NameNotFoundException) {
+                    false
+                }
             }
             if (!hostInstalled) {
+                NonRootLaunchDiagnostics.event(session, "google_package_skipped package=$packageName reason=host_missing")
                 Log.i(TAG, "Google compatibility package not installed on host: $packageName")
                 continue
             }
 
-            val alreadyInstalled = core.isInstalled(packageName, userId)
-            val result = core.installPackageAsUser(packageName, userId)
+            val alreadyInstalled = recordBlackBoxPreparationStage(session, "google_guest_lookup package=$packageName") {
+                core.isInstalled(packageName, userId)
+            }
+            val result = recordBlackBoxPreparationStage(session, "google_package_install package=$packageName") {
+                core.installPackageAsUser(packageName, userId)
+            }
+            NonRootLaunchDiagnostics.event(session,
+                "google_package_result package=$packageName success=${result.success} category=${if (result.success) "none" else InstallFailureDiagnostics.resultCategory(result.msg)}")
             if (result.success) {
                 Log.i(
                     TAG,
@@ -550,6 +577,20 @@ object NonRootBlackBoxRuntime {
         }
         if (target.exists()) check(target.delete()) { "Could not replace ${target.name}" }
         check(incoming.renameTo(target)) { "Could not finalize ${target.name}" }
+    }
+}
+
+/** Fixed caller-supplied stage names only; never include exception messages or APK paths. */
+internal inline fun <T> recordBlackBoxPreparationStage(session: File?, stage: String, operation: () -> T): T {
+    top.niunaijun.blackbox.utils.LaunchSessionRecorder.hostEvent(session, "$stage started")
+    try {
+        val result = operation()
+        top.niunaijun.blackbox.utils.LaunchSessionRecorder.hostEvent(session, "$stage completed")
+        return result
+    } catch (error: Throwable) {
+        top.niunaijun.blackbox.utils.LaunchSessionRecorder.hostEvent(session,
+            "$stage failed category=${InstallFailureDiagnostics.exceptionKind(error)}")
+        throw error
     }
 }
 

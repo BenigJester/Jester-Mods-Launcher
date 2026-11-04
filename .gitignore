@@ -7,6 +7,8 @@ module-output/
 captures/
 /diagnostics/
 /local-ignore/
+# Generated from locally owned artifacts, never publish recovered game material.
+modules/*/compatibility/*.zip
 
 # Production module sources are tracked only in this private repository.
 # Generated native/DEX/package outputs remain excluded by the rules below.

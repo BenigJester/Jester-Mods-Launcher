@@ -92,9 +92,12 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
             try {
                 IBActivityManagerService service = getService();
                 if (service != null) {
+                    recordLaunchDispatch(intent, "activity_dispatch_started");
                     service.startActivity(intent, userId);
+                    recordLaunchDispatch(intent, "activity_dispatch_completed");
                     return; 
                 } else {
+                    recordLaunchDispatch(intent, "activity_dispatch_wait category=service_unavailable");
                     Slog.w(TAG, "ActivityManager service is null, retry " + (retryCount + 1) + "/" + maxRetries);
                     
                     try {
@@ -105,6 +108,7 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
                     }
                 }
             } catch (DeadObjectException e) {
+                recordLaunchDispatch(intent, "activity_dispatch_failed category=service_dead");
                 Slog.w(TAG, "ActivityManager service died, clearing cache and retrying " + (retryCount + 1) + "/" + maxRetries);
                 clearServiceCache(); 
                 try {
@@ -114,9 +118,12 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
                     break;
                 }
             } catch (RemoteException e) {
+                recordLaunchDispatch(intent, "activity_dispatch_failed category=remote");
                 Slog.e(TAG, "RemoteException in startActivity", e);
                 break; 
             } catch (Exception e) {
+                recordLaunchDispatch(intent, "activity_dispatch_failed category=" +
+                        top.niunaijun.blackbox.utils.InstallFailureDiagnostics.exceptionKind(e));
                 Slog.e(TAG, "Unexpected error in startActivity", e);
                 break;
             }
@@ -124,6 +131,17 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
         }
         
         Slog.e(TAG, "Failed to start activity after " + maxRetries + " retries");
+        recordLaunchDispatch(intent, "activity_dispatch_not_completed");
+    }
+
+    private static void recordLaunchDispatch(Intent intent, String event) {
+        // Never export intent data/extras, component names, or arbitrary error messages.
+        try {
+            String pkg = intent.getComponent() != null ? intent.getComponent().getPackageName() : intent.getPackage();
+            if (pkg == null || !pkg.matches("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+")) return;
+            top.niunaijun.blackbox.utils.LaunchSessionRecorder.hostEvent(
+                    top.niunaijun.blackbox.utils.LaunchSessionRecorder.current(pkg), event);
+        } catch (Throwable ignored) { /* Diagnostic storage must not veto a launch. */ }
     }
 
     public int getResumableActivityPid(String packageName, int userId) {

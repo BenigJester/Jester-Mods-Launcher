@@ -122,11 +122,11 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
                 .mapNotNull { it.name.substringBefore('-').toLongOrNull() }.filter { it > started }.minOrNull() ?: Long.MAX_VALUE
             for (exit in exits.filter { it.pid in pids && it.timestamp in started until nextStart }) {
                 val target = File(session, "exit-${exit.pid}-${exit.timestamp}.txt")
-                if (target.exists() && target.readText().contains("Exit evidence schema: 2")) continue
+                if (target.exists() && target.readText().contains("Exit evidence schema: 3")) continue
                 val text = buildString {
                     appendLine("Exit reason: ${exit.reason}; status: ${exit.status}; PID: ${exit.pid}; timestamp: ${exit.timestamp}")
                     appendLine("Exit category: ${diagnosticExitCategory(exit.reason)}")
-                    appendLine("Exit evidence schema: 2")
+                    appendLine("Exit evidence schema: 3")
                     appendLine("System last-sampled memory: pssKb=${exit.pss}; rssKb=${exit.rss}; importance=${exit.importance}")
                     appendLine("System description hint: ${diagnosticExitHint(exit.description)}")
                     appendLine("Memory values are historical samples; zero means unavailable, not zero usage.")
@@ -139,8 +139,10 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
                         val context = if (attempt == null && !exit.description.orEmpty().startsWith("bg anr:")) "unknown" else
                             diagnosticAnrContext(exit.description.orEmpty().startsWith("bg anr:"), attempt?.resumedBefore(exit.timestamp) == true)
                         appendLine("ANR context: $context")
+                        appendLine("ANR trigger: ${diagnosticAnrTrigger(exit.description)}")
                     }
-                    if (exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE && Build.VERSION.SDK_INT >= 31) {
+                    if (exit.reason == ApplicationExitInfo.REASON_ANR ||
+                        (exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE && Build.VERSION.SDK_INT >= 31)) {
                         val trace = runCatching { exit.traceInputStream?.use { input ->
                             val output = java.io.ByteArrayOutputStream()
                             val buffer = ByteArray(8192)
@@ -151,8 +153,12 @@ internal object NonRootLaunchDiagnostics : LaunchDiagnosticsBackend {
                             }
                             output.toByteArray()
                         } }.getOrNull()
-                        appendLine(if (trace == null) "Native system trace unavailable" else
-                            runCatching { NativeTombstoneSummary.decode(trace) }.getOrDefault("Native system trace unreadable or exceeds size limit"))
+                        val anr = exit.reason == ApplicationExitInfo.REASON_ANR
+                        val kind = if (anr) "ANR" else "Native"
+                        appendLine(if (trace == null) "$kind system trace unavailable" else
+                            runCatching {
+                                if (anr) AnrTraceSummary.decode(trace, exit.pid) else NativeTombstoneSummary.decode(trace)
+                            }.getOrDefault("$kind system trace unreadable or exceeds size limit"))
                     }
                 }
                 target.writeText(text)

@@ -120,6 +120,18 @@ public final class FakeBillingCompat {
             }
             data.enforceInterface(DESCRIPTOR);
             switch (code) {
+                case 2101: // Billing 9 initializeBilling (API 25 request, async result binder)
+                    data.readInt();
+                    String packageName = data.readString();
+                    readBundle(data);
+                    IBinder callback = data.readStrongBinder();
+                    if (callback == null || data.dataAvail() != 0) {
+                        throw new IllegalArgumentException("Invalid billing initialization request");
+                    }
+                    sendInitialization(callback);
+                    if (reply != null) reply.writeNoException(); // Billing 9 sends this one-way.
+                    Slog.i("FakeBillingCompat", "Initialized billing discovery for " + packageName);
+                    return true;
                 case 1: // isBillingSupported
                     reply.writeNoException();
                     reply.writeInt(RESPONSE_OK);
@@ -183,6 +195,26 @@ public final class FakeBillingCompat {
                     "Testing placeholders supplied by Jester Mods; purchases are disabled.");
             result.putStringArrayList("DETAILS_LIST", details);
             return result;
+        }
+    }
+
+    private static void sendInitialization(IBinder callback) throws RemoteException {
+        Bundle result = response(RESPONSE_OK, "Billing discovery only; purchases are disabled.");
+        // API 17 enables the product-details request (901) implemented above.
+        // Do not advertise newer service APIs or optional subscription actions.
+        result.putInt("BILLING_API_VERSION_KEY", 17);
+        result.putBundle("ENABLED_SUBSCRIPTION_CLIENT_ACTIONS_KEY", new Bundle());
+        Parcel parcel = Parcel.obtain();
+        try {
+            parcel.writeInterfaceToken(
+                    "com.android.vending.billing.IInAppBillingInitializeCallback");
+            parcel.writeInt(1);
+            result.writeToParcel(parcel, 0);
+            if (!callback.transact(1, parcel, null, IBinder.FLAG_ONEWAY)) {
+                throw new RemoteException("Billing initialization callback was rejected");
+            }
+        } finally {
+            parcel.recycle();
         }
     }
 

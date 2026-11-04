@@ -558,6 +558,12 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 
                 if (proxyIntent != null && proxyIntent.getComponent() != null && 
                     proxyIntent.getComponent().getPackageName().equals(BlackBoxCore.getHostPkg())){
+                    // Only our non-isolated proxy services multiplex through extras.
+                    // Host WebView services need their original isolated instance name.
+                    if (("bindServiceInstance".equals(method.getName())
+                            || "bindIsolatedService".equals(method.getName())) && args.length > 6) {
+                        args[6] = null;
+                    }
                     int flagsIndex = getFlagsIndex(args);
                     if (flagsIndex >= 0) {
                         int flags = MethodParameterUtils.toInt(args[flagsIndex]);
@@ -635,13 +641,6 @@ public class IActivityManagerProxy extends ClassInvocationStub {
     public static class bindServiceInstance extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            if (args != null && args.length > 6) {
-                // Android 14+/16 rejects instance names for normal non-isolated
-                // proxy services. Our proxy layer already multiplexes by extras,
-                // so keep the sandbox bind path and strip the framework-level
-                // instance token before the real bind.
-                args[6] = null;
-            }
             return BindServiceCommon(who,method,args,7);
         }
 
@@ -656,8 +655,6 @@ public class IActivityManagerProxy extends ClassInvocationStub {
     public static class BindIsolatedService extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            
-            args[6] = null;
             return BindServiceCommon(who,method,args,7);
         }
 
