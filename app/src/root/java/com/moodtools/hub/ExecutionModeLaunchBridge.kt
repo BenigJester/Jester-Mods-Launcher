@@ -13,6 +13,7 @@ import com.moodtools.hub.modules.architectureLabel
 import com.moodtools.hub.modules.architectureSummary
 import com.moodtools.hub.security.RuntimeSecurityGuard
 import java.io.File
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /** Public Root bridge: production-only methods fail closed; injection remains reviewable. */
@@ -250,6 +251,19 @@ object ExecutionModeLaunchBridge {
         return true
     }
 
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private fun extractInjector(context: Context, assetPath: String): File {
         val directory = File(context.codeCacheDir, "root-launcher").apply { mkdirs() }
         val output = File(directory, "moodtools-injector")
@@ -330,7 +344,8 @@ object ExecutionModeStartupGate {
 
 internal object RootShell {
     data class Result(val success: Boolean, val output: String, val exitCode: Int? = null, val timedOut: Boolean = false,
-        val outputTruncated: Boolean = false, val outputReadComplete: Boolean? = null)
+        val outputTruncated: Boolean = false, val outputReadComplete: Boolean? = null,
+        val durationMs: Long? = null, val timeoutMs: Long? = null, val lastOutputAgeMs: Long? = null)
 
     fun run(command: String): Result {
         return run(listOf("su", "-c", command))

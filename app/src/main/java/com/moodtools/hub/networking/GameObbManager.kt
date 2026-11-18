@@ -63,3 +63,16 @@ internal const val LAST_LEGACY_OBB_STORAGE_API = 32
 
 internal fun needsLegacyObbStoragePermission(sdk: Int, granted: Boolean): Boolean =
     sdk <= LAST_LEGACY_OBB_STORAGE_API && !granted
+
+internal fun gameObbPreservationFailureMessage(error: Throwable): String {
+    val accessDenied = generateSequence(error) { it.cause }.take(16).any {
+        it is java.nio.file.AccessDeniedException || it is SecurityException
+    }
+    return if (accessDenied) {
+        "Android blocked access to this game's expansion files. Nothing was uninstalled. " +
+            "Keep the game installed; do not clear its data. Restore storage access before retrying. " +
+            "If Android keeps blocking access, share Diagnostics instead of uninstalling manually."
+    } else {
+        "Could not save the game files. Nothing was uninstalled. Check storage access and free space, then try again."
+    }
+}

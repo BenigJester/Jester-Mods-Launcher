@@ -208,6 +208,7 @@ namespace Utils
 
         bool ok = true;
         struct log_msg msg{};
+        KITTY_LOGI("Root process watch phase: event_reader_ready");
         while (true)
         {
             if (android_logger_list_read(logger_list, &msg) <= 0)
@@ -219,6 +220,7 @@ namespace Utils
 
             if (first)
             {
+                KITTY_LOGI("Root process watch phase: initial_event_received");
                 if (init_cb)
                     init_cb();
 

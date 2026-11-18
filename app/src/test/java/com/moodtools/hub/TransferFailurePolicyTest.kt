@@ -9,6 +9,18 @@ import org.junit.Test
 
 class TransferFailurePolicyTest {
     @Test
+    fun unavailableApkPureFileExplainsSourceFailureWithoutBlamingTheInstaller() {
+        val result = TransferFailurePolicy.present(
+            IOException("transfer failed", com.moodtools.hub.networking.DownloadValidationException(
+                com.moodtools.hub.networking.DownloadCheck.SOURCE_UNAVAILABLE)),
+            TransferFailureOperation.GAME_DOWNLOAD
+        )
+        assertEquals("APKPure download unavailable", result.headline)
+        assertEquals(true, result.detail.contains("Nothing was uninstalled"))
+        assertFalse(result.detail.contains("storage"))
+    }
+
+    @Test
     fun htmlServiceResponsesExplainRetryWithoutBlamingStorageOrExpiredAccess() {
         val result = TransferFailurePolicy.present(
             LauncherServiceException("UNEXPECTED_SERVICE_RESPONSE", "Launcher service HTTP 403: received HTML"),

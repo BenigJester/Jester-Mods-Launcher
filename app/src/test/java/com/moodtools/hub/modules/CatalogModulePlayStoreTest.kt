@@ -81,6 +81,26 @@ class CatalogModulePlayStoreTest {
     }
 
     @Test
+    fun unsupportedStoreReleaseNeverOffersAnUpdateAndSearchUsesSupportedVersion() {
+        val catalog = catalogModule(GameInstallSource.PlayStore("https://play.google.com/store/apps/details?id=com.example.game"))
+        val listing = ModuleListing(
+            catalog = catalog.copy(config = catalog.config.copy(supportedVersionCodes = setOf(100))),
+            game = InstalledGame("com.example.game", "2.0.0", 200, "Example Game", null,
+                catalog.config, false, "arm64-v8a", true),
+            installedBuild = 0,
+            installedComplete = false,
+            playStoreVersionStatus = PlayStoreVersionStatus(
+                latestVersion = "2.0.0", latestVersionCode = 200,
+                listingUpdatedAtEpochSeconds = null, updateAvailable = true,
+                checkedAtEpochSeconds = 1, checkedDay = 1
+            )
+        )
+        assertEquals(true, listing.installedGameNewerThanSupported)
+        assertEquals(false, listing.configuredGameSourceAvailable)
+        assertEquals("https://www.google.com/search?q=Example+Game+1.0.0+APK", listing.supportedGameSearchUrl)
+    }
+
+    @Test
     fun apkPureDownloadMustMatchOneExactSupportedReleasePair() {
         val base = catalogModule(
             GameInstallSource.PlayStore("https://play.google.com/store/apps/details?id=com.example.game")

@@ -11,6 +11,7 @@
     "arm64-v8a"
   ],
   "nonroot_method": "injection",
+  "gmscore_support": false,
   "root_method": "injection",
   "entry_point": "com.android.support.Main",
   "dex_file": "classes.dex",

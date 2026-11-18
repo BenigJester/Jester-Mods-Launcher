@@ -35,6 +35,14 @@ internal object TransferFailurePolicy {
         }.lowercase()
         val serviceError = causes.filterIsInstance<LauncherServiceException>().firstOrNull()
 
+        if (operation == TransferFailureOperation.GAME_DOWNLOAD &&
+            com.moodtools.hub.networking.isUnavailableAPKPureDownload(error)) {
+            return TransferFailurePresentation(
+                headline = "APKPure download unavailable",
+                detail = "APKPure did not return a download file. Refresh the game requirements or search for the supported version. Nothing was uninstalled."
+            )
+        }
+
         serviceErrorPresentation(serviceError, operation)?.let { return it }
 
         causes.filterIsInstance<GameInstallCompatibilityException>().firstOrNull()?.let { compatibility ->

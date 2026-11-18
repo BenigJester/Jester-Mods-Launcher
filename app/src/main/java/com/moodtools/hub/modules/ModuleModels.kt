@@ -438,8 +438,20 @@ data class ModuleListing(
     val configuredGameSourceAvailable: Boolean
         get() = when (catalog.installSource) {
             is GameInstallSource.DirectDownload -> true
-            is GameInstallSource.PlayStore -> playStoreListingDetected
+            is GameInstallSource.PlayStore -> playStoreVersionSupported == true
         }
+
+    val installedGameNewerThanSupported: Boolean
+        get() = game?.let { installed ->
+            !installed.versionSupported && catalog.config.supportedVersionCodes.maxOrNull()
+                ?.let { installed.versionCode > it } == true
+        } == true
+
+    val supportedGameSearchUrl: String
+        get() = "https://www.google.com/search?q=" + java.net.URLEncoder.encode(
+            "${catalog.config.title} ${catalog.config.supportedVersions.sorted().joinToString(" OR ")} APK",
+            "UTF-8"
+        )
 
     val playStoreUpdateInProgress: Boolean
         get() = playStoreVersionSupported == false &&

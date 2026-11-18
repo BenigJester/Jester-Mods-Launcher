@@ -6,6 +6,18 @@ import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 
 class GameObbStoragePermissionTest {
+    @Test fun `preservation access denial explains the block without suggesting a space problem`() {
+        val denial = java.nio.file.AccessDeniedException("/Android/obb/com.example.game")
+        for (error in listOf(denial, IllegalStateException("preserve failed", denial), SecurityException())) {
+            val message = gameObbPreservationFailureMessage(error)
+            assertTrue(message.contains("Android blocked access"))
+            assertTrue(message.contains("Nothing was uninstalled"))
+            assertTrue(message.contains("do not clear its data"))
+            assertFalse(message.contains("free space"))
+        }
+        assertTrue(gameObbPreservationFailureMessage(java.io.IOException("disk full")).contains("free space"))
+    }
+
     @Test fun `Android 12 and 12L request storage before reading OBB files`() {
         for (sdk in listOf(27, 29, 30, 31, 32)) {
             assertTrue(needsLegacyObbStoragePermission(sdk, false))

@@ -698,12 +698,15 @@ private fun DefaultGateContent(
                 is LauncherGatePresentation.Locked -> Button(
                     onClick = onUnlock,
                     modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 14.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = GateAccent,
                         contentColor = GateInk
                     )
-                ) { Text("Use free 1-day Linkvertise access", fontWeight = FontWeight.Bold) }
+                ) {
+                    Text("Use free 1-day Linkvertise access", fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
                 else -> error("Unsupported default gate presentation: $presentation")
             }
             if (locked) {
@@ -727,6 +730,54 @@ private fun DefaultGateContent(
                 ) {
                     Text("Linkvertise Tutorial", fontWeight = FontWeight.SemiBold)
                 }
+            }
+        }
+        if (locked) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(Modifier.weight(1f).height(1.dp).background(GatePalette.hairline))
+                Text("OR", color = GateMuted, fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp)
+                Box(Modifier.weight(1f).height(1.dp).background(GatePalette.hairline))
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth().background(
+                    Brush.linearGradient(listOf(GatePalette.accentSecondary.copy(alpha = 0.10f), GateSurface)),
+                    RoundedCornerShape(30.dp)
+                ).border(
+                    BorderStroke(1.dp, GatePalette.accentSecondary.copy(alpha = 0.24f)),
+                    RoundedCornerShape(30.dp)
+                ).padding(24.dp)
+            ) {
+                Text("30 Day Access Key", color = Color.White,
+                    style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                Text("Get 30 days of launcher access. Paid add-ons are sold separately.",
+                    color = GateMuted, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(22.dp))
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://ko-fi.com/s/740b35d519")))
+                        }.onFailure {
+                            Toast.makeText(context, LauncherLocalization.translate("Could not open shop."), Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = !accessKeyState.activating,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = GatePalette.accentSecondary,
+                        contentColor = GateInk
+                    )
+                ) {
+                    Text("Get 30-day access \u00b7 \$5", fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(
                     onClick = { accessKeyExpanded = !accessKeyExpanded },
@@ -741,103 +792,96 @@ private fun DefaultGateContent(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-            }
-            AnimatedVisibility(
-                visible = locked && accessKeyExpanded,
-                enter = expandVertically(
-                    animationSpec = tween(300, easing = FastOutSlowInEasing),
-                    expandFrom = Alignment.Top
-                ) + fadeIn(tween(300)),
-                exit = shrinkVertically(
-                    animationSpec = tween(300, easing = FastOutSlowInEasing),
-                    shrinkTowards = Alignment.Top
-                ) + fadeOut(tween(300))
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(
-                        GateRaised, RoundedCornerShape(18.dp)
-                    ).padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                AnimatedVisibility(
+                    visible = accessKeyExpanded,
+                    enter = expandVertically(
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        expandFrom = Alignment.Top
+                    ) + fadeIn(tween(300)),
+                    exit = shrinkVertically(
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        shrinkTowards = Alignment.Top
+                    ) + fadeOut(tween(300))
                 ) {
-                    Text(
-                        "PAID ACCESS KEY",
-                        color = GateAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.3.sp
-                    )
-                    Text(
-                        "Activate your Ko-fi package here. Its time stacks onto any active Launcher and Free Fire access.",
-                        color = GateMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    OutlinedTextField(
-                        value = accessKey,
-                        onValueChange = onAccessKeyChange,
-                        enabled = !accessKeyState.activating,
-                        singleLine = true,
-                        label = { Text("JM access key") },
-                        placeholder = { RawText("JM-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(15.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = GateAccent,
-                            unfocusedTextColor = GateAccent,
-                            disabledTextColor = GateAccent.copy(alpha = 0.65f),
-                            focusedBorderColor = GateAccent,
-                            focusedLabelColor = GateAccent,
-                            cursorColor = GateAccent,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.16f),
-                            focusedPlaceholderColor = GateMuted,
-                            unfocusedPlaceholderColor = GateMuted
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(
+                            GateRaised, RoundedCornerShape(18.dp)
+                        ).padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "Enter the key from your Ko-fi order. Any time you buy is added to the access you already have.",
+                            color = GateMuted,
+                            style = MaterialTheme.typography.bodySmall
                         )
-                    )
-                    accessKeyState.error?.let { error ->
-                        Column(
-                            Modifier.fillMaxWidth().background(
-                                Color(0xFFFFB4AB).copy(alpha = 0.10f), RoundedCornerShape(14.dp)
-                            ).padding(13.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                accessKeyErrorTitle(accessKeyState.errorCode),
-                                color = Color(0xFFFFB4AB),
-                                fontWeight = FontWeight.Bold
+                        OutlinedTextField(
+                            value = accessKey,
+                            onValueChange = onAccessKeyChange,
+                            enabled = !accessKeyState.activating,
+                            singleLine = true,
+                            label = { Text("JM access key") },
+                            placeholder = { RawText("JM-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(15.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = GateAccent,
+                                unfocusedTextColor = GateAccent,
+                                disabledTextColor = GateAccent.copy(alpha = 0.65f),
+                                focusedBorderColor = GateAccent,
+                                focusedLabelColor = GateAccent,
+                                cursorColor = GateAccent,
+                                unfocusedBorderColor = GatePalette.hairline,
+                                focusedPlaceholderColor = GateMuted,
+                                unfocusedPlaceholderColor = GateMuted
                             )
-                            Text(error, color = GateMuted, style = MaterialTheme.typography.bodySmall)
+                        )
+                        accessKeyState.error?.let { error ->
+                            Column(
+                                Modifier.fillMaxWidth().background(
+                                    Color(0xFFFFB4AB).copy(alpha = 0.10f), RoundedCornerShape(14.dp)
+                                ).padding(13.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    accessKeyErrorTitle(accessKeyState.errorCode),
+                                    color = Color(0xFFFFB4AB),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(error, color = GateMuted, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Button(
+                            onClick = onRedeemAccessKey,
+                            enabled = accessKey.isNotBlank() && !accessKeyState.activating,
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = GateAccent,
+                                contentColor = GateInk
+                            )
+                        ) {
+                            if (accessKeyState.activating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = GateInk
+                                )
+                            } else Text("Activate access key", fontWeight = FontWeight.Bold)
                         }
                     }
-                    Button(
-                        onClick = onRedeemAccessKey,
-                        enabled = accessKey.isNotBlank() && !accessKeyState.activating,
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(vertical = 14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = GateAccent,
-                            contentColor = Color(0xFF09100E)
-                        )
-                    ) {
-                        if (accessKeyState.activating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = Color(0xFF09100E)
-                            )
-                        } else Text("Activate access key", fontWeight = FontWeight.Bold)
-                    }
                 }
             }
-            if (presentation is LauncherGatePresentation.Locked) {
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onCopySupportCode,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 13.dp),
-                    border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
-                ) {
-                    Text("Copy support code", fontWeight = FontWeight.SemiBold)
-                }
+        }
+        if (presentation is LauncherGatePresentation.Locked) {
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onCopySupportCode,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 13.dp),
+                border = BorderStroke(1.dp, GateAccent.copy(alpha = 0.35f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = GateAccent)
+            ) {
+                Text("Copy support code", fontWeight = FontWeight.SemiBold)
             }
         }
         Spacer(if (locked) Modifier.height(24.dp) else Modifier.weight(1f))

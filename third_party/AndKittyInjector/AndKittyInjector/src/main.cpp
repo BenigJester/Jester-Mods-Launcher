@@ -428,11 +428,13 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
                 std::thread([&cfg]() -> void {
                     // give some time
                     SLEEP_SECONDS(1);
+                    KITTY_LOGI("Root process watch phase: launch_requested");
                     if (!Utils::android_launch_app(cfg.package, cfg.launch_language))
                     {
                         KITTY_LOGE("Failed to launch app %s!", cfg.package.c_str());
                         exit(1);
                     }
+                    KITTY_LOGI("Root process watch phase: launch_command_returned");
                 }).detach();
             }
         },
@@ -444,6 +446,7 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
                 return false;
 
             pid = event->pid.data;
+            KITTY_LOGI("Root process watch phase: target_event_received");
 
             if (cfg.bp)
             {

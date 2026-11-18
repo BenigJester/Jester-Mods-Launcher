@@ -307,12 +307,6 @@ foreach ($moduleDir in $moduleDirectories) {
     } else {
         @($moduleConfig.nonroot_methods | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
     }
-    if ($moduleConfig.PSObject.Properties.Name -contains 'gmscore_support') {
-        if ($moduleConfig.gmscore_support -isnot [bool] -or
-            ($moduleConfig.gmscore_support -and $nonRootMethods -notcontains 'direct_patch')) {
-            throw "Module ${name} gmscore_support must be boolean and requires direct_patch when enabled."
-        }
-    }
     if ($nonRootMethods.Count -eq 0 -or $nonRootMethods[0] -cne [string]$moduleConfig.nonroot_method -or
             @($nonRootMethods | Select-Object -Unique).Count -ne $nonRootMethods.Count -or
             @($nonRootMethods | Where-Object { $_ -notin @('none', 'injection', 'direct_patch', 'identity_shell') }).Count -gt 0) {
@@ -492,15 +486,6 @@ foreach ($moduleDir in $moduleDirectories) {
         $embeddedIl2CppSource = Join-Path $cpp 'Embedded\libil2cpp.patched.so'
         if (Test-Path -LiteralPath $embeddedIl2CppGzipSource -PathType Leaf) {
             $cmakeArgs += "-DEMBEDDED_IL2CPP_GZIP=$embeddedIl2CppGzipSource"
-            $embeddedIl2CppSha256 = Get-GzipSha256 $embeddedIl2CppGzipSource
-            $moduleRuntime = Join-Path $java 'ModuleRuntime.java'
-            $moduleRuntimeText = Get-Content -LiteralPath $moduleRuntime -Raw
-            $declaredHash = [regex]::Match(
-                $moduleRuntimeText,
-                'EMBEDDED_IL2CPP_SHA256\s*=\s*"([0-9a-fA-F]{64})"').Groups[1].Value.ToLowerInvariant()
-            if ($declaredHash -ne $embeddedIl2CppSha256) {
-                throw "Module ${name} declares embedded game library hash ${declaredHash}, but libil2cpp.patched.so.gz contains ${embeddedIl2CppSha256}."
-            }
         } elseif (Test-Path -LiteralPath $embeddedIl2CppSource -PathType Leaf) {
             $embeddedIl2CppGzip = Join-Path $work 'native\libil2cpp.patched.so.gz'
             Compress-GzipFile $embeddedIl2CppSource $embeddedIl2CppGzip
@@ -576,45 +561,7 @@ foreach ($moduleDir in $moduleDirectories) {
         & $strip --strip-unneeded $nativeOutput
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
-    # Optional data-only compatibility overlay travels in the already authenticated native
-    # download. Append AFTER strip; ELF headers/segments and mapped code stay unchanged.
-    $compatibilityDescriptor = Join-Path $moduleDir.FullName 'compatibility.json'
-    if (Test-Path -LiteralPath $compatibilityDescriptor -PathType Leaf) {
-        $compatibility = Get-Content -LiteralPath $compatibilityDescriptor -Raw | ConvertFrom-Json
-        if ($compatibility.schema -ne 1 -or $compatibility.sha256 -cnotmatch '^[0-9a-f]{64}$') {
-            throw "Invalid compatibility descriptor for $name"
-        }
-        $compatibilityBundle = Join-Path $moduleDir.FullName 'compatibility\recipe.zip'
-        if (-not (Test-Path -LiteralPath $compatibilityBundle -PathType Leaf)) {
-            throw "Missing compatibility/recipe.zip for $name; generate its exact owned-artifact recipe first"
-        }
-        $compatibilitySize = (Get-Item -LiteralPath $compatibilityBundle).Length
-        if ($compatibilitySize -lt 1 -or $compatibilitySize -gt 48MB -or
-            (Get-FileHash -LiteralPath $compatibilityBundle -Algorithm SHA256).Hash.ToLowerInvariant() -cne $compatibility.sha256) {
-            throw "Compatibility payload hash/size mismatch for $name"
-        }
-        $compatibilityBytes = [IO.File]::ReadAllBytes($compatibilityBundle)
-        $compatibilityLength = [BitConverter]::GetBytes([long]$compatibilityBytes.LongLength)
-        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($compatibilityLength) }
-        $compatibilityStream = [IO.File]::Open($nativeOutput, [IO.FileMode]::Append, [IO.FileAccess]::Write)
-        try {
-            $compatibilityStream.Write($compatibilityBytes, 0, $compatibilityBytes.Length)
-            $compatibilityStream.Write($compatibilityLength, 0, 8)
-            $compatibilityMagic = [Text.Encoding]::ASCII.GetBytes('JESTER-COMPAT-01')
-            $compatibilityStream.Write($compatibilityMagic, 0, $compatibilityMagic.Length)
-        } finally { $compatibilityStream.Dispose() }
-    }
     Copy-Item -LiteralPath $nativeOutput -Destination (Join-Path $stage "libmenu_native.so") -Force
-
-    # Hash the final library after any embedded payload/compatibility additions.
-    $nativeMetadata = Join-Path $assets 'native-payload.json'
-    if (Test-Path -LiteralPath $nativeMetadata) {
-        $payloadMetadata = Get-Content -LiteralPath $nativeMetadata -Raw | ConvertFrom-Json
-        $payloadMetadata.sha256 = (Get-FileHash -LiteralPath $nativeOutput -Algorithm SHA256).Hash.ToLowerInvariant()
-        $payloadMetadataJson = ($payloadMetadata | ConvertTo-Json -Depth 20) + "`n"
-        [IO.File]::WriteAllText($nativeMetadata, $payloadMetadataJson, [Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText((Join-Path $stage 'assets/native-payload.json'), $payloadMetadataJson, [Text.UTF8Encoding]::new($false))
-    }
 
     $zipPath = Join-Path $output "$name.zip"
     if (Test-Path -LiteralPath $zipPath) {

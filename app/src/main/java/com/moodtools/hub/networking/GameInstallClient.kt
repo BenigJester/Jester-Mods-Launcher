@@ -107,11 +107,12 @@ class GameInstallClient(private val context: Context) {
         }
     }
 
-    fun install(
+    suspend fun install(
         game: CatalogModule,
         apkPureDownload: APKPureDownload? = null,
         onPreparationProgress: (Float) -> Unit = {},
-        isCancelled: () -> Boolean = { false }
+        isCancelled: () -> Boolean = { false },
+        beforeInstall: suspend () -> Unit = {}
     ): Int? {
         val source = downloadSource(game, apkPureDownload)
             ?: error("This game does not have a direct download")
@@ -148,6 +149,10 @@ class GameInstallClient(private val context: Context) {
                 }
             }
         }
+        // Package, splits, permissions and staged expansion files must be checked before
+        // the caller asks Android to remove an installed game for a downgrade.
+        beforeInstall()
+        ensureNotCancelled(isCancelled)
         GameObbManager(context).install(game.config.packageName, source.versionCode, isCancelled = isCancelled) { completed, total ->
             onPreparationProgress(progressBetween(0.77f, 0.88f, completed, total))
         }
@@ -238,19 +243,21 @@ class GameInstallClient(private val context: Context) {
         return sessionId
     }
 
-    fun isInstalledAtLeast(packageName: String, versionCode: Long): Boolean {
-        if (!packageName.matches(PACKAGE_PATTERN) || versionCode <= 0L) return false
-        val info = runCatching {
+    fun installedVersionCode(packageName: String): Long? {
+        require(packageName.matches(PACKAGE_PATTERN))
+        val info = try {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(packageName, 0)
-        }.getOrNull() ?: return false
-        val installedVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        } catch (_: PackageManager.NameNotFoundException) { return null }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             info.longVersionCode
         } else {
             @Suppress("DEPRECATION") info.versionCode.toLong()
         }
-        return installedVersion >= versionCode
     }
+
+    fun isInstalledVersion(packageName: String, versionCode: Long): Boolean =
+        com.moodtools.hub.GameInstallerReconciliationPolicy.matchesTargetBuild(installedVersionCode(packageName), versionCode)
 
     fun clearDownload(packageName: String, versionCode: Long) {
         if (!packageName.matches(PACKAGE_PATTERN) || versionCode <= 0) return
@@ -546,8 +553,7 @@ class GameInstallClient(private val context: Context) {
             throw DownloadValidationException(DownloadCheck.REDIRECT_URL)
         }
         val targetUri = Uri.parse(location)
-        if (target.protocol != "https" || target.host != APKPURE_FILE_HOST)
-            throw DownloadValidationException(DownloadCheck.REDIRECT_URL)
+        requireAPKPureDownloadTarget(target)
         if (targetUri.getQueryParameter("package_name") != source.apkPurePackageName)
             throw DownloadValidationException(DownloadCheck.REDIRECT_PACKAGE)
         val fullSize = targetUri.getQueryParameter("full_size")?.toLongOrNull()
@@ -567,7 +573,6 @@ class GameInstallClient(private val context: Context) {
     companion object {
         private const val HOST = "jester.moodtools.workers.dev"
         private const val APKPURE_DOWNLOAD_HOST = "d.apkpure.net"
-        private const val APKPURE_FILE_HOST = "data.winudf.com"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val MAX_APKS_ENTRIES = 256
         private const val MAX_EXTRACTED_APKS_BYTES = 4L * 1024L * 1024L * 1024L

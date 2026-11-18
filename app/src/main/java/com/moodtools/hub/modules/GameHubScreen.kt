@@ -1643,7 +1643,7 @@ private fun AccessKeyScreen(
     var key by rememberSaveable { mutableStateOf("") }
     val gold = Color(0xFFEDC96F)
     val violet = Color(0xFF9B78F2)
-    val success = state.launcherExpiresAt != null && state.entitlementExpiresAt != null
+    val success = state.launcherExpiresAt != null
     LazyColumn(
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
@@ -1758,8 +1758,9 @@ private fun AccessKeyScreen(
                 DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
                     .format(Date(state.launcherExpiresAt!! * 1_000L))
             }
-            val moduleDate = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
-                .format(Date(state.entitlementExpiresAt!! * 1_000L))
+            val moduleDate = state.entitlementExpiresAt?.let {
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it * 1_000L))
+            }
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(
                     Brush.linearGradient(listOf(gold.copy(alpha = 0.18f), violet.copy(alpha = 0.16f), SurfaceDark))
@@ -1789,17 +1790,19 @@ private fun AccessKeyScreen(
                     Text("Launcher access", color = Muted)
                     Text("${state.addedDays} days", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                if (moduleDate != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Free Fire access", color = Muted)
                     Text("${state.addedDays} days", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
                 Text("YOUR ACCESS NOW", color = violet, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
                 Text("Launcher  ·  $launcherDate", color = Muted)
-                Text("Free Fire  ·  $moduleDate", color = Muted)
+                if (moduleDate != null) Text("Free Fire  ·  $moduleDate", color = Muted)
                 Text(if (state.alreadyRedeemed) {
                     "This key was already added, so no extra time was added."
-                } else {
+                } else if (moduleDate != null) {
                     "You're all set. Your Launcher and Free Fire access have been updated."
+                } else {
+                    "Your launcher access has been updated."
                 },
                     color = violet, style = MaterialTheme.typography.bodySmall)
             }
@@ -6368,6 +6371,7 @@ private fun ModuleDownloadScreen(
     onDone: () -> Unit
 ) {
     val game = listing.game
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val bitmap = rememberListingBitmap(screenCache, listing, 160)
     val action = when (listing.status) {
         ModuleInstallStatus.UPDATE_AVAILABLE -> "Update"
@@ -6389,7 +6393,6 @@ private fun ModuleDownloadScreen(
         }
         addOnSize?.let { source.size + it }
     } else null
-    val directUpdateIsNewer = game == null || directSource == null || directSource.versionCode > game.versionCode
     val busy = update.inProgress || update.cancelling || gameInstall.inProgress ||
         gameInstall.installing || gameInstall.cancelling
     val companionWindowActive = directSource != null && gameInstall.visible &&
@@ -6610,7 +6613,8 @@ private fun ModuleDownloadScreen(
                         is GameInstallSource.PlayStore -> {
                             Text(
                                 when {
-                                    playStoreStatus == null -> "APKPure listing not detected"
+                                    listing.installedGameNewerThanSupported -> "Installed game is newer than this add-on supports"
+                                    playStoreSupported != true -> "A supported game release is required"
                                     game == null -> "Available from Google Play"
                                     else -> "Update from Google Play"
                                 },
@@ -6618,8 +6622,8 @@ private fun ModuleDownloadScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                if (playStoreStatus == null) {
-                                    "The launcher couldn't confirm this package on APKPure, so the store action is hidden."
+                                if (playStoreSupported != true) {
+                                    "Use one of the compatible versions listed above. The latest store release may not work with this add-on."
                                 } else {
                                     "Google Play handles the original game installation and updates."
                                 },
@@ -6628,12 +6632,8 @@ private fun ModuleDownloadScreen(
                             )
                         }
                         is GameInstallSource.DirectDownload -> {
-                            Text(if (game == null) "Download original game" else "Compatible game update", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(if (game == null) "Download original game" else "Supported game release", color = Color.White, fontWeight = FontWeight.SemiBold)
                             Text("Version ${source.version}", color = Muted, style = MaterialTheme.typography.bodySmall)
-                            if (!directUpdateIsNewer) {
-                                Spacer(Modifier.height(6.dp))
-                                Text("The available download is not newer than your installed game.", color = Danger, style = MaterialTheme.typography.bodySmall)
-                            }
                         }
                     }
                 }
@@ -6641,7 +6641,7 @@ private fun ModuleDownloadScreen(
                 if (listing.configuredGameSourceAvailable) {
                     Button(
                         onClick = onAcquireGame,
-                        enabled = !busy && !gameInstall.completed && directUpdateIsNewer,
+                        enabled = !busy && !gameInstall.completed,
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Ink)
@@ -6652,14 +6652,13 @@ private fun ModuleDownloadScreen(
                                 companionWindowActive && gameInstall.failed -> "Use installer window"
                                 listing.catalog.installSource is GameInstallSource.PlayStore && game == null -> "Get from Google Play"
                                 listing.catalog.installSource is GameInstallSource.PlayStore -> "Update in Google Play"
-                                game == null -> "Download game"
-                                else -> "Download game update"
+                                else -> "Download game"
                             },
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                if (directSource != null && listing.playStoreListingDetected) {
+                if (directSource != null && playStoreSupported == true) {
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onOpenGameStore,
@@ -6674,9 +6673,10 @@ private fun ModuleDownloadScreen(
                 }
                 listing.apkPureDownload?.let { download ->
                     Spacer(Modifier.height(10.dp))
+                    Text("Version ${download.version}", color = Muted, style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(
                         onClick = onAcquireAPKPureGame,
-                        enabled = !busy && (game == null || download.versionCode > game.versionCode),
+                        enabled = !busy,
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 14.dp),
                         border = BorderStroke(1.dp, Accent.copy(alpha = 0.55f)),
@@ -6684,6 +6684,14 @@ private fun ModuleDownloadScreen(
                     ) {
                         Text("Download from APKPure", fontWeight = FontWeight.SemiBold)
                     }
+                }
+                if (listing.apkPureDownload == null) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { uriHandler.openUri(listing.supportedGameSearchUrl) },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Search for supported game version") }
                 }
             }
         }

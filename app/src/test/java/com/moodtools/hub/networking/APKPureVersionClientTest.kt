@@ -9,6 +9,20 @@ import org.junit.Test
 
 class APKPureVersionClientTest {
     @Test
+    fun supportedLinkPreservesThePageVariantInsteadOfTheDeviceSdk() {
+        val link = "https://d.apkpure.net/b/XAPK/com.vectorunit.purple.googleplay?versionCode=219&nc=arm64-v8a&sv=24"
+        val html = "<a href=\"${link.replace("&", "&amp;")}\">Download</a>"
+        assertEquals(listOf(link), supportedAPKPureLinks(html, "com.vectorunit.purple.googleplay", 219,
+            listOf("arm64-v8a"), 36))
+        assertEquals(emptyList<String>(), supportedAPKPureLinks(html, "com.vectorunit.purple.googleplay", 220,
+            listOf("arm64-v8a"), 36))
+        assertEquals(emptyList<String>(), supportedAPKPureLinks(html, "com.vectorunit.purple.googleplay", 219,
+            listOf("armeabi-v7a"), 36))
+        assertEquals(emptyList<String>(), supportedAPKPureLinks(html, "com.vectorunit.purple.googleplay", 219,
+            listOf("arm64-v8a"), 23))
+    }
+
+    @Test
     fun parsesListingRevisionWhenGoogleDoesNotPublishVersion() {
         val body = JSONObject()
             .put("ok", true)

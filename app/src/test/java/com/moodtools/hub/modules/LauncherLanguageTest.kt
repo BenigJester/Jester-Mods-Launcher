@@ -9,6 +9,50 @@ import org.junit.Test
 
 class LauncherLanguageTest {
     @Test
+    fun launcher466RequirementsAndRecoveryTranslateOfflineForEveryLanguage() {
+        val accessDenied = com.moodtools.hub.networking.gameObbPreservationFailureMessage(
+            java.nio.file.AccessDeniedException("/Android/obb/com.example.game")
+        )
+        val texts = listOf(
+            "30 Day Access Key",
+            "Get 30 days of launcher access. Paid add-ons are sold separately.",
+            "Get 30-day access · \$5",
+            "OR",
+            "Could not open shop.",
+            "Your launcher access has been updated.",
+            "APKPure download unavailable",
+            "APKPure did not return a download file. Refresh the game requirements or search for the supported version. Nothing was uninstalled.",
+            "Replace installed game?",
+            "Uninstall and install",
+            "The supported package is downloaded and verified. Android requires uninstalling the newer game first. Uninstalling removes local game data. Back up your progress before continuing.",
+            "Installed game is newer than this add-on supports",
+            "A supported game release is required",
+            "Use one of the compatible versions listed above. The latest store release may not work with this add-on.",
+            "Supported game release",
+            "Your installed build is newer or equal. Android may block installing an older build; keep your game data backed up.",
+            "The supported release is older than your installed game. The download opens in your browser. Android may block a downgrade; preserve your game data.",
+            "Search for supported game version",
+            "Installation not confirmed",
+            "Android hasn't confirmed installation. Check its install prompt before retrying. The verified download is still saved.",
+            accessDenied
+        )
+        for (language in LauncherLanguage.entries.filter { it != LauncherLanguage.English }) {
+            for (text in texts) {
+                val translated = LauncherLocalization.translate(text, language)
+                assertTrue("$language: $text", translated.isNotBlank())
+                assertNotEquals("$language: $text", text, translated)
+            }
+            val retry = LauncherLocalization.translate(
+                "$accessDenied You can retry the prepared package without downloading the original game again.", language
+            )
+            assertTrue("$language: access denial must translate inside the retry template",
+                retry.contains(LauncherLocalization.translate(accessDenied, language)))
+            assertTrue("$language: retry guidance must translate too", !retry.contains("You can retry"))
+        }
+        assertTrue(com.moodtools.hub.Launcher466Translations.entries.values.all { it.size == 9 })
+    }
+
+    @Test
     fun preferenceOrderMatchesOfflineTranslator() {
         assertEquals(LauncherLanguage.English, LauncherLanguage.fromPreference(0))
         assertEquals(LauncherLanguage.Filipino, LauncherLanguage.fromPreference(1))

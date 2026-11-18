@@ -147,8 +147,12 @@ internal fun newestPlayStoreStatus(
     received: PlayStoreVersionStatus
 ): PlayStoreVersionStatus = when {
     cached == null -> received
+    received.latestVersionCode != null && cached.latestVersionCode != null &&
+        received.latestVersionCode > cached.latestVersionCode -> received
     cached.latestVersion != null && cached.latestVersionCode != null &&
         (received.latestVersion == null || received.latestVersionCode == null) &&
+        (received.latestVersion == null || received.latestVersion == cached.latestVersion) &&
+        (received.latestVersionCode == null || received.latestVersionCode == cached.latestVersionCode) &&
         received.listingUpdatedAtEpochSeconds == cached.listingUpdatedAtEpochSeconds &&
         received.checkedAtEpochSeconds >= cached.checkedAtEpochSeconds -> received.copy(
             latestVersion = cached.latestVersion,
@@ -197,8 +201,9 @@ internal fun playStoreCompatibilityFingerprint(module: ModuleConfig): String =
 internal fun shouldRefreshPlayStoreStatus(
     cached: PlayStoreVersionStatus?,
     cachedCompatibility: String?,
-    module: ModuleConfig
-): Boolean = cached == null || cached.stale ||
+    module: ModuleConfig,
+    forceRefresh: Boolean = false
+): Boolean = forceRefresh || cached == null || cached.stale ||
     cachedCompatibility != playStoreCompatibilityFingerprint(module)
 
 private enum class InstallerPermissionTarget {
@@ -230,6 +235,9 @@ class LauncherActivity : ComponentActivity() {
         val request = pendingPackageReplacement ?: return@registerForActivityResult
         reconcilePackageUninstall(request, result.resultCode)
     }
+    private val companionUninstaller = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { viewModel.onCompanionUninstallReturned() }
     private val legacyPatchUninstaller = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -288,6 +296,33 @@ class LauncherActivity : ComponentActivity() {
                     LayoutDirection.Ltr
                 }
             ) {
+            val gameReplacement by viewModel.gameReplacement.collectAsStateWithLifecycle()
+            gameReplacement?.takeUnless { it.uninstallRequested }?.let { request ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = viewModel::cancelCompanionReplacement,
+                    title = { androidx.compose.material3.Text(LauncherLocalization.translate("Replace installed game?")) },
+                    text = {
+                        androidx.compose.material3.Text("${request.title} ${request.version}\n\n" +
+                            LauncherLocalization.translate("The supported package is downloaded and verified. Android requires uninstalling the newer game first. Uninstalling removes local game data. Back up your progress before continuing."))
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            viewModel.confirmCompanionReplacement()?.let { confirmed ->
+                                runCatching {
+                                    companionUninstaller.launch(Intent(Intent.ACTION_DELETE,
+                                        Uri.parse("package:${confirmed.packageName}"))
+                                        .putExtra(Intent.EXTRA_RETURN_RESULT, true))
+                                }.onFailure { viewModel.cancelCompanionReplacement() }
+                            }
+                        }) { androidx.compose.material3.Text(LauncherLocalization.translate("Uninstall and install")) }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = viewModel::cancelCompanionReplacement) {
+                            androidx.compose.material3.Text(LauncherLocalization.translate("Cancel"))
+                        }
+                    }
+                )
+            }
             if (!languageConfirmed) {
                 val selectedLanguage = LauncherLanguage.fromPreference(selectedLanguageOrdinal)
                 FirstRunLanguageScreen(
@@ -836,34 +871,8 @@ class LauncherActivity : ComponentActivity() {
 
     private fun showPackageReplacementWarning(request: PackageReplacementRequest) {
         if (isFinishing || isDestroyed || pendingPackageReplacement !== request) return
-        viewModel.showDirectPatchPrompt(request.title, request.requiresUninstall, request.kind)
-    }
-
-    private fun confirmPackageReplacementPrompt() {
-        val request = pendingPackageReplacement ?: return
-        viewModel.hideDirectPatchPrompt()
-        beginPackageReplacement(request)
-    }
-
-    private fun beginPackageReplacement(request: PackageReplacementRequest) {
-        if (pendingPackageReplacement !== request) return
-        viewModel.onPackageReplacementProgress(
-            "Waiting for Android",
-            if (request.requiresUninstall) {
-                "Confirm the ${request.title} uninstall. Installation follows automatically."
-            } else {
-                "Confirm the patched ${request.title} update."
-            }
-        )
-        if (!request.requiresUninstall) {
-            installPackageReplacement(request)
-            return
-        }
-        if (!isPackageInstalled(request.packageName)) {
-            installPackageReplacement(request)
-            return
-        }
-        if (request.kind == PackageReplacementKind.DIRECT_PATCH) {
+        if (request.requiresUninstall && isPackageInstalled(request.packageName) &&
+            request.kind == PackageReplacementKind.DIRECT_PATCH) {
             if (packageReplacementPreparation?.isActive == true) return
             packageReplacementPhase = PackageReplacementPhase.PREPARING
             viewModel.onPackageReplacementProgress("Saving game files", "Keeping downloaded game files before setup.")
@@ -874,21 +883,34 @@ class LauncherActivity : ComponentActivity() {
                     )
                     withContext(Dispatchers.Main) {
                         packageReplacementPreparation = null
-                        if (pendingPackageReplacement === request) requestPackageUninstall(request)
+                        if (!isFinishing && !isDestroyed && pendingPackageReplacement === request) {
+                            packageReplacementPhase = PackageReplacementPhase.IDLE
+                            viewModel.showDirectPatchPrompt(request.title, request.requiresUninstall, request.kind)
+                        }
                     }
                 } catch (error: Throwable) {
                     if (error is CancellationException) return@launch
                     withContext(Dispatchers.Main) {
                         packageReplacementPreparation = null
                         if (pendingPackageReplacement === request) finishPackageReplacementWithFailure(
-                            "Could not save the game files. Nothing was uninstalled. Check storage access and free space, then try again.", error
+                            com.moodtools.hub.networking.gameObbPreservationFailureMessage(error), error
                         )
                     }
                 }
             }
             return
         }
-        requestPackageUninstall(request)
+        viewModel.showDirectPatchPrompt(request.title, request.requiresUninstall, request.kind)
+    }
+
+    private fun confirmPackageReplacementPrompt() {
+        val request = pendingPackageReplacement ?: return
+        viewModel.hideDirectPatchPrompt()
+        if (!request.requiresUninstall || !isPackageInstalled(request.packageName)) {
+            installPackageReplacement(request)
+        } else {
+            requestPackageUninstall(request)
+        }
     }
 
     private fun requestPackageUninstall(request: PackageReplacementRequest) {
@@ -1359,6 +1381,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private val _gameInstallState = MutableStateFlow(GameInstallUiState())
     val gameInstallState: StateFlow<GameInstallUiState> = _gameInstallState
+    private val _gameReplacement = MutableStateFlow<GameReplacementRequest?>(null)
+    internal val gameReplacement: StateFlow<GameReplacementRequest?> = _gameReplacement
 
     private val _launcherUpdateState = MutableStateFlow(LauncherUpdateUiState())
     val launcherUpdateState: StateFlow<LauncherUpdateUiState> = _launcherUpdateState
@@ -1616,12 +1640,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                         alreadyRedeemed = redemption.alreadyRedeemed
                     )
                     if (_launcherEntered.value) {
-                        when (val privateAccess = accessManager.checkPrivateAccess(redemption.scope)) {
-                            is LauncherPrivateAccessResult.Approved -> privateAccessExpiryByScope =
-                                privateAccessExpiryByScope + (redemption.scope to privateAccess.lease.grantExpiresAt)
-                            LauncherPrivateAccessResult.Denied -> privateAccessExpiryByScope =
-                                privateAccessExpiryByScope - redemption.scope
-                            is LauncherPrivateAccessResult.Unavailable -> Unit
+                        redemption.scope?.let { scope ->
+                            when (val privateAccess = accessManager.checkPrivateAccess(scope)) {
+                                is LauncherPrivateAccessResult.Approved -> privateAccessExpiryByScope =
+                                    privateAccessExpiryByScope + (scope to privateAccess.lease.grantExpiresAt)
+                                LauncherPrivateAccessResult.Denied -> privateAccessExpiryByScope =
+                                    privateAccessExpiryByScope - scope
+                                is LauncherPrivateAccessResult.Unavailable -> Unit
+                            }
                         }
                         markLauncherReady(redemption.lease.grantExpiresAt)
                         refreshGames(refreshCatalog = true, forceGameScan = true)
@@ -2610,7 +2636,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         _catalogRefreshing.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                refreshGames(refreshCatalog = true, forceGameScan = true)
+                refreshGames(refreshCatalog = true, forceGameScan = true, forceStoreMetadataRefresh = true)
             } finally {
                 _catalogRefreshing.value = false
             }
@@ -2690,25 +2716,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         val sourceFormat = apkPureDownload?.format ?: directSource!!.format
         if (_gameInstallState.value.inProgress || _gameInstallState.value.installing ||
             _gameInstallState.value.cancelling) return
-        if (listing.game != null && sourceVersionCode <= listing.game.versionCode) {
-            _gameInstallState.value = GameInstallUiState(
-                visible = true,
-                stage = GameInstallStage.FAILED,
-                title = listing.catalog.config.title,
-                packageName = listing.catalog.config.packageName,
-                targetVersion = sourceVersion,
-                packageFormat = sourceFormat.name,
-                useAPKPure = useAPKPure,
-                headline = "No newer compatible game download",
-                detail = "The available file cannot replace your installed game version.",
-                failed = true,
-                diagnostics = listOf(
-                    "Installed build: ${listing.game.versionCode}",
-                    "Available build: $sourceVersionCode"
-                )
-            )
-            return
-        }
         val cancellation = GameInstallCancellation()
         gameInstallCancellation = cancellation
         _gameInstallState.value = GameInstallUiState(
@@ -2825,8 +2832,6 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 )
                 gameInstallerRecovery?.cancel()
                 gameInstallerRecovery = null
-                pendingGameInstaller = pending
-                gameInstallerLeftLauncher = false
                 pending.sessionId = gameInstallClient.install(
                     game = listing.catalog,
                     apkPureDownload = apkPureDownload,
@@ -2837,7 +2842,26 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                             progress = progress
                         )
                     },
-                    isCancelled = { cancellation.cancelled }
+                    isCancelled = { cancellation.cancelled },
+                    beforeInstall = {
+                        val installedVersion = gameInstallClient.installedVersionCode(listing.catalog.config.packageName)
+                        if (installedVersion != null && installedVersion > sourceVersionCode) {
+                            val replacement = GameReplacementRequest(listing.catalog.config.packageName,
+                                listing.catalog.config.title, sourceVersion)
+                            _gameReplacement.value = replacement
+                            try {
+                                if (!replacement.completion.await()) throw GameInstallCancelledException()
+                            } finally {
+                                if (_gameReplacement.value?.completion === replacement.completion) _gameReplacement.value = null
+                            }
+                            if (cancellation.cancelled) throw GameInstallCancelledException()
+                            check(gameInstallClient.installedVersionCode(replacement.packageName) == null) {
+                                "The installed game must be removed before installing this supported version"
+                            }
+                        }
+                        pendingGameInstaller = pending
+                        gameInstallerLeftLauncher = false
+                    }
                 )
                 if (pendingGameInstaller === pending && gameInstallCancellation === cancellation) {
                     _gameInstallState.value = _gameInstallState.value.copy(
@@ -2875,6 +2899,10 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     return@onFailure
                 }
                 android.util.Log.e("JesterMoodsGameInstall", "Game download or install failed", error)
+                val unavailableSource = useAPKPure && com.moodtools.hub.networking.isUnavailableAPKPureDownload(error)
+                if (unavailableSource && apkPureDownload != null) {
+                    discardFailedAPKPureDownload(listing.catalog.config.packageName, apkPureDownload)
+                }
                 val downloaded = runCatching {
                     gameInstallClient.isDownloaded(listing.catalog, apkPureDownload)
                 }
@@ -2891,7 +2919,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     installing = false,
                     cancelling = false,
                     downloaded = downloaded,
-                    retryable = error !is GameInstallCompatibilityException,
+                    retryable = !unavailableSource && error !is GameInstallCompatibilityException,
                     failed = true,
                     cancelled = false,
                     stage = GameInstallStage.FAILED,
@@ -2909,6 +2937,46 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
     }
 
+    private fun discardFailedAPKPureDownload(packageName: String, failed: com.moodtools.hub.networking.APKPureDownload) {
+        val key = playStoreDownloadKey(packageName)
+        val stored = playStorePreferences.getString(key, null)
+        if (stored != null && runCatching { JSONObject(stored).optString("url") == failed.url }.getOrDefault(false)) {
+            playStorePreferences.edit().remove(key).apply()
+        }
+        fun status(value: PlayStoreVersionStatus?): PlayStoreVersionStatus? =
+            if (value?.apkPureDownload == failed) value.copy(apkPureDownload = null) else value
+        fun listing(value: ModuleListing): ModuleListing =
+            if (value.catalog.config.packageName == packageName) value.copy(playStoreVersionStatus = status(value.playStoreVersionStatus)) else value
+        fun game(value: LibraryGame): LibraryGame = if (value.packageName == packageName) value.copy(
+            listing = value.listing?.let(::listing), playStoreVersionStatus = status(value.playStoreVersionStatus)
+        ) else value
+        _availableModules.update { values -> values.map(::listing) }
+        _downloadListing.update { it?.let(::listing) }
+        _libraryGames.update { values -> values.map(::game) }
+        _selectedLibraryGame.update { it?.let(::game) }
+    }
+
+    internal fun confirmCompanionReplacement(): GameReplacementRequest? {
+        val request = _gameReplacement.value ?: return null
+        if (request.uninstallRequested || request.completion.isCompleted) return null
+        return request.copy(uninstallRequested = true).also { _gameReplacement.value = it }
+    }
+
+    fun cancelCompanionReplacement() {
+        _gameReplacement.value?.completion?.complete(false)
+        _gameReplacement.value = null
+    }
+
+    fun onCompanionUninstallReturned() {
+        val request = _gameReplacement.value ?: return
+        if (!request.uninstallRequested) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { gameInstallClient.installedVersionCode(request.packageName) }
+                .onSuccess(request::completeAfterUninstall)
+                .onFailure { request.completion.complete(false) }
+        }
+    }
+
     fun cancelGameInstall() {
         val current = _gameInstallState.value
         if (!current.inProgress && !current.installing && !current.cancelling) {
@@ -2917,6 +2985,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         }
         val cancellation = gameInstallCancellation ?: return
         cancellation.cancelled = true
+        cancelCompanionReplacement()
         pendingGameInstaller?.sessionId?.let(gameInstallClient::cancelInstall)
         if (current.stage == GameInstallStage.WAITING_FOR_ANDROID) {
             clearGameInstallerWait()
@@ -3020,6 +3089,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             delay(GAME_INSTALLER_RECOVERY_DELAY_MS)
             gameInstallerRecovery = null
             reconcileGameInstaller(pending, returnedFromInstaller = false)
+            // A foreground Android prompt can suppress the deadline. Keep checking for a
+            // completed install even if Android never sends its result callback.
+            if (pendingGameInstaller === pending && _gameInstallState.value.installing) {
+                scheduleGameInstallerRecovery(pending)
+            }
         }
     }
 
@@ -3031,7 +3105,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         gameInstallerRecovery = viewModelScope.launch(Dispatchers.IO) {
             val deadline = SystemClock.elapsedRealtime() + GAME_INSTALLER_RETURN_RECONCILE_WINDOW_MS
             while (pendingGameInstaller === pending && _gameInstallState.value.installing) {
-                val installed = gameInstallClient.isInstalledAtLeast(
+                val installed = gameInstallClient.isInstalledVersion(
                     pending.packageName,
                     pending.versionCode
                 )
@@ -3063,7 +3137,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     ) {
         if (pendingGameInstaller !== pending || !_gameInstallState.value.installing) return
         when (GameInstallerReconciliationPolicy.decide(
-            installed = gameInstallClient.isInstalledAtLeast(pending.packageName, pending.versionCode),
+            installed = gameInstallClient.isInstalledVersion(pending.packageName, pending.versionCode),
             launcherLeft = gameInstallerLeftLauncher,
             deadlineReached = true
         )) {
@@ -3089,11 +3163,11 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             failed = true,
             stage = GameInstallStage.FAILED,
             stageProgress = null,
-            headline = "Android installer closed",
+            headline = if (returnedFromInstaller) "Android installer closed" else "Installation not confirmed",
             detail = if (returnedFromInstaller) {
                 "The installation wasn't completed. The verified download is still saved; tap Try again."
             } else {
-                "Android didn't open its installer in time. The verified download is still saved; tap Try again."
+                "Android hasn't confirmed installation. Check its install prompt before retrying. The verified download is still saved."
             },
             diagnostics = appendDiagnostic(
                 current.diagnostics,
@@ -4846,12 +4920,14 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
 
     private fun refreshGames(
         refreshCatalog: Boolean = false,
-        forceGameScan: Boolean = false
+        forceGameScan: Boolean = false,
+        forceStoreMetadataRefresh: Boolean = false
     ) {
         if (_libraryGames.value.isEmpty()) _libraryLoading.value = true
         val cachedCatalog = catalogClient.loadCached()
         if (cachedCatalog != null) {
-            publishGames(cachedCatalog, forceGameScan)
+            publishGames(cachedCatalog, forceGameScan, refreshRemoteMetadata = !refreshCatalog,
+                forceStoreMetadataRefresh = forceStoreMetadataRefresh && !refreshCatalog)
         }
 
         if (refreshCatalog) {
@@ -4859,12 +4935,12 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                 android.util.Log.e("JesterMoodsCatalog", "Catalog refresh failed", it)
                 null
             }
-            if (refreshedCatalog != null && refreshedCatalog != cachedCatalog) {
-                publishGames(refreshedCatalog, forceGameScan && cachedCatalog == null)
-            } else if (refreshedCatalog != null && cachedCatalog == null) {
-                publishGames(refreshedCatalog, forceGameScan)
+            val catalog = refreshedCatalog ?: cachedCatalog
+            if (catalog != null) {
+                publishGames(catalog, forceGameScan && cachedCatalog == null,
+                    forceStoreMetadataRefresh = forceStoreMetadataRefresh)
+                return
             }
-            if (refreshedCatalog != null || cachedCatalog != null) return
         } else if (cachedCatalog != null) {
             return
         }
@@ -4887,7 +4963,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun playStoreStatusesFor(
-        catalog: List<com.moodtools.hub.modules.CatalogModule>
+        catalog: List<com.moodtools.hub.modules.CatalogModule>,
+        forceRefresh: Boolean = false
     ): Map<String, PlayStoreVersionStatus> {
         if (catalog.isEmpty()) return emptyMap()
         val today = currentLocalDay()
@@ -4905,7 +4982,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             shouldRefreshPlayStoreStatus(
                 cachedByPackage[packageName],
                 playStorePreferences.getString("compatibility_$packageName", null),
-                module.config
+                module.config,
+                forceRefresh = forceRefresh
             )
         }.mapTo(hashSetOf()) { it.config.packageName }
         val freshByPackage = if (packagesToRefresh.isEmpty()) {
@@ -4937,7 +5015,23 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     apkPureDownload = fresh.download
                 )
             }
-            val status = received?.let { newestPlayStoreStatus(cached, it) } ?: cached
+            val latestStatus = received?.let { newestPlayStoreStatus(cached, it) } ?: cached
+            fun supportedDownload(download: com.moodtools.hub.networking.APKPureDownload?): Boolean {
+                val versions = module.config.supportedVersions.toList()
+                val codes = module.config.supportedVersionCodes.toList()
+                return download != null && versions.indices.any {
+                    versions[it] == download.version && codes.getOrNull(it) == download.versionCode
+                } && download.supportedAbis.any { it in module.config.supportedAbis && it in Build.SUPPORTED_ABIS }
+            }
+            val supportedDownload = when {
+                supportedDownload(latestStatus?.apkPureDownload) -> latestStatus?.apkPureDownload
+                supportedDownload(cached?.apkPureDownload) -> cached?.apkPureDownload
+                fresh != null -> apkPureVersionClient.findSupportedDownload(
+                    module.config, Build.SUPPORTED_ABIS.toList(), Build.VERSION.SDK_INT
+                )
+                else -> null
+            }
+            val status = latestStatus?.copy(apkPureDownload = supportedDownload)
             if (status != null) {
                 statuses[packageName] = status
                 if (fresh != null) {
@@ -4987,6 +5081,9 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     }
 
     private fun cachedPlayStoreStatus(packageName: String, now: Long): PlayStoreVersionStatus? {
+        // Old schemas can contain guessed APKPure variants and HEAD-only confirmations.
+        // Force fresh metadata on upgrade instead of carrying those links into the new lookup.
+        if (playStorePreferences.getInt(playStoreSchemaKey(packageName), 0) != PLAY_STORE_CACHE_SCHEMA) return null
         val version = playStorePreferences.getString(playStoreVersionKey(packageName), null)
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
@@ -5016,8 +5113,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
             checkedAtEpochSeconds = checkedAt,
             checkedDay = checkedDay,
             stale = playStorePreferences.getBoolean(playStoreStaleKey(packageName), false) ||
-                isPlayStoreCacheExpired(checkedAt, now) ||
-                playStorePreferences.getInt(playStoreSchemaKey(packageName), 0) != PLAY_STORE_CACHE_SCHEMA,
+                isPlayStoreCacheExpired(checkedAt, now),
             apkPureDownload = playStorePreferences.getString(playStoreDownloadKey(packageName), null)
                 ?.let { serialized ->
                     runCatching {
@@ -5089,7 +5185,8 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
     private fun publishGames(
         catalog: List<com.moodtools.hub.modules.CatalogModule>,
         forceGameScan: Boolean,
-        refreshRemoteMetadata: Boolean = true
+        refreshRemoteMetadata: Boolean = true,
+        forceStoreMetadataRefresh: Boolean = false
     ) {
         val application = getApplication<android.app.Application>()
         val visibleCatalog = catalog.filter { it.config.isVisibleInLauncher(BuildConfig.IS_ROOT_MODE) }
@@ -5146,7 +5243,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
                     it.catalogSlug !in catalogSlugs
             }
             val playStoreStatuses = if (refreshRemoteMetadata) {
-                playStoreStatusesFor(resolvedCatalog)
+                playStoreStatusesFor(resolvedCatalog, forceRefresh = forceStoreMetadataRefresh)
             } else {
                 cachedPlayStoreStatusesFor(resolvedCatalog)
             }
@@ -5593,7 +5690,7 @@ class LauncherViewModel(application: android.app.Application) : AndroidViewModel
         private const val PLAY_STORE_STALE_PREFIX = "stale_"
         private const val PLAY_STORE_DOWNLOAD_PREFIX = "download_"
         private const val PLAY_STORE_SCHEMA_PREFIX = "schema_"
-        private const val PLAY_STORE_CACHE_SCHEMA = 4
+        private const val PLAY_STORE_CACHE_SCHEMA = 5
         private const val NON_ROOT_METHOD_CHOICE_PREFIX = "non_root_method_"
         private const val RELEASE_GATE_TTL_MS = 20L * 60L * 1000L
         private const val MINIMUM_INTERNET_TRANSITION_MS = 2_000L

@@ -13,7 +13,9 @@ internal fun rootInjectionSummary(result: RootShell.Result, rootVersion: String)
         "Failed to inject " to "library_injection_failed",
         "Failed to wait syscall for detach" to "detach_wait_failed",
         "Failed to detach" to "detach_failed",
-        "Failed to resume target process threads" to "resume_failed"
+        "Failed to resume target process threads" to "resume_failed",
+        "am_process_start_cb:" to "process_event_reader_failed",
+        "Failed to monitor process start." to "process_monitor_failed"
     )
     return buildString {
         appendLine("Root add-on injection failed")
@@ -21,6 +23,10 @@ internal fun rootInjectionSummary(result: RootShell.Result, rootVersion: String)
         appendLine("Command timed out: ${result.timedOut}")
         appendLine("Command output truncated: ${result.outputTruncated}")
         appendLine("Command output read complete: ${result.outputReadComplete ?: "unavailable"}")
+        fun boundedTime(value: Long?): String = value?.takeIf { it in 0..604_800_000 }?.toString() ?: "unavailable"
+        appendLine("Command elapsed ms: ${boundedTime(result.durationMs)}")
+        appendLine("Command timeout ms: ${boundedTime(result.timeoutMs)}")
+        appendLine("Last command output age ms: ${boundedTime(result.lastOutputAgeMs)}")
         val phases = mapOf(
             "Root launch phase: root_shell_ready" to "root_shell_ready",
             "I: ======== INJECTION ARGS ========" to "injector_started",
@@ -35,6 +41,11 @@ internal fun rootInjectionSummary(result: RootShell.Result, rootVersion: String)
         val phase = output.lineSequence().mapNotNull { line ->
             val clean = line.trimEnd('\r')
             phases[clean] ?: when {
+                clean in setOf("I: Root process watch phase: event_reader_ready",
+                    "I: Root process watch phase: initial_event_received",
+                    "I: Root process watch phase: launch_requested",
+                    "I: Root process watch phase: launch_command_returned",
+                    "I: Root process watch phase: target_event_received") -> clean.substringAfterLast(": ")
                 clean.matches(Regex("I: Monitoring [A-Za-z0-9_.]+\\.\\.\\.")) -> "waiting_for_process"
                 clean.startsWith("I: ===== Injecting ") && clean.endsWith("...") -> "injecting_library"
                 else -> null
@@ -42,6 +53,7 @@ internal fun rootInjectionSummary(result: RootShell.Result, rootVersion: String)
         }.lastOrNull()
         appendLine("Last observed injection phase: ${phase ?: "unavailable"}")
         appendLine("A recorded phase confirms progress only, not where or why the command stopped.")
+        appendLine("A returned launch command does not confirm game startup; output age measures command activity, not game responsiveness.")
         appendLine("Root provider: ${if (rootVersion.contains("MAGISK", true)) "Magisk" else if (rootVersion.contains("KernelSU", true)) "KernelSU" else if (rootVersion.contains("APatch", true)) "APatch" else "unidentified"}")
         appendLine("Root version number: ${Regex("^[0-9]+(?:\\.[0-9]+){0,3}").find(rootVersion.trim())?.value ?: "unavailable"}")
         val failures = stages.filterKeys(output::contains).values

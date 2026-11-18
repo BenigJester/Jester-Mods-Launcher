@@ -27,6 +27,73 @@ data class APKPureVersionResult(
 )
 
 class APKPureVersionClient {
+    /** Probe exact catalog builds, never substitute APKPure's latest release. */
+    fun findSupportedDownload(
+        module: com.moodtools.hub.modules.ModuleConfig,
+        deviceAbis: List<String>,
+        sdk: Int
+    ): APKPureDownload? {
+        val versions = module.supportedVersions.toList()
+        val codes = module.supportedVersionCodes.toList()
+        for (index in versions.indices.reversed()) {
+            val code = codes.getOrNull(index) ?: continue
+            val download = runCatching {
+                val versionPath = java.net.URLEncoder.encode(versions[index], "UTF-8").replace("+", "%20")
+                val page = (URL("https://apkpure.net/app/${module.packageName}/download/$versionPath")
+                    .openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 5_000
+                    setRequestProperty("User-Agent", APKPURE_USER_AGENT)
+                }
+                val html = try {
+                    if (page.responseCode !in 200..299 || page.url.protocol != "https" ||
+                        page.url.host !in setOf("apkpure.net", "apkpure.com")) return@runCatching null
+                    page.inputStream.bufferedReader().use { reader ->
+                        val text = StringBuilder()
+                        val buffer = CharArray(4096)
+                        while (true) {
+                            val count = reader.read(buffer)
+                            if (count < 0) break
+                            require(text.length + count <= 2 * 1024 * 1024)
+                            text.append(buffer, 0, count)
+                        }
+                        text.toString()
+                    }
+                } finally { page.disconnect() }
+                for (address in supportedAPKPureLinks(html, module.packageName, code,
+                    deviceAbis.filter { it in module.supportedAbis }, sdk)) {
+                    val gateway = (URL(address).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 5_000
+                        readTimeout = 5_000
+                        instanceFollowRedirects = false
+                        setRequestProperty("User-Agent", APKPURE_USER_AGENT)
+                        setRequestProperty("Accept-Encoding", "identity")
+                    }
+                    try {
+                        if (gateway.responseCode !in 300..399) continue
+                        val target = URL(gateway.getHeaderField("Location") ?: continue)
+                        if (runCatching { requireAPKPureDownloadTarget(target) }.isFailure) continue
+                        val query = target.query.orEmpty().split('&').map { it.split('=', limit = 2) }
+                            .filter { it.size == 2 }.associate {
+                                it[0] to java.net.URLDecoder.decode(it[1], "UTF-8")
+                            }
+                        val size = query["full_size"]?.toLongOrNull() ?: continue
+                        val format = if (URL(address).path.startsWith("/b/APK/")) GamePackageFormat.APK else GamePackageFormat.APKS
+                        val extension = if (format == GamePackageFormat.APK) "apk" else "xapk"
+                        if (query["package_name"] != module.packageName || size !in 1..MAX_GAME_BYTES ||
+                            query["filename"]?.endsWith("_${versions[index]}_APKPure.$extension") != true) continue
+                        val abi = URL(address).query.substringAfter("&nc=").substringBefore('&')
+                        return@runCatching APKPureDownload(address, versions[index], code, size, format, setOf(abi))
+                    } finally { gateway.disconnect() }
+                }
+                null
+            }.getOrNull()
+            if (download != null) return download
+        }
+        return null
+    }
+
     fun load(packageNames: Set<String>): Map<String, APKPureVersionResult> {
         require(packageNames.size <= MAX_BATCH_PACKAGES && packageNames.all(PACKAGE_PATTERN::matches)) {
             "Invalid APKPure package names"
@@ -176,3 +243,17 @@ private val VERSION_PATTERN = Regex("^[0-9][0-9A-Za-z._()+ -]{0,63}$")
 private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a")
 private const val APKPURE_DOWNLOAD_HOST = "d.apkpure.net"
 private const val MAX_GAME_BYTES = 2L * 1024L * 1024L * 1024L
+
+/** Preserve the exact variant's minimum SDK rather than guessing from the device API. */
+internal fun supportedAPKPureLinks(html: String, packageName: String, versionCode: Long,
+    deviceAbis: List<String>, sdk: Int): List<String> {
+    val links = Regex("https://d\\.apkpure\\.net/b/(?:APK|XAPK)/${Regex.escape(packageName)}" +
+        "\\?versionCode=$versionCode&nc=(arm64-v8a|armeabi-v7a)&sv=([0-9]{1,3})(?=[\"'<>\\s]|$)")
+        .findAll(html.replace("&amp;", "&"))
+        .filter { it.groupValues[1] in deviceAbis && it.groupValues[2].toInt() in 1..minOf(sdk, 100) }
+        .sortedBy { deviceAbis.indexOf(it.groupValues[1]) }
+        .map { it.value }.distinct().toList()
+    return links
+}
+
+private const val APKPURE_USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/127 Mobile Safari/537.36"

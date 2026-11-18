@@ -9,6 +9,19 @@ import org.junit.Test
 
 class PlayStoreStatusFreshnessTest {
     @Test
+    fun newerVersionAndBuildCannotBorrowTheOldVersionName() {
+        val cached = status("8.7.0", 100).copy(latestVersionCode = 80700)
+        val buildOnly = status(null, 200).copy(latestVersionCode = 80800)
+        assertEquals(buildOnly, newestPlayStoreStatus(cached, buildOnly))
+        val versionOnly = status("8.8.0", 200)
+        assertEquals(versionOnly, newestPlayStoreStatus(cached, versionOnly))
+        val complete = versionOnly.copy(latestVersionCode = 80800)
+        assertEquals(complete, newestPlayStoreStatus(cached, complete))
+        val olderCheckWithNewerSupportedBuild = complete.copy(checkedAtEpochSeconds = 50)
+        assertEquals(olderCheckWithNewerSupportedBuild, newestPlayStoreStatus(cached, olderCheckWithNewerSupportedBuild))
+    }
+
+    @Test
     fun refreshedDownloadAvailabilityReplacesSameReleaseCache() {
         val cached = status(version = "1.0.0", checkedAt = 2_000L)
         val refreshed = cached.copy(
@@ -218,6 +231,7 @@ class PlayStoreStatusFreshnessTest {
         assertEquals(true, shouldRefreshPlayStoreStatus(null, fingerprint, module))
         assertEquals(true, shouldRefreshPlayStoreStatus(cached.copy(stale = true), fingerprint, module))
         assertEquals(false, shouldRefreshPlayStoreStatus(cached, fingerprint, module))
+        assertEquals(true, shouldRefreshPlayStoreStatus(cached, fingerprint, module, forceRefresh = true))
     }
 
     @Test

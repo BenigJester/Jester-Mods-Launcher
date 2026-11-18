@@ -72,6 +72,7 @@
             android:name=".LauncherActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
             android:screenOrientation="portrait">
 
             <intent-filter>

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <elf.h>
+#include <link.h>
 #include <mutex>
 #include <sys/system_properties.h>
 #include <sys/utsname.h>
@@ -73,8 +74,39 @@ inline bool IsNativeBridgeRuntime() {
 #endif
 }
 
+// Android's linker knows APK-backed objects even when /proc/maps only names the APK.
+struct LoadedLibraryQuery {
+    const char *name;
+    uintptr_t address;
+    uintptr_t base;
+    bool executable;
+};
+
+inline int FindLoadedLibrary(dl_phdr_info *info, size_t, void *data) {
+    auto &query = *static_cast<LoadedLibraryQuery *>(data);
+    const char *path = info->dlpi_name;
+    if (!path) return 0;
+    const char *leaf = std::strrchr(path, '/');
+    if (std::strcmp(leaf ? leaf + 1 : path, query.name) != 0) return 0;
+    query.base = info->dlpi_addr;
+    for (size_t i = 0; i < info->dlpi_phnum; ++i) {
+        const auto &segment = info->dlpi_phdr[i];
+        if (segment.p_type != PT_LOAD || !(segment.p_flags & PF_X)) continue;
+        const uintptr_t start = query.base + segment.p_vaddr;
+        if (query.address >= start && query.address - start < segment.p_memsz) {
+            query.executable = true;
+            break;
+        }
+    }
+    return 1;
+}
+
 inline uintptr_t ResolveLibraryBase(const char *name) {
     if (name == nullptr || name[0] == '\0') return 0;
+
+    LoadedLibraryQuery query{name, 0, 0, false};
+    dl_iterate_phdr(FindLoadedLibrary, &query);
+    if (query.base) return query.base;
 
     // Prefer the ELF load bias represented by an offset-zero map. Unlike xDL,
     // this remains available while a native bridge is translating the image.
@@ -125,6 +157,10 @@ inline bool IsMapped(const char *name) {
 
 inline bool IsExecutableLibraryAddress(uintptr_t address, const char *name) {
     if (address == 0 || name == nullptr) return false;
+
+    LoadedLibraryQuery query{name, address, 0, false};
+    dl_iterate_phdr(FindLoadedLibrary, &query);
+    if (query.base) return query.executable;
 
     FILE *maps = std::fopen("/proc/self/maps", "r");
     if (maps != nullptr) {

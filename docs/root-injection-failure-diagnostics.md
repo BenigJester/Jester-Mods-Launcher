@@ -161,3 +161,32 @@ launcher and a fresh failed launch report from that user are still required.
 There is no retry without a breakpoint, root-setting change, game/module edit,
 save clearing or version bump. Logs remain local under ignored
 `temp/root49-wait-*.log`; do not publish device logs with source changes.
+
+## 2026-11-17: incomplete process-watch evidence in #203 and #209
+
+Both reports time out in launcher 4.6.5 with the last phase `waiting_for_process`
+and incomplete command output. That old marker precedes event-reader setup and
+the asynchronous launch request, so it does not establish which of those steps
+actually ran. These reports justify diagnostic improvements, not a change to
+injection behavior or a claim about KernelSU.
+
+The injector now emits fixed markers for event-reader readiness, the first
+observed event, the launch request, return of the launch command, and the matching
+target process-start event. Only exact allowlisted markers enter shared reports.
+Event-reader and monitor errors have separate fixed failure categories.
+A returned launch command does not prove game startup; a target event proves
+only that the monitor observed that event.
+
+The command runner measures duration, configured timeout, and age of its last
+captured output using a monotonic clock. Output age is not phase age or a game
+responsiveness measurement. Timing fields remain unavailable in old reports.
+No commands, paths, arbitrary errors, or additional raw logs are exported.
+The command timeout, process launch, event monitoring, injection, and cleanup
+decisions are unchanged.
+
+Both bundled injector assets were rebuilt with NDK 29.0.13846066, using the build
+command above with output directory `temp/root-diagnostics-203-209/{obj,libs}`.
+ARM64 and x86-64 ELF architectures and all five marker strings were verified.
+All 13 `RootInjectionDiagnosticsTest` tests pass, including bounded command
+timing and strict marker parsing. This work is local and unpublished; it does
+not reproduce or resolve the affected phone's timeout.

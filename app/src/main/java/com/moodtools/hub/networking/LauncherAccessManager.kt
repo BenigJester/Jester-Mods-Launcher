@@ -25,9 +25,9 @@ data class LauncherLease(
 )
 data class LauncherStoreKeyRedemption(
     val lease: LauncherLease,
-    val entitlementExpiresAt: Long,
+    val entitlementExpiresAt: Long?,
     val addedDays: Int,
-    val scope: String,
+    val scope: String?,
     val alreadyRedeemed: Boolean
 )
 data class LauncherAccountIdentity(
@@ -889,12 +889,12 @@ class LauncherAccessManager(context: Context) {
         val issuedAt = response.getLong("issuedAt")
         val expiresAt = response.getLong("expiresAt")
         val grantExpiresAt = response.getLong("grantExpiresAt")
-        val entitlementExpiresAt = response.getLong("entitlementExpiresAt")
+        val entitlementExpiresAt = if (response.isNull("entitlementExpiresAt")) null else response.getLong("entitlementExpiresAt")
         val addedDays = response.getInt("days")
-        val scope = response.getString("scope")
+        val scope = if (response.isNull("scope")) null else response.getString("scope")
         require(digitalKey.length in 80..4096 && validManagedAccessWindow(issuedAt, expiresAt) &&
-            grantExpiresAt >= expiresAt && entitlementExpiresAt > issuedAt &&
-            addedDays in setOf(7, 15, 30) && scope == "free-fire") {
+            grantExpiresAt >= expiresAt && response.has("scope") && response.has("entitlementExpiresAt") &&
+            validStoreKeyEntitlement(response.getString("product"), scope, addedDays, entitlementExpiresAt, issuedAt)) {
             "The activated access window is invalid"
         }
         val offlineLease = response.getJSONObject("offlineLease").also {
@@ -911,7 +911,7 @@ class LauncherAccessManager(context: Context) {
         saveLease(digitalKey, issuedAt, expiresAt, ACCESS_VERSION, offlineLease)
         check(preferences.edit()
             .putString(RECOVERY_BOUND_KEY, proofIdentity.keyId)
-            .remove("$PRIVATE_LEASE_PREFIX$scope")
+            .apply { if (scope != null) remove("$PRIVATE_LEASE_PREFIX$scope") }
             .commit()) { "The activated access state could not be saved" }
         return LauncherStoreKeyRedemption(
             lease = LauncherLease(issuedAt, expiresAt, grantExpiresAt),

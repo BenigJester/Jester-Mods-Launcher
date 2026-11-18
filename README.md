@@ -50,6 +50,18 @@ This repository exists so users and security researchers can inspect the Android
 - [x] Per-game diagnostics with copy, export, sharing, and clear controls
 - [x] BlackBox startup/crash reports and suspected-stall notices; Root crash reports
 
+### 4.7.0 source update
+
+- Supports 30-day launcher-only access keys for $5, with paid add-ons sold separately.
+- Separates Linkvertise and access-key unlock options into themed cards with an OR divider.
+- Adds a Ko-fi purchase button and product-aware access-key activation results.
+- Improves key-entry keyboard behavior and large-text layouts, with translations for the new options.
+- Purchased keys can be claimed through receipt-email verification without transaction IDs.
+  Email verification and delivery are provided by the service; backend source is not included here.
+
+Download the signed [4.7.0 release](https://github.com/BenigJester/Jester-Mods-Launcher/releases/tag/v4.7.0).
+Both editions use build **470**. Game add-ons are published separately.
+
 ### 4.6.5 source update
 
 - Requests the storage permission needed for OBB backup and installation on

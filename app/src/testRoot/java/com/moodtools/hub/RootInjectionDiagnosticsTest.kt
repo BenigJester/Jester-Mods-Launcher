@@ -42,6 +42,9 @@ class RootInjectionDiagnosticsTest {
         assertTrue(result.timedOut)
         assertFalse(result.success)
         assertNull(result.exitCode)
+        assertEquals(1000L, result.timeoutMs)
+        assertTrue(requireNotNull(result.durationMs) >= 1000L)
+        assertNull(result.lastOutputAgeMs)
     }
 
     @Test fun `timeout retains initial shell evidence and latest progress after noisy output`() {
@@ -55,6 +58,36 @@ class RootInjectionDiagnosticsTest {
         assertTrue(summary.contains("Last observed injection phase: waiting_for_breakpoint\n"))
         assertTrue(summary.contains("Command output truncated: true"))
         assertFalse(summary.contains("xxxx"))
+        assertTrue(requireNotNull(result.lastOutputAgeMs) in 0..requireNotNull(result.durationMs))
+    }
+
+    @Test fun `process watch diagnostics distinguish event readiness launch command and target event`() {
+        val phases = listOf("event_reader_ready", "initial_event_received", "launch_requested",
+            "launch_command_returned", "target_event_received")
+        var output = "Root launch phase: root_shell_ready\nI: Monitoring com.example.game...\n"
+        for (phase in phases) {
+            output += "I: Root process watch phase: $phase\r\n"
+            val summary = rootInjectionSummary(RootShell.Result(false, output, timedOut = true,
+                durationMs = 61000, timeoutMs = 60000, lastOutputAgeMs = 59000), "3.4.2:KernelSU")
+            assertTrue(summary.contains("Last observed injection phase: $phase\n"))
+            assertTrue(summary.contains("Command elapsed ms: 61000\n"))
+            assertTrue(summary.contains("Command timeout ms: 60000\n"))
+            assertTrue(summary.contains("Last command output age ms: 59000\n"))
+            assertFalse(summary.contains("com.example.game"))
+        }
+        val untrusted = rootInjectionSummary(RootShell.Result(false,
+            "I: Root process watch phase: launch_requested private-token\n",
+            durationMs = -1, timeoutMs = Long.MAX_VALUE, lastOutputAgeMs = -1), "unknown")
+        assertTrue(untrusted.contains("Last observed injection phase: unavailable\n"))
+        assertTrue(untrusted.contains("Command elapsed ms: unavailable\n"))
+        assertTrue(untrusted.contains("Command timeout ms: unavailable\n"))
+        assertTrue(untrusted.contains("Last command output age ms: unavailable\n"))
+        assertFalse(untrusted.contains("private-token"))
+        val failure = rootInjectionSummary(RootShell.Result(false,
+            "am_process_start_cb: android_logger_open failed.\nFailed to monitor process start. (private-token)", 1), "unknown")
+        assertTrue(failure.contains("process_event_reader_failed"))
+        assertTrue(failure.contains("process_monitor_failed"))
+        assertFalse(failure.contains("private-token"))
     }
 
     @Test fun `root phase report uses only fixed categories not private command text`() {
